@@ -36,7 +36,17 @@ import {
   type GatewayDbPort,
   type ThreadProjection,
 } from "./db.js";
+import {
+  approvalTypeFromMethod,
+  applyFilters,
+  kindFromMethod,
+  permissionModeToTurnStartParams,
+  statusFromRaw,
+  toModelOption,
+  type RawModel,
+} from "./gatewayHelpers.js";
 import { TerminalManager } from "./terminalManager.js";
+import { parseTimelineItemsFromLines } from "./timelineParser.js";
 import { ThreadContextResolver, normalizeProjectKey } from "./threadContext.js";
 
 type RawTurn = {
@@ -56,26 +66,6 @@ type RawThread = {
   updatedAt?: number;
   status?: unknown;
   turns?: RawTurn[];
-};
-
-type RawReasoningEffort = {
-  effort?: unknown;
-  reasoningEffort?: unknown;
-  description?: unknown;
-};
-
-type RawModel = {
-  id?: unknown;
-  model?: unknown;
-  displayName?: unknown;
-  hidden?: unknown;
-  defaultReasoningEffort?: unknown;
-  reasoningEffort?: unknown;
-  supportedReasoningEfforts?: unknown;
-  upgrade?: unknown;
-  inputModalities?: unknown;
-  supportsPersonality?: unknown;
-  isDefault?: unknown;
 };
 
 type RawModelListResult = {
@@ -217,54 +207,11 @@ function broadcast(event: GatewayEvent): void {
   }
 }
 
-function statusFromRaw(raw: unknown): ThreadStatus {
-  if (raw && typeof raw === "object" && "type" in (raw as Record<string, unknown>)) {
-    const typeValue = (raw as Record<string, unknown>).type;
-    if (typeof typeValue === "string") {
-      if (typeValue === "notLoaded") return "notLoaded";
-      if (typeValue === "idle") return "idle";
-      if (typeValue === "active") return "active";
-      if (typeValue === "systemError") return "systemError";
-    }
-  }
-
-  if (typeof raw === "string") {
-    if (raw === "notLoaded" || raw === "idle" || raw === "active" || raw === "systemError") {
-      return raw;
-    }
-  }
-
-  return "unknown";
-}
-
 function unixSecondsToIso(ts?: number): string {
   if (!ts || Number.isNaN(ts)) {
     return new Date().toISOString();
   }
   return new Date(ts * 1000).toISOString();
-}
-
-function permissionModeToTurnStartParams(
-  mode?: TurnPermissionMode,
-): Record<string, unknown> {
-  if (mode === "full-access") {
-    return {
-      approvalPolicy: "never",
-      sandboxPolicy: {
-        type: "dangerFullAccess",
-      },
-    };
-  }
-  if (mode === "local") {
-    return {
-      approvalPolicy: "on-request",
-      sandboxPolicy: {
-        type: "workspaceWrite",
-        networkAccess: false,
-      },
-    };
-  }
-  return {};
 }
 
 function toThreadListItem(raw: RawThread, projectKey = "unknown"): ThreadListItem {
@@ -308,128 +255,6 @@ function toTurnView(raw: RawTurn): TurnView {
   };
 }
 
-function toModelOption(raw: RawModel): ModelOption | null {
-  const fallbackId = typeof raw.model === "string" ? raw.model : null;
-  const id = typeof raw.id === "string" ? raw.id : fallbackId;
-  if (!id) {
-    return null;
-  }
-
-  const model = typeof raw.model === "string" ? raw.model : id;
-  const effortListRaw = Array.isArray(raw.reasoningEffort)
-    ? raw.reasoningEffort
-    : Array.isArray(raw.supportedReasoningEfforts)
-      ? raw.supportedReasoningEfforts
-      : null;
-  const reasoningEffort = effortListRaw
-    ? effortListRaw
-        .map((option) => {
-          const item = option as RawReasoningEffort;
-          const effort =
-            typeof item?.effort === "string"
-              ? item.effort
-              : typeof item?.reasoningEffort === "string"
-                ? item.reasoningEffort
-                : null;
-          if (!effort) {
-            return null;
-          }
-          return {
-            effort,
-            ...(typeof item.description === "string" ? { description: item.description } : {}),
-          };
-        })
-        .filter((option): option is NonNullable<typeof option> => option !== null)
-    : undefined;
-
-  return {
-    id,
-    model,
-    ...(typeof raw.displayName === "string" ? { displayName: raw.displayName } : {}),
-    ...(typeof raw.hidden === "boolean" ? { hidden: raw.hidden } : {}),
-    ...(typeof raw.defaultReasoningEffort === "string"
-      ? { defaultReasoningEffort: raw.defaultReasoningEffort }
-      : {}),
-    ...(reasoningEffort ? { reasoningEffort } : {}),
-    ...(typeof raw.upgrade === "string" ? { upgrade: raw.upgrade } : {}),
-    ...(Array.isArray(raw.inputModalities)
-      ? {
-          inputModalities: raw.inputModalities.filter(
-            (modality): modality is string => typeof modality === "string",
-          ),
-        }
-      : {}),
-    ...(typeof raw.supportsPersonality === "boolean"
-      ? { supportsPersonality: raw.supportsPersonality }
-      : {}),
-    ...(typeof raw.isDefault === "boolean" ? { isDefault: raw.isDefault } : {}),
-  };
-}
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  if (!value || typeof value !== "object") {
-    return null;
-  }
-  return value as Record<string, unknown>;
-}
-
-function pickString(
-  obj: Record<string, unknown> | null,
-  ...keys: string[]
-): string | null {
-  if (!obj) {
-    return null;
-  }
-  for (const key of keys) {
-    const value = obj[key];
-    if (typeof value === "string") {
-      return value;
-    }
-  }
-  return null;
-}
-
-function stringifyCompact(value: unknown): string | null {
-  if (typeof value === "string") {
-    return value;
-  }
-  if (value === null || value === undefined) {
-    return null;
-  }
-  try {
-    return JSON.stringify(value);
-  } catch {
-    return String(value);
-  }
-}
-
-function truncateText(value: string | null, maxLength = 2000): string | null {
-  if (!value) {
-    return null;
-  }
-  if (value.length <= maxLength) {
-    return value;
-  }
-  return `${value.slice(0, maxLength)}\n...`;
-}
-
-function pushTimelineItem(
-  items: ThreadTimelineItem[],
-  next: ThreadTimelineItem,
-): void {
-  const previous = items[items.length - 1];
-  if (
-    previous &&
-    previous.type === next.type &&
-    previous.turnId === next.turnId &&
-    previous.text === next.text &&
-    previous.rawType === next.rawType
-  ) {
-    return;
-  }
-  items.push(next);
-}
-
 async function loadThreadTimelineFromSession(
   threadId: string,
   limit: number,
@@ -441,259 +266,18 @@ async function loadThreadTimelineFromSession(
 
   const stream = createReadStream(sessionFilePath, { encoding: "utf8" });
   const reader = createInterface({ input: stream, crlfDelay: Infinity });
-  const items: ThreadTimelineItem[] = [];
-  let lineNumber = 0;
-  let activeTurnId: string | null = null;
-
-  const buildId = (prefix: string): string => `${prefix}-${threadId}-${lineNumber}`;
+  const lines: string[] = [];
 
   try {
     for await (const line of reader) {
-      lineNumber += 1;
-      if (!line) {
-        continue;
-      }
-
-      let parsed: Record<string, unknown>;
-      try {
-        parsed = JSON.parse(line) as Record<string, unknown>;
-      } catch {
-        continue;
-      }
-
-      const timestamp =
-        (typeof parsed.timestamp === "string" ? parsed.timestamp : null) ??
-        new Date().toISOString();
-      const lineType = typeof parsed.type === "string" ? parsed.type : "";
-
-      if (lineType === "event_msg") {
-        const payload = asRecord(parsed.payload);
-        const payloadType = pickString(payload, "type");
-        const turnFromPayload = pickString(payload, "turn_id", "turnId");
-        if (turnFromPayload) {
-          activeTurnId = turnFromPayload;
-        }
-        const eventTurnId = turnFromPayload ?? activeTurnId;
-
-        if (payloadType === "task_started") {
-          pushTimelineItem(items, {
-            id: buildId("status"),
-            ts: timestamp,
-            turnId: eventTurnId,
-            type: "status",
-            title: "Turn started",
-            text: eventTurnId ? `turn ${eventTurnId}` : null,
-            rawType: payloadType,
-            toolName: null,
-            callId: null,
-          });
-          continue;
-        }
-
-        if (payloadType === "task_complete") {
-          pushTimelineItem(items, {
-            id: buildId("status"),
-            ts: timestamp,
-            turnId: eventTurnId,
-            type: "status",
-            title: "Turn completed",
-            text: eventTurnId ? `turn ${eventTurnId}` : null,
-            rawType: payloadType,
-            toolName: null,
-            callId: null,
-          });
-          if (turnFromPayload && activeTurnId === turnFromPayload) {
-            activeTurnId = null;
-          }
-          continue;
-        }
-
-        if (payloadType === "turn_aborted") {
-          pushTimelineItem(items, {
-            id: buildId("status"),
-            ts: timestamp,
-            turnId: eventTurnId,
-            type: "status",
-            title: "Turn interrupted",
-            text: eventTurnId ? `turn ${eventTurnId}` : null,
-            rawType: payloadType,
-            toolName: null,
-            callId: null,
-          });
-          if (turnFromPayload && activeTurnId === turnFromPayload) {
-            activeTurnId = null;
-          }
-          continue;
-        }
-
-        if (payloadType === "entered_review_mode" || payloadType === "exited_review_mode") {
-          pushTimelineItem(items, {
-            id: buildId("status"),
-            ts: timestamp,
-            turnId: eventTurnId,
-            type: "status",
-            title: payloadType === "entered_review_mode" ? "Entered review mode" : "Exited review mode",
-            text: pickString(payload, "user_facing_hint"),
-            rawType: payloadType,
-            toolName: null,
-            callId: null,
-          });
-          continue;
-        }
-
-        if (payloadType === "context_compacted") {
-          pushTimelineItem(items, {
-            id: buildId("status"),
-            ts: timestamp,
-            turnId: eventTurnId,
-            type: "status",
-            title: "Context compacted",
-            text: null,
-            rawType: payloadType,
-            toolName: null,
-            callId: null,
-          });
-          continue;
-        }
-
-        if (payloadType === "user_message") {
-          pushTimelineItem(items, {
-            id: buildId("user"),
-            ts: timestamp,
-            turnId: eventTurnId,
-            type: "userMessage",
-            title: "User",
-            text: truncateText(pickString(payload, "message"), 4000),
-            rawType: payloadType,
-            toolName: null,
-            callId: null,
-          });
-          continue;
-        }
-
-        if (payloadType === "agent_message") {
-          pushTimelineItem(items, {
-            id: buildId("assistant"),
-            ts: timestamp,
-            turnId: eventTurnId,
-            type: "assistantMessage",
-            title: "Assistant",
-            text: truncateText(pickString(payload, "message"), 6000),
-            rawType: payloadType,
-            toolName: null,
-            callId: null,
-          });
-          continue;
-        }
-
-        if (payloadType === "agent_reasoning") {
-          pushTimelineItem(items, {
-            id: buildId("reasoning"),
-            ts: timestamp,
-            turnId: eventTurnId,
-            type: "reasoning",
-            title: "Thinking",
-            text: truncateText(pickString(payload, "text"), 2000),
-            rawType: payloadType,
-            toolName: null,
-            callId: null,
-          });
-        }
-        continue;
-      }
-
-      if (lineType !== "response_item") {
-        continue;
-      }
-
-      const payload = asRecord(parsed.payload);
-      const payloadType = pickString(payload, "type");
-      const callId = pickString(payload, "call_id");
-
-      if (
-        payloadType === "function_call" ||
-        payloadType === "custom_tool_call" ||
-        payloadType === "web_search_call"
-      ) {
-        const toolName =
-          pickString(payload, "name") ??
-          (payloadType === "web_search_call" ? "web_search" : "tool");
-        const argumentsText = truncateText(
-          pickString(payload, "arguments", "input", "query") ??
-            stringifyCompact(payload?.arguments ?? payload?.input ?? payload?.query),
-          1800,
-        );
-        pushTimelineItem(items, {
-          id: buildId("tool-call"),
-          ts: timestamp,
-          turnId: activeTurnId,
-          type: "toolCall",
-          title: `Tool call: ${toolName}`,
-          text: argumentsText,
-          rawType: payloadType,
-          toolName,
-          callId,
-        });
-        continue;
-      }
-
-      if (
-        payloadType === "function_call_output" ||
-        payloadType === "custom_tool_call_output" ||
-        payloadType === "web_search_call_output"
-      ) {
-        const outputText = truncateText(
-          pickString(payload, "output") ??
-            stringifyCompact(payload?.output ?? payload?.result ?? payload?.response),
-          2200,
-        );
-        pushTimelineItem(items, {
-          id: buildId("tool-result"),
-          ts: timestamp,
-          turnId: activeTurnId,
-          type: "toolResult",
-          title: "Tool output",
-          text: outputText,
-          rawType: payloadType,
-          toolName: null,
-          callId,
-        });
-      }
+      lines.push(line);
     }
   } finally {
     reader.close();
     stream.destroy();
   }
 
-  if (items.length <= limit) {
-    return items;
-  }
-  return items.slice(-limit);
-}
-
-function applyFilters(
-  items: ThreadListItem[],
-  options: { q?: string; status?: string; archived?: string },
-): ThreadListItem[] {
-  const q = options.q?.trim().toLowerCase();
-  const status = options.status?.trim();
-  const archived = options.archived;
-
-  return items.filter((item) => {
-    if (q && !`${item.title} ${item.preview}`.toLowerCase().includes(q)) {
-      return false;
-    }
-    if (status && item.status !== status) {
-      return false;
-    }
-    if (archived === "true" && !item.archived) {
-      return false;
-    }
-    if (archived === "false" && item.archived) {
-      return false;
-    }
-    return true;
-  });
+  return parseTimelineItemsFromLines(lines, threadId, limit);
 }
 
 function isAllowedWsOrigin(origin: string | undefined): boolean {
@@ -796,29 +380,6 @@ function extractTurnId(params: unknown): string | null {
   if (p.turn && typeof p.turn === "object") {
     const turn = p.turn as Record<string, unknown>;
     if (typeof turn.id === "string") return turn.id;
-  }
-  return null;
-}
-
-function kindFromMethod(method: GatewayEvent["name"]): GatewayEvent["kind"] {
-  if (method.includes("requestApproval") || method.startsWith("tool/requestUserInput")) {
-    return "approval";
-  }
-  if (method.startsWith("thread/")) return "thread";
-  if (method.startsWith("turn/")) return "turn";
-  if (method.startsWith("item/")) return "item";
-  return "system";
-}
-
-function approvalTypeFromMethod(method: string): ApprovalType | null {
-  if (method === "item/commandExecution/requestApproval") {
-    return "commandExecution";
-  }
-  if (method === "item/fileChange/requestApproval") {
-    return "fileChange";
-  }
-  if (method === "tool/requestUserInput") {
-    return "userInput";
   }
   return null;
 }
