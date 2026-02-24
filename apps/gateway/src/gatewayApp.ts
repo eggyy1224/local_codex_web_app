@@ -31,18 +31,9 @@ import type {
 } from "@lcwa/shared-types";
 import type { GatewayAppServerPort } from "./appServerPort.js";
 import {
-  getApprovalById,
-  getProjectedThread,
-  insertGatewayEvent,
-  insertAuditLog,
-  listPendingApprovalsByThread,
-  listGatewayEventsSince,
-  listProjectedThreads,
-  resolveApprovalRequest,
-  updateThreadProjectKey,
-  upsertApprovalRequest,
-  upsertThreads,
+  gatewayDb,
   type ApprovalProjection,
+  type GatewayDbPort,
   type ThreadProjection,
 } from "./db.js";
 import { TerminalManager } from "./terminalManager.js";
@@ -108,6 +99,7 @@ export type GatewayBootstrapConfig = {
 
 export type GatewayAppDeps = {
   appServer: GatewayAppServerPort;
+  db?: GatewayDbPort;
   threadContextResolver?: ThreadContextResolver;
   terminalManager?: TerminalManager;
 };
@@ -166,6 +158,7 @@ export async function createGatewayApp(
   });
 
   const appServer = deps.appServer;
+  const db = deps.db ?? gatewayDb;
   const subscribers = new Map<string, Set<(event: GatewayEvent) => void>>();
   const activeTurnByThread = new Map<string, string>();
   const threadContextResolver =
@@ -880,7 +873,7 @@ appServer.on("message", (msg: unknown) => {
       resolved_at: null,
     };
 
-    upsertApprovalRequest(projection);
+    db.upsertApprovalRequest(projection);
     pendingApprovals.set(approvalId, {
       rpcId: raw.id,
       threadId,
@@ -888,7 +881,7 @@ appServer.on("message", (msg: unknown) => {
       type: approvalType,
     });
 
-    insertAuditLog({
+    db.insertAuditLog({
       ts: createdAt,
       actor: "gateway",
       action: "approval.requested",
@@ -928,7 +921,7 @@ appServer.on("message", (msg: unknown) => {
     payload: payloadForEvent,
   };
 
-  const seq = insertGatewayEvent(eventBase);
+  const seq = db.insertGatewayEvent(eventBase);
   broadcast({ ...eventBase, seq });
 });
 
@@ -1006,12 +999,12 @@ app.get("/api/threads", async (request): Promise<ThreadListResponse> => {
 
     const items = await Promise.all(
       (result.data ?? []).map(async (thread) => {
-        const projected = getProjectedThread(thread.id);
+        const projected = db.getProjectedThread(thread.id);
         let projectKey = projected?.projectKey ?? "unknown";
         if (projectKey === "unknown") {
           projectKey = await threadContextResolver.resolveProjectKey(thread.id, projected?.projectKey);
           if (projectKey !== "unknown") {
-            updateThreadProjectKey(thread.id, projectKey);
+            db.updateThreadProjectKey(thread.id, projectKey);
             threadContextResolver.invalidate(thread.id);
           }
         }
@@ -1030,7 +1023,7 @@ app.get("/api/threads", async (request): Promise<ThreadListResponse> => {
       last_error: item.errorCount > 0 ? "systemError" : null,
     }));
 
-    upsertThreads(rows);
+    db.upsertThreads(rows);
 
     return {
       data: applyFilters(items, query),
@@ -1039,7 +1032,7 @@ app.get("/api/threads", async (request): Promise<ThreadListResponse> => {
   } catch (error) {
     app.log.error({ err: error }, "thread/list failed, fallback to projection cache");
 
-    const projected = listProjectedThreads(limit);
+    const projected = db.listProjectedThreads(limit);
     const hydrated = await Promise.all(
       projected.map(async (thread) => {
         if (thread.projectKey !== "unknown") {
@@ -1047,7 +1040,7 @@ app.get("/api/threads", async (request): Promise<ThreadListResponse> => {
         }
         const projectKey = await threadContextResolver.resolveProjectKey(thread.id, thread.projectKey);
         if (projectKey !== "unknown") {
-          updateThreadProjectKey(thread.id, projectKey);
+          db.updateThreadProjectKey(thread.id, projectKey);
           threadContextResolver.invalidate(thread.id);
         }
         return {
@@ -1073,7 +1066,7 @@ app.post("/api/threads", async (request): Promise<{ threadId: string }> => {
   };
 
   if (body.mode === "fork" && body.fromThreadId) {
-    const sourceThread = getProjectedThread(body.fromThreadId);
+    const sourceThread = db.getProjectedThread(body.fromThreadId);
     const projectKey = sourceThread?.projectKey ?? "unknown";
 
     const result = (await appServer.request("thread/fork", {
@@ -1087,7 +1080,7 @@ app.post("/api/threads", async (request): Promise<{ threadId: string }> => {
     }
 
     const item = toThreadListItem(thread, projectKey);
-    upsertThreads([
+    db.upsertThreads([
       {
         thread_id: item.id,
         project_key: item.projectKey,
@@ -1118,7 +1111,7 @@ app.post("/api/threads", async (request): Promise<{ threadId: string }> => {
   }
 
   const item = toThreadListItem(thread, projectKey);
-  upsertThreads([
+  db.upsertThreads([
     {
       thread_id: item.id,
       project_key: item.projectKey,
@@ -1141,7 +1134,7 @@ app.get("/api/threads/:id", async (request): Promise<ThreadDetailResponse> => {
   const includeTurnsRequested = query.includeTurns !== "false";
 
   const fallbackFromProjection = (): ThreadDetailResponse => {
-    const projected = getProjectedThread(params.id);
+    const projected = db.getProjectedThread(params.id);
     return {
       thread: {
         id: params.id,
@@ -1218,13 +1211,13 @@ app.get("/api/threads/:id", async (request): Promise<ThreadDetailResponse> => {
 
 app.get("/api/threads/:id/context", async (request): Promise<ThreadContextResponse> => {
   const params = request.params as { id: string };
-  const projected = getProjectedThread(params.id);
+  const projected = db.getProjectedThread(params.id);
   const context = await threadContextResolver.resolveThreadContext(
     params.id,
     projected?.projectKey,
   );
   if (!context.isFallback && context.cwd) {
-    updateThreadProjectKey(params.id, normalizeProjectKey(context.cwd));
+    db.updateThreadProjectKey(params.id, normalizeProjectKey(context.cwd));
     threadContextResolver.invalidate(params.id);
   }
   return context;
@@ -1288,14 +1281,14 @@ app.get("/api/terminal/ws", { websocket: true }, (ws, request) => {
         }
         void (async () => {
           try {
-            const projected = getProjectedThread(message.threadId);
+            const projected = db.getProjectedThread(message.threadId);
             const context = await threadContextResolver.resolveThreadContext(
               message.threadId,
               projected?.projectKey,
             );
             terminalManager.openClient(client, message.threadId, context);
             if (!context.isFallback && context.cwd) {
-              updateThreadProjectKey(message.threadId, normalizeProjectKey(context.cwd));
+              db.updateThreadProjectKey(message.threadId, normalizeProjectKey(context.cwd));
               threadContextResolver.invalidate(message.threadId);
             }
           } catch (error) {
@@ -1368,7 +1361,7 @@ app.get("/api/threads/:id/events", async (request, reply) => {
     reply.raw.write(`data: ${JSON.stringify(event)}\n\n`);
   };
 
-  const replay = listGatewayEventsSince(params.id, since, 1000);
+  const replay = db.listGatewayEventsSince(params.id, since, 1000);
   for (const event of replay) {
     writeEvent(event);
   }
@@ -1392,7 +1385,7 @@ app.get(
   async (request): Promise<PendingApprovalsResponse> => {
     const params = request.params as { id: string };
     return {
-      data: listPendingApprovalsByThread(params.id),
+      data: db.listPendingApprovalsByThread(params.id),
     };
   },
 );
@@ -1445,7 +1438,7 @@ app.post("/api/threads/:id/turns", async (request): Promise<CreateTurnResponse> 
 
   activeTurnByThread.set(params.id, turnId);
   if (body.options?.cwd) {
-    updateThreadProjectKey(params.id, normalizeProjectKey(body.options.cwd));
+    db.updateThreadProjectKey(params.id, normalizeProjectKey(body.options.cwd));
     threadContextResolver.invalidate(params.id);
   }
 
@@ -1465,7 +1458,7 @@ app.post(
     }
 
     const pending = pendingApprovals.get(params.approvalId);
-    const approval = getApprovalById(params.approvalId);
+    const approval = db.getApprovalById(params.approvalId);
     if (!pending && !approval) {
       const error = new Error("approval not found") as Error & { statusCode?: number };
       error.statusCode = 404;
@@ -1492,7 +1485,7 @@ app.post(
 
     const resolvedAt = new Date().toISOString();
     const status = body.decision === "allow" ? "approved" : body.decision === "deny" ? "denied" : "cancelled";
-    resolveApprovalRequest(
+    db.resolveApprovalRequest(
       params.approvalId,
       status,
       body.decision,
@@ -1502,7 +1495,7 @@ app.post(
 
     pendingApprovals.delete(params.approvalId);
 
-    insertAuditLog({
+    db.insertAuditLog({
       ts: resolvedAt,
       actor: "user",
       action: "approval.decided",
@@ -1528,7 +1521,7 @@ app.post(
       },
     };
 
-    const seq = insertGatewayEvent(decisionEventBase);
+    const seq = db.insertGatewayEvent(decisionEventBase);
     broadcast({ ...decisionEventBase, seq });
 
     return { ok: true };
@@ -1582,7 +1575,7 @@ app.post("/api/threads/:id/control", async (request): Promise<ThreadControlRespo
 
     activeTurnByThread.set(params.id, turnId);
     if (previous.options?.cwd) {
-      updateThreadProjectKey(params.id, normalizeProjectKey(previous.options.cwd));
+      db.updateThreadProjectKey(params.id, normalizeProjectKey(previous.options.cwd));
       threadContextResolver.invalidate(params.id);
     }
     return { ok: true, appliedToTurnId: turnId };

@@ -36,14 +36,95 @@ export type ApprovalProjection = {
   resolved_at: string | null;
 };
 
-const dataDir = process.env.GATEWAY_DATA_DIR ?? path.join(os.homedir(), ".codex-web-gateway");
-const dbPath = path.join(dataDir, "index.db");
+export type AuditLogEntry = {
+  ts: string;
+  actor: string;
+  action: string;
+  threadId: string | null;
+  turnId: string | null;
+  metadata: unknown;
+};
 
-mkdirSync(dataDir, { recursive: true });
+export type GatewayDbPort = {
+  upsertThreads(rows: ThreadProjection[]): void;
+  listProjectedThreads(limit: number): ThreadListItem[];
+  getProjectedThread(threadId: string): ThreadListItem | null;
+  updateThreadProjectKey(threadId: string, projectKey: string): void;
+  insertGatewayEvent(event: Omit<GatewayEvent, "seq">): number;
+  listGatewayEventsSince(threadId: string, since: number, limit?: number): GatewayEvent[];
+  upsertApprovalRequest(row: ApprovalProjection): void;
+  resolveApprovalRequest(
+    approvalId: string,
+    status: ApprovalStatus,
+    decision: string,
+    note: string | null,
+    resolvedAt: string,
+  ): void;
+  getApprovalById(approvalId: string): ApprovalView | null;
+  listPendingApprovalsByThread(threadId: string): ApprovalView[];
+  insertAuditLog(entry: AuditLogEntry): void;
+};
 
-export const db = new DatabaseSync(dbPath);
+export type GatewayDb = GatewayDbPort & {
+  sqlite: DatabaseSync;
+  dataDir: string;
+  dbPath: string;
+};
 
-db.exec(`
+export type GatewayDbOptions = {
+  dataDir?: string;
+  dbPath?: string;
+};
+
+function defaultGatewayDataDir(): string {
+  return process.env.GATEWAY_DATA_DIR ?? path.join(os.homedir(), ".codex-web-gateway");
+}
+
+function toApprovalView(row: ApprovalProjection): ApprovalView {
+  const requestPayload = JSON.parse(row.request_payload_json) as Record<string, unknown>;
+
+  const commandPreview =
+    typeof requestPayload.command === "string" ? requestPayload.command : null;
+
+  let fileChangePreview: string | null = null;
+  const changes = requestPayload.changes;
+  if (Array.isArray(changes)) {
+    const firstPath = changes.find(
+      (entry) =>
+        entry && typeof entry === "object" && typeof (entry as Record<string, unknown>).path === "string",
+    ) as Record<string, unknown> | undefined;
+    if (firstPath && typeof firstPath.path === "string") {
+      fileChangePreview = firstPath.path;
+    }
+  }
+
+  return {
+    approvalId: row.approval_id,
+    threadId: row.thread_id,
+    turnId: row.turn_id,
+    itemId: row.item_id,
+    type: row.type,
+    status: row.status,
+    reason: typeof requestPayload.reason === "string" ? requestPayload.reason : null,
+    commandPreview,
+    fileChangePreview,
+    createdAt: row.created_at,
+    resolvedAt: row.resolved_at,
+  };
+}
+
+export function createGatewayDb(options: GatewayDbOptions = {}): GatewayDb {
+  const dataDir = options.dataDir ?? defaultGatewayDataDir();
+  const dbPath = options.dbPath ?? path.join(dataDir, "index.db");
+
+  mkdirSync(path.dirname(dbPath), { recursive: true });
+  if (!options.dbPath) {
+    mkdirSync(dataDir, { recursive: true });
+  }
+
+  const sqlite = new DatabaseSync(dbPath);
+
+  sqlite.exec(`
 PRAGMA journal_mode = WAL;
 
 CREATE TABLE IF NOT EXISTS threads_projection (
@@ -101,16 +182,16 @@ CREATE TABLE IF NOT EXISTS audit_log (
 );
 `);
 
-try {
-  db.exec("ALTER TABLE threads_projection ADD COLUMN project_key TEXT NOT NULL DEFAULT 'unknown'");
-} catch (error) {
-  const message = error instanceof Error ? error.message : String(error);
-  if (!message.includes("duplicate column name")) {
-    throw error;
+  try {
+    sqlite.exec("ALTER TABLE threads_projection ADD COLUMN project_key TEXT NOT NULL DEFAULT 'unknown'");
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!message.includes("duplicate column name")) {
+      throw error;
+    }
   }
-}
 
-const upsertThreadStmt = db.prepare(`
+  const upsertThreadStmt = sqlite.prepare(`
 INSERT INTO threads_projection (thread_id, project_key, title, preview, status, archived, updated_at, last_error)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(thread_id) DO UPDATE SET
@@ -123,33 +204,33 @@ ON CONFLICT(thread_id) DO UPDATE SET
   last_error = excluded.last_error;
 `);
 
-const listThreadsStmt = db.prepare(`
+  const listThreadsStmt = sqlite.prepare(`
 SELECT thread_id, project_key, title, preview, status, archived, updated_at, last_error
 FROM threads_projection
 ORDER BY updated_at DESC
 LIMIT ?
 `);
 
-const getThreadByIdStmt = db.prepare(`
+  const getThreadByIdStmt = sqlite.prepare(`
 SELECT thread_id, project_key, title, preview, status, archived, updated_at, last_error
 FROM threads_projection
 WHERE thread_id = ?
 LIMIT 1
 `);
 
-const updateThreadProjectStmt = db.prepare(`
+  const updateThreadProjectStmt = sqlite.prepare(`
 UPDATE threads_projection
 SET project_key = ?
 WHERE thread_id = ?
 `);
 
-const insertEventStmt = db.prepare(`
+  const insertEventStmt = sqlite.prepare(`
 INSERT INTO events_log (thread_id, turn_id, kind, name, payload_json, server_ts)
 VALUES (?, ?, ?, ?, ?, ?)
 RETURNING seq
 `);
 
-const listEventsSinceStmt = db.prepare(`
+  const listEventsSinceStmt = sqlite.prepare(`
 SELECT seq, thread_id, turn_id, kind, name, payload_json, server_ts
 FROM events_log
 WHERE thread_id = ? AND seq > ?
@@ -157,7 +238,7 @@ ORDER BY seq ASC
 LIMIT ?
 `);
 
-const upsertApprovalStmt = db.prepare(`
+  const upsertApprovalStmt = sqlite.prepare(`
 INSERT INTO approvals (
   approval_id,
   thread_id,
@@ -185,13 +266,13 @@ ON CONFLICT(approval_id) DO UPDATE SET
   resolved_at = excluded.resolved_at;
 `);
 
-const resolveApprovalStmt = db.prepare(`
+  const resolveApprovalStmt = sqlite.prepare(`
 UPDATE approvals
 SET status = ?, decision = ?, note = ?, resolved_at = ?
 WHERE approval_id = ?
 `);
 
-const getApprovalByIdStmt = db.prepare(`
+  const getApprovalByIdStmt = sqlite.prepare(`
 SELECT
   approval_id,
   thread_id,
@@ -209,7 +290,7 @@ WHERE approval_id = ?
 LIMIT 1
 `);
 
-const listPendingApprovalsByThreadStmt = db.prepare(`
+  const listPendingApprovalsByThreadStmt = sqlite.prepare(`
 SELECT
   approval_id,
   thread_id,
@@ -227,81 +308,172 @@ WHERE thread_id = ? AND status = 'pending'
 ORDER BY created_at ASC
 `);
 
-const insertAuditStmt = db.prepare(`
+  const insertAuditStmt = sqlite.prepare(`
 INSERT INTO audit_log (ts, actor, action, thread_id, turn_id, metadata_json)
 VALUES (?, ?, ?, ?, ?, ?)
 `);
 
-export function upsertThreads(rows: ThreadProjection[]): void {
-  db.exec("BEGIN");
-  try {
-    for (const row of rows) {
-      upsertThreadStmt.run(
-        row.thread_id,
-        row.project_key,
-        row.title,
-        row.preview,
-        row.status,
-        row.archived,
-        row.updated_at,
-        row.last_error,
-      );
-    }
-    db.exec("COMMIT");
-  } catch (error) {
-    db.exec("ROLLBACK");
-    throw error;
-  }
-}
-
-export function listProjectedThreads(limit: number): ThreadListItem[] {
-  const rows = listThreadsStmt.all(limit) as ThreadProjection[];
-  return rows.map((row) => ({
-    id: row.thread_id,
-    projectKey: row.project_key || "unknown",
-    title: row.title,
-    preview: row.preview,
-    status: row.status,
-    lastActiveAt: row.updated_at,
-    archived: row.archived === 1,
-    waitingApprovalCount: 0,
-    errorCount: row.last_error ? 1 : 0,
-  }));
-}
-
-export function getProjectedThread(threadId: string): ThreadListItem | null {
-  const row = getThreadByIdStmt.get(threadId) as ThreadProjection | undefined;
-  if (!row) {
-    return null;
-  }
-
   return {
-    id: row.thread_id,
-    projectKey: row.project_key || "unknown",
-    title: row.title,
-    preview: row.preview,
-    status: row.status,
-    lastActiveAt: row.updated_at,
-    archived: row.archived === 1,
-    waitingApprovalCount: 0,
-    errorCount: row.last_error ? 1 : 0,
+    sqlite,
+    dataDir,
+    dbPath,
+    upsertThreads(rows: ThreadProjection[]): void {
+      sqlite.exec("BEGIN");
+      try {
+        for (const row of rows) {
+          upsertThreadStmt.run(
+            row.thread_id,
+            row.project_key,
+            row.title,
+            row.preview,
+            row.status,
+            row.archived,
+            row.updated_at,
+            row.last_error,
+          );
+        }
+        sqlite.exec("COMMIT");
+      } catch (error) {
+        sqlite.exec("ROLLBACK");
+        throw error;
+      }
+    },
+    listProjectedThreads(limit: number): ThreadListItem[] {
+      const rows = listThreadsStmt.all(limit) as ThreadProjection[];
+      return rows.map((row) => ({
+        id: row.thread_id,
+        projectKey: row.project_key || "unknown",
+        title: row.title,
+        preview: row.preview,
+        status: row.status,
+        lastActiveAt: row.updated_at,
+        archived: row.archived === 1,
+        waitingApprovalCount: 0,
+        errorCount: row.last_error ? 1 : 0,
+      }));
+    },
+    getProjectedThread(threadId: string): ThreadListItem | null {
+      const row = getThreadByIdStmt.get(threadId) as ThreadProjection | undefined;
+      if (!row) {
+        return null;
+      }
+
+      return {
+        id: row.thread_id,
+        projectKey: row.project_key || "unknown",
+        title: row.title,
+        preview: row.preview,
+        status: row.status,
+        lastActiveAt: row.updated_at,
+        archived: row.archived === 1,
+        waitingApprovalCount: 0,
+        errorCount: row.last_error ? 1 : 0,
+      };
+    },
+    updateThreadProjectKey(threadId: string, projectKey: string): void {
+      updateThreadProjectStmt.run(projectKey, threadId);
+    },
+    insertGatewayEvent(event: Omit<GatewayEvent, "seq">): number {
+      const row = insertEventStmt.get(
+        event.threadId,
+        event.turnId,
+        event.kind,
+        event.name,
+        JSON.stringify(event.payload ?? null),
+        event.serverTs,
+      ) as { seq: number };
+      return row.seq;
+    },
+    listGatewayEventsSince(threadId: string, since: number, limit = 500): GatewayEvent[] {
+      const rows = listEventsSinceStmt.all(threadId, since, limit) as Array<{
+        seq: number;
+        thread_id: string;
+        turn_id: string | null;
+        kind: GatewayEvent["kind"];
+        name: string;
+        payload_json: string;
+        server_ts: string;
+      }>;
+
+      return rows.map((row) => ({
+        seq: row.seq,
+        threadId: row.thread_id,
+        turnId: row.turn_id,
+        kind: row.kind,
+        name: row.name,
+        payload: JSON.parse(row.payload_json),
+        serverTs: row.server_ts,
+      }));
+    },
+    upsertApprovalRequest(row: ApprovalProjection): void {
+      upsertApprovalStmt.run(
+        row.approval_id,
+        row.thread_id,
+        row.turn_id,
+        row.item_id,
+        row.type,
+        row.status,
+        row.request_payload_json,
+        row.decision,
+        row.note,
+        row.created_at,
+        row.resolved_at,
+      );
+    },
+    resolveApprovalRequest(
+      approvalId: string,
+      status: ApprovalStatus,
+      decision: string,
+      note: string | null,
+      resolvedAt: string,
+    ): void {
+      resolveApprovalStmt.run(status, decision, note, resolvedAt, approvalId);
+    },
+    getApprovalById(approvalId: string): ApprovalView | null {
+      const row = getApprovalByIdStmt.get(approvalId) as ApprovalProjection | undefined;
+      if (!row) {
+        return null;
+      }
+      return toApprovalView(row);
+    },
+    listPendingApprovalsByThread(threadId: string): ApprovalView[] {
+      const rows = listPendingApprovalsByThreadStmt.all(threadId) as ApprovalProjection[];
+      return rows.map(toApprovalView);
+    },
+    insertAuditLog(entry: AuditLogEntry): void {
+      insertAuditStmt.run(
+        entry.ts,
+        entry.actor,
+        entry.action,
+        entry.threadId,
+        entry.turnId,
+        JSON.stringify(entry.metadata ?? null),
+      );
+    },
   };
 }
 
+export const gatewayDb = createGatewayDb();
+export const db = gatewayDb.sqlite;
+
+export function upsertThreads(rows: ThreadProjection[]): void {
+  gatewayDb.upsertThreads(rows);
+}
+
+export function listProjectedThreads(limit: number): ThreadListItem[] {
+  return gatewayDb.listProjectedThreads(limit);
+}
+
+export function getProjectedThread(threadId: string): ThreadListItem | null {
+  return gatewayDb.getProjectedThread(threadId);
+}
+
 export function updateThreadProjectKey(threadId: string, projectKey: string): void {
-  updateThreadProjectStmt.run(projectKey, threadId);
+  gatewayDb.updateThreadProjectKey(threadId, projectKey);
 }
 
 export function insertGatewayEvent(event: Omit<GatewayEvent, "seq">): number {
-  const row = insertEventStmt.get(
-    event.threadId,
-    event.turnId,
-    event.kind,
-    event.name,
-    JSON.stringify(event.payload ?? null),
-    event.serverTs,
-  ) as { seq: number };
-  return row.seq;
+  return gatewayDb.insertGatewayEvent(event);
 }
 
 export function listGatewayEventsSince(
@@ -309,74 +481,11 @@ export function listGatewayEventsSince(
   since: number,
   limit = 500,
 ): GatewayEvent[] {
-  const rows = listEventsSinceStmt.all(threadId, since, limit) as Array<{
-    seq: number;
-    thread_id: string;
-    turn_id: string | null;
-    kind: GatewayEvent["kind"];
-    name: string;
-    payload_json: string;
-    server_ts: string;
-  }>;
-
-  return rows.map((row) => ({
-    seq: row.seq,
-    threadId: row.thread_id,
-    turnId: row.turn_id,
-    kind: row.kind,
-    name: row.name,
-    payload: JSON.parse(row.payload_json),
-    serverTs: row.server_ts,
-  }));
-}
-
-function toApprovalView(row: ApprovalProjection): ApprovalView {
-  const requestPayload = JSON.parse(row.request_payload_json) as Record<string, unknown>;
-
-  const commandPreview =
-    typeof requestPayload.command === "string" ? requestPayload.command : null;
-
-  let fileChangePreview: string | null = null;
-  const changes = requestPayload.changes;
-  if (Array.isArray(changes)) {
-    const firstPath = changes.find(
-      (entry) =>
-        entry && typeof entry === "object" && typeof (entry as Record<string, unknown>).path === "string",
-    ) as Record<string, unknown> | undefined;
-    if (firstPath && typeof firstPath.path === "string") {
-      fileChangePreview = firstPath.path;
-    }
-  }
-
-  return {
-    approvalId: row.approval_id,
-    threadId: row.thread_id,
-    turnId: row.turn_id,
-    itemId: row.item_id,
-    type: row.type,
-    status: row.status,
-    reason: typeof requestPayload.reason === "string" ? requestPayload.reason : null,
-    commandPreview,
-    fileChangePreview,
-    createdAt: row.created_at,
-    resolvedAt: row.resolved_at,
-  };
+  return gatewayDb.listGatewayEventsSince(threadId, since, limit);
 }
 
 export function upsertApprovalRequest(row: ApprovalProjection): void {
-  upsertApprovalStmt.run(
-    row.approval_id,
-    row.thread_id,
-    row.turn_id,
-    row.item_id,
-    row.type,
-    row.status,
-    row.request_payload_json,
-    row.decision,
-    row.note,
-    row.created_at,
-    row.resolved_at,
-  );
+  gatewayDb.upsertApprovalRequest(row);
 }
 
 export function resolveApprovalRequest(
@@ -386,36 +495,17 @@ export function resolveApprovalRequest(
   note: string | null,
   resolvedAt: string,
 ): void {
-  resolveApprovalStmt.run(status, decision, note, resolvedAt, approvalId);
+  gatewayDb.resolveApprovalRequest(approvalId, status, decision, note, resolvedAt);
 }
 
 export function getApprovalById(approvalId: string): ApprovalView | null {
-  const row = getApprovalByIdStmt.get(approvalId) as ApprovalProjection | undefined;
-  if (!row) {
-    return null;
-  }
-  return toApprovalView(row);
+  return gatewayDb.getApprovalById(approvalId);
 }
 
 export function listPendingApprovalsByThread(threadId: string): ApprovalView[] {
-  const rows = listPendingApprovalsByThreadStmt.all(threadId) as ApprovalProjection[];
-  return rows.map(toApprovalView);
+  return gatewayDb.listPendingApprovalsByThread(threadId);
 }
 
-export function insertAuditLog(entry: {
-  ts: string;
-  actor: string;
-  action: string;
-  threadId: string | null;
-  turnId: string | null;
-  metadata: unknown;
-}): void {
-  insertAuditStmt.run(
-    entry.ts,
-    entry.actor,
-    entry.action,
-    entry.threadId,
-    entry.turnId,
-    JSON.stringify(entry.metadata ?? null),
-  );
+export function insertAuditLog(entry: AuditLogEntry): void {
+  gatewayDb.insertAuditLog(entry);
 }
