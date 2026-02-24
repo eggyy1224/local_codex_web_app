@@ -18,7 +18,7 @@ export default defineConfig({
     },
     {
       name: "mobile",
-      use: { ...devices["iPhone 14"] },
+      use: { ...devices["Pixel 7"], browserName: "chromium" },
     },
   ],
   webServer: [
@@ -29,7 +29,7 @@ export default defineConfig({
       timeout: 120_000,
     },
     {
-      command: `NEXT_PUBLIC_GATEWAY_URL=http://127.0.0.1:${gatewayPort} pnpm --filter @lcwa/web dev -- --port ${port}`,
+      command: `NEXT_PUBLIC_GATEWAY_URL=http://127.0.0.1:${gatewayPort} pnpm --filter @lcwa/web exec next dev --port ${port}`,
       url: `http://127.0.0.1:${port}`,
       reuseExistingServer: !process.env.CI,
       timeout: 120_000,
