@@ -33,6 +33,7 @@ main {
   margin-top: 12px;
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 10px;
   font-size: 14px;
 }
@@ -61,4 +62,22 @@ main {
 .muted {
   color: #94a3b8;
   font-size: 12px;
+}
+
+@media (max-width: 768px) {
+  main {
+    place-items: start;
+    padding: 12px;
+  }
+
+  .panel {
+    width: 100%;
+    border-radius: 12px;
+    padding: 14px;
+  }
+
+  .status {
+    gap: 6px;
+    font-size: 12px;
+  }
 }

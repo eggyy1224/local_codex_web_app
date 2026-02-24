@@ -12,7 +12,7 @@ import type {
   ThreadDetailResponse,
 } from "@lcwa/shared-types";
 
-type ConnectionState = "connecting" | "connected" | "reconnecting";
+type ConnectionState = "connecting" | "connected" | "reconnecting" | "lagging";
 type TurnStatus = "inProgress" | "completed" | "failed" | "interrupted" | "unknown";
 
 type Props = {
@@ -113,6 +113,7 @@ export default function ThreadPage({ params }: Props) {
   const [events, setEvents] = useState<GatewayEvent[]>([]);
   const [lastSeq, setLastSeq] = useState(0);
   const [connectionState, setConnectionState] = useState<ConnectionState>("connecting");
+  const [lastEventAtMs, setLastEventAtMs] = useState<number>(Date.now());
   const [turnCards, setTurnCards] = useState<Record<string, TurnCard>>({});
   const [prompt, setPrompt] = useState("");
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -195,6 +196,16 @@ export default function ThreadPage({ params }: Props) {
     let es: EventSource | null = null;
     let stopped = false;
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    let reconnectAttempt = 0;
+
+    const scheduleReconnect = () => {
+      if (stopped) {
+        return;
+      }
+      const delay = Math.min(10_000, 800 * 2 ** reconnectAttempt);
+      reconnectAttempt += 1;
+      retryTimer = setTimeout(() => connect(true), delay);
+    };
 
     const connect = (isRetry: boolean) => {
       if (stopped) {
@@ -206,9 +217,14 @@ export default function ThreadPage({ params }: Props) {
 
       es.addEventListener("gateway", (event) => {
         const payload = JSON.parse((event as MessageEvent).data) as GatewayEvent;
+        if (payload.seq <= currentSince) {
+          return;
+        }
         currentSince = payload.seq;
-        setEvents((prev) => [...prev, payload]);
-        setLastSeq(payload.seq);
+        setEvents((prev) => [...prev, payload].slice(-500));
+        setLastSeq((prev) => Math.max(prev, payload.seq));
+        setLastEventAtMs(Date.now());
+        reconnectAttempt = 0;
         setConnectionState("connected");
 
         const payloadRecord = asRecord(payload.payload);
@@ -307,6 +323,8 @@ export default function ThreadPage({ params }: Props) {
 
       es.addEventListener("heartbeat", () => {
         if (!stopped) {
+          setLastEventAtMs(Date.now());
+          reconnectAttempt = 0;
           setConnectionState("connected");
         }
       });
@@ -317,7 +335,7 @@ export default function ThreadPage({ params }: Props) {
         }
         setConnectionState("reconnecting");
         es?.close();
-        retryTimer = setTimeout(() => connect(true), 1200);
+        scheduleReconnect();
       };
     };
 
@@ -332,9 +350,29 @@ export default function ThreadPage({ params }: Props) {
     };
   }, [threadId]);
 
+  useEffect(() => {
+    if (connectionState === "reconnecting" || connectionState === "connecting") {
+      return;
+    }
+
+    const timer = setInterval(() => {
+      const ageMs = Date.now() - lastEventAtMs;
+      if (ageMs > 20_000) {
+        setConnectionState("lagging");
+      } else if (connectionState === "lagging") {
+        setConnectionState("connected");
+      }
+    }, 4_000);
+
+    return () => {
+      clearInterval(timer);
+    };
+  }, [connectionState, lastEventAtMs]);
+
   const connectionText = useMemo(() => {
     if (connectionState === "connected") return "CONNECTED";
     if (connectionState === "reconnecting") return "RECONNECTING";
+    if (connectionState === "lagging") return "LAGGING";
     return "CONNECTING";
   }, [connectionState]);
 
@@ -509,9 +547,17 @@ export default function ThreadPage({ params }: Props) {
     <main>
       <section className="panel">
         <h1 data-testid="thread-title">Thread {threadId || "..."}</h1>
-        <p className="muted">Slice 5: approval + control actions</p>
+        <p className="muted">Slice 6: mobile-first + resilient SSE reconnect</p>
         <div className="status">
-          <span className={`badge ${connectionState === "connected" ? "ok" : "down"}`}>
+          <span
+            className={`badge ${
+              connectionState === "connected"
+                ? "ok"
+                : connectionState === "lagging"
+                  ? "pending"
+                  : "down"
+            }`}
+          >
             {connectionText}
           </span>
           <span data-testid="event-cursor">Last Seq: {lastSeq}</span>
@@ -522,7 +568,7 @@ export default function ThreadPage({ params }: Props) {
           style={{
             marginTop: 12,
             display: "grid",
-            gridTemplateColumns: "1fr 1fr 1fr",
+            gridTemplateColumns: "repeat(auto-fit, minmax(92px, 1fr))",
             gap: 8,
           }}
         >
@@ -742,7 +788,13 @@ export default function ThreadPage({ params }: Props) {
                 target: {activeApproval.fileChangePreview}
               </p>
             ) : null}
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fit, minmax(92px, 1fr))",
+                gap: 8,
+              }}
+            >
               <button
                 type="button"
                 data-testid="approval-allow"
