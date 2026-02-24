@@ -1649,6 +1649,22 @@ export default function ThreadPage({ params }: Props) {
               data-testid="turn-input"
               value={prompt}
               onChange={(event) => setPrompt(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key !== "Enter" || event.shiftKey) {
+                  return;
+                }
+                if (
+                  event.defaultPrevented ||
+                  event.nativeEvent.isComposing ||
+                  event.metaKey ||
+                  event.ctrlKey ||
+                  event.altKey
+                ) {
+                  return;
+                }
+                event.preventDefault();
+                void sendTurn();
+              }}
               placeholder="Ask Codex anything, @ to add files, / for commands"
               rows={3}
             />
