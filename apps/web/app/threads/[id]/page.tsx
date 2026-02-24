@@ -7,6 +7,8 @@ import type {
   CreateTurnResponse,
   GatewayEvent,
   PendingApprovalsResponse,
+  ThreadControlRequest,
+  ThreadControlResponse,
   ThreadDetailResponse,
 } from "@lcwa/shared-types";
 
@@ -118,6 +120,8 @@ export default function ThreadPage({ params }: Props) {
   const [pendingApprovals, setPendingApprovals] = useState<Record<string, PendingApprovalCard>>({});
   const [approvalBusy, setApprovalBusy] = useState<string | null>(null);
   const [approvalError, setApprovalError] = useState<string | null>(null);
+  const [controlBusy, setControlBusy] = useState<ThreadControlRequest["action"] | null>(null);
+  const [controlError, setControlError] = useState<string | null>(null);
 
   useEffect(() => {
     params.then((value) => setThreadId(value.id));
@@ -401,6 +405,56 @@ export default function ThreadPage({ params }: Props) {
     }
   }
 
+  async function sendControl(action: ThreadControlRequest["action"]): Promise<void> {
+    if (!threadId || controlBusy) {
+      return;
+    }
+
+    setControlBusy(action);
+    setControlError(null);
+
+    try {
+      const res = await fetch(`${gatewayUrl}/api/threads/${threadId}/control`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          action,
+        } satisfies ThreadControlRequest),
+      });
+
+      if (!res.ok) {
+        throw new Error(`control http ${res.status}`);
+      }
+
+      const payload = (await res.json()) as ThreadControlResponse;
+      const appliedTurnId = payload.appliedToTurnId;
+      if (appliedTurnId && action === "retry") {
+        setTurnCards((prev) => {
+          if (prev[appliedTurnId]) {
+            return prev;
+          }
+          return {
+            ...prev,
+            [appliedTurnId]: {
+              id: appliedTurnId,
+              status: "inProgress",
+              startedAt: new Date().toISOString(),
+              completedAt: null,
+              agentText: "",
+              error: null,
+            },
+          };
+        });
+      }
+    } catch (controlErr) {
+      setControlError(controlErr instanceof Error ? controlErr.message : "control failed");
+    } finally {
+      setControlBusy(null);
+    }
+  }
+
   async function sendTurn(): Promise<void> {
     const text = prompt.trim();
     if (!text || !threadId || submitting) {
@@ -455,7 +509,7 @@ export default function ThreadPage({ params }: Props) {
     <main>
       <section className="panel">
         <h1 data-testid="thread-title">Thread {threadId || "..."}</h1>
-        <p className="muted">Slice 3: turn start + streaming output</p>
+        <p className="muted">Slice 5: approval + control actions</p>
         <div className="status">
           <span className={`badge ${connectionState === "connected" ? "ok" : "down"}`}>
             {connectionText}
@@ -464,10 +518,72 @@ export default function ThreadPage({ params }: Props) {
           <span data-testid="approval-count">Pending Approval: {Object.keys(pendingApprovals).length}</span>
         </div>
 
+        <div
+          style={{
+            marginTop: 12,
+            display: "grid",
+            gridTemplateColumns: "1fr 1fr 1fr",
+            gap: 8,
+          }}
+        >
+          <button
+            type="button"
+            data-testid="control-stop"
+            disabled={controlBusy !== null}
+            onClick={() => void sendControl("stop")}
+            style={{
+              border: "none",
+              borderRadius: 10,
+              background: "#b91c1c",
+              color: "white",
+              padding: "8px 10px",
+              fontWeight: 700,
+              cursor: controlBusy ? "not-allowed" : "pointer",
+            }}
+          >
+            {controlBusy === "stop" ? "Stopping..." : "Stop"}
+          </button>
+          <button
+            type="button"
+            data-testid="control-retry"
+            disabled={controlBusy !== null}
+            onClick={() => void sendControl("retry")}
+            style={{
+              border: "none",
+              borderRadius: 10,
+              background: "#0f766e",
+              color: "white",
+              padding: "8px 10px",
+              fontWeight: 700,
+              cursor: controlBusy ? "not-allowed" : "pointer",
+            }}
+          >
+            {controlBusy === "retry" ? "Retrying..." : "Retry"}
+          </button>
+          <button
+            type="button"
+            data-testid="control-cancel"
+            disabled={controlBusy !== null}
+            onClick={() => void sendControl("cancel")}
+            style={{
+              border: "none",
+              borderRadius: 10,
+              background: "#334155",
+              color: "white",
+              padding: "8px 10px",
+              fontWeight: 700,
+              cursor: controlBusy ? "not-allowed" : "pointer",
+            }}
+          >
+            {controlBusy === "cancel" ? "Cancelling..." : "Cancel"}
+          </button>
+        </div>
+
         {loading ? <p className="muted">Loading thread...</p> : null}
         {error ? <p className="muted">{error}</p> : null}
         {submitError ? <p className="muted">{submitError}</p> : null}
         {approvalError ? <p className="muted">{approvalError}</p> : null}
+        {controlError ? <p className="muted">{controlError}</p> : null}
 
         <div
           style={{

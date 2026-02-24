@@ -10,6 +10,8 @@ import type {
   HealthResponse,
   PendingApprovalsResponse,
   ThreadDetailResponse,
+  ThreadControlRequest,
+  ThreadControlResponse,
   ThreadListItem,
   ThreadListResponse,
   ThreadMeta,
@@ -80,6 +82,14 @@ await app.register(cors, {
 
 const appServer = new AppServerClient();
 const subscribers = new Map<string, Set<(event: GatewayEvent) => void>>();
+const activeTurnByThread = new Map<string, string>();
+const lastTurnInputByThread = new Map<
+  string,
+  {
+    input: CreateTurnRequest["input"];
+    options?: CreateTurnRequest["options"];
+  }
+>();
 const pendingApprovals = new Map<
   string,
   {
@@ -335,6 +345,17 @@ appServer.on("message", (msg: unknown) => {
       approvalId,
       approvalType,
     };
+  }
+
+  if (raw.method === "turn/started" && turnId) {
+    activeTurnByThread.set(threadId, turnId);
+  }
+
+  if (raw.method === "turn/completed" && turnId) {
+    const activeTurn = activeTurnByThread.get(threadId);
+    if (activeTurn === turnId) {
+      activeTurnByThread.delete(threadId);
+    }
   }
 
   const eventBase: Omit<GatewayEvent, "seq"> = {
@@ -622,6 +643,11 @@ app.post("/api/threads/:id/turns", async (request): Promise<CreateTurnResponse> 
     throw error;
   }
 
+  lastTurnInputByThread.set(params.id, {
+    input: body.input,
+    options: body.options,
+  });
+
   const startTurn = async (): Promise<{ turn?: RawTurn }> =>
     (await appServer.request("turn/start", {
       threadId: params.id,
@@ -648,6 +674,8 @@ app.post("/api/threads/:id/turns", async (request): Promise<CreateTurnResponse> 
   if (!turnId) {
     throw new Error("turn/start response missing turn.id");
   }
+
+  activeTurnByThread.set(params.id, turnId);
 
   return { turnId };
 });
@@ -734,5 +762,79 @@ app.post(
     return { ok: true };
   },
 );
+
+app.post("/api/threads/:id/control", async (request): Promise<ThreadControlResponse> => {
+  const params = request.params as { id: string };
+  const body = request.body as ThreadControlRequest;
+
+  if (body.action !== "stop" && body.action !== "retry" && body.action !== "cancel") {
+    const error = new Error("invalid action") as Error & { statusCode?: number };
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (body.action === "retry") {
+    const previous = lastTurnInputByThread.get(params.id);
+    if (!previous) {
+      const error = new Error("no previous turn input") as Error & { statusCode?: number };
+      error.statusCode = 400;
+      throw error;
+    }
+
+    const startTurn = async (): Promise<{ turn?: RawTurn }> =>
+      (await appServer.request("turn/start", {
+        threadId: params.id,
+        input: previous.input,
+        ...(previous.options?.model ? { model: previous.options.model } : {}),
+        ...(previous.options?.effort ? { effort: previous.options.effort } : {}),
+        ...(previous.options?.cwd ? { cwd: previous.options.cwd } : {}),
+      })) as { turn?: RawTurn };
+
+    let result: { turn?: RawTurn };
+    try {
+      result = await startTurn();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (!message.includes("thread not loaded")) {
+        throw error;
+      }
+      await appServer.request("thread/resume", { threadId: params.id });
+      result = await startTurn();
+    }
+
+    const turnId = result.turn?.id;
+    if (!turnId) {
+      throw new Error("turn/start response missing turn.id");
+    }
+
+    activeTurnByThread.set(params.id, turnId);
+    return { ok: true, appliedToTurnId: turnId };
+  }
+
+  const activeTurnId = activeTurnByThread.get(params.id);
+  if (!activeTurnId) {
+    return { ok: true };
+  }
+
+  const interruptTurn = async (): Promise<void> => {
+    await appServer.request("turn/interrupt", {
+      threadId: params.id,
+      turnId: activeTurnId,
+    });
+  };
+
+  try {
+    await interruptTurn();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!message.includes("thread not loaded")) {
+      throw error;
+    }
+    await appServer.request("thread/resume", { threadId: params.id });
+    await interruptTurn();
+  }
+
+  return { ok: true, appliedToTurnId: activeTurnId };
+});
 
 await app.listen({ host, port });

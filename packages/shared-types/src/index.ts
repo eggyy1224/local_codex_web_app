@@ -112,6 +112,15 @@ export type PendingApprovalsResponse = {
   data: ApprovalView[];
 };
 
+export type ThreadControlRequest = {
+  action: "stop" | "retry" | "cancel";
+};
+
+export type ThreadControlResponse = {
+  ok: true;
+  appliedToTurnId?: string;
+};
+
 export type GatewayEvent = {
   seq: number;
   serverTs: string;
