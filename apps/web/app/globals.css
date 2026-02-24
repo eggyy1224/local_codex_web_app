@@ -64,6 +64,10 @@ textarea {
   background: transparent;
 }
 
+.cdx-topbar--compact {
+  padding: 8px 6px;
+}
+
 .cdx-topbar-group {
   display: flex;
   align-items: center;
@@ -324,6 +328,10 @@ textarea {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
   gap: 14px;
+}
+
+.cdx-main--compact {
+  padding: 12px;
 }
 
 .cdx-hero {

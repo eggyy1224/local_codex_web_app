@@ -708,6 +708,7 @@ export default function ThreadPage({ params }: Props) {
   const [terminalOpen, setTerminalOpen] = useState(false);
   const [terminalWidth, setTerminalWidth] = useState(420);
   const [isMobileViewport, setIsMobileViewport] = useState(false);
+  const [isCompactViewport, setIsCompactViewport] = useState(false);
   const [showAllTurns, setShowAllTurns] = useState(false);
   const modelOptions = useMemo(() => {
     if (modelCatalog.length === 0) {
@@ -825,6 +826,23 @@ export default function ThreadPage({ params }: Props) {
     }
     window.localStorage.setItem(TERMINAL_WIDTH_STORAGE_KEY, String(terminalWidth));
   }, [isMobileViewport, terminalWidth]);
+
+  useEffect(() => {
+    if (isMobileViewport) {
+      setIsCompactViewport(false);
+      return;
+    }
+    const syncCompact = () => {
+      const reserved = terminalOpen ? terminalWidth : 0;
+      const availableMainWidth = window.innerWidth - reserved;
+      setIsCompactViewport(availableMainWidth <= 1024);
+    };
+    syncCompact();
+    window.addEventListener("resize", syncCompact);
+    return () => {
+      window.removeEventListener("resize", syncCompact);
+    };
+  }, [isMobileViewport, terminalOpen, terminalWidth]);
 
   useEffect(() => {
     if (isMobileViewport) {
@@ -1402,7 +1420,7 @@ export default function ThreadPage({ params }: Props) {
       if (isMobileViewport) {
         return;
       }
-      if (event.defaultPrevented || event.isComposing || event.altKey) {
+      if (event.isComposing || event.altKey) {
         return;
       }
       const key = event.key.toLowerCase();
@@ -1417,9 +1435,9 @@ export default function ThreadPage({ params }: Props) {
       setTerminalOpen((value) => !value);
     };
 
-    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keydown", onKeyDown, true);
     return () => {
-      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keydown", onKeyDown, true);
     };
   }, [isMobileViewport]);
 
@@ -1483,6 +1501,7 @@ export default function ThreadPage({ params }: Props) {
   }
 
   const terminalEnabled = !isMobileViewport && terminalOpen;
+  const sidebarVisible = sidebarOpen && !isCompactViewport;
   const workspaceStyle = terminalEnabled
     ? ({
         "--cdx-terminal-width": `${terminalWidth}px`,
@@ -1490,8 +1509,8 @@ export default function ThreadPage({ params }: Props) {
     : undefined;
 
   return (
-    <div className={`cdx-app ${sidebarOpen ? "" : "cdx-app--sidebar-collapsed"}`}>
-      <header className="cdx-topbar">
+    <div className={`cdx-app ${sidebarVisible ? "" : "cdx-app--sidebar-collapsed"}`}>
+      <header className={`cdx-topbar ${isCompactViewport ? "cdx-topbar--compact" : ""}`}>
         <div className="cdx-topbar-group">
           <button
             type="button"
@@ -1541,7 +1560,7 @@ export default function ThreadPage({ params }: Props) {
         }`}
         style={workspaceStyle}
       >
-        {sidebarOpen ? (
+        {sidebarVisible ? (
           <aside className="cdx-sidebar" ref={sidebarRef}>
             <div className="cdx-sidebar-actions">
               <button type="button" className="cdx-sidebar-action cdx-sidebar-action--active">
@@ -1587,7 +1606,7 @@ export default function ThreadPage({ params }: Props) {
           </aside>
         ) : null}
 
-        <main className="cdx-main">
+        <main className={`cdx-main ${isCompactViewport ? "cdx-main--compact" : ""}`}>
           <section className="cdx-hero cdx-hero--thread">
             <div className="cdx-hero-row">
               <h1 data-testid="thread-title">Let&apos;s build</h1>
