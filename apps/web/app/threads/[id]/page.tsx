@@ -1,15 +1,68 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import type { GatewayEvent, ThreadDetailResponse } from "@lcwa/shared-types";
+import type {
+  CreateTurnResponse,
+  GatewayEvent,
+  ThreadDetailResponse,
+} from "@lcwa/shared-types";
 
 type ConnectionState = "connecting" | "connected" | "reconnecting";
+type TurnStatus = "inProgress" | "completed" | "failed" | "interrupted" | "unknown";
 
 type Props = {
   params: Promise<{ id: string }>;
 };
 
+type TurnCard = {
+  id: string;
+  status: TurnStatus;
+  startedAt: string | null;
+  completedAt: string | null;
+  agentText: string;
+  error: string | null;
+};
+
 const gatewayUrl = process.env.NEXT_PUBLIC_GATEWAY_URL ?? "http://127.0.0.1:8787";
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  return value as Record<string, unknown>;
+}
+
+function readString(obj: Record<string, unknown> | null, key: string): string | null {
+  if (!obj) return null;
+  const value = obj[key];
+  return typeof value === "string" ? value : null;
+}
+
+function extractTurnId(payload: unknown): string | null {
+  const p = asRecord(payload);
+  if (!p) return null;
+  if (typeof p.turnId === "string") return p.turnId;
+  if (typeof p.turn_id === "string") return p.turn_id;
+  const turn = asRecord(p.turn);
+  if (turn && typeof turn.id === "string") {
+    return turn.id;
+  }
+  return null;
+}
+
+function normalizeTurnStatus(status: unknown): TurnStatus {
+  if (status === "inProgress") return "inProgress";
+  if (status === "completed") return "completed";
+  if (status === "failed") return "failed";
+  if (status === "interrupted") return "interrupted";
+  return "unknown";
+}
+
+function statusClass(status: TurnStatus): string {
+  if (status === "completed") return "ok";
+  if (status === "inProgress") return "pending";
+  return "down";
+}
 
 export default function ThreadPage({ params }: Props) {
   const [threadId, setThreadId] = useState<string>("");
@@ -19,6 +72,10 @@ export default function ThreadPage({ params }: Props) {
   const [events, setEvents] = useState<GatewayEvent[]>([]);
   const [lastSeq, setLastSeq] = useState(0);
   const [connectionState, setConnectionState] = useState<ConnectionState>("connecting");
+  const [turnCards, setTurnCards] = useState<Record<string, TurnCard>>({});
+  const [prompt, setPrompt] = useState("");
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
     params.then((value) => setThreadId(value.id));
@@ -41,6 +98,20 @@ export default function ThreadPage({ params }: Props) {
         const data = (await res.json()) as ThreadDetailResponse;
         if (!cancelled) {
           setDetail(data);
+          setTurnCards(() => {
+            const next: Record<string, TurnCard> = {};
+            for (const turn of data.turns) {
+              next[turn.id] = {
+                id: turn.id,
+                status: normalizeTurnStatus(turn.status),
+                startedAt: turn.startedAt,
+                completedAt: turn.completedAt,
+                agentText: "",
+                error: turn.error ? JSON.stringify(turn.error) : null,
+              };
+            }
+            return next;
+          });
           setLoading(false);
           setError(null);
         }
@@ -83,6 +154,76 @@ export default function ThreadPage({ params }: Props) {
         setEvents((prev) => [...prev, payload]);
         setLastSeq(payload.seq);
         setConnectionState("connected");
+
+        const payloadRecord = asRecord(payload.payload);
+        const turnFromPayload = asRecord(payloadRecord?.turn);
+        const itemFromPayload = asRecord(payloadRecord?.item);
+        const resolvedTurnId =
+          payload.turnId ?? extractTurnId(payload.payload) ?? readString(payloadRecord, "turnId");
+
+        setTurnCards((prev) => {
+          const next = { ...prev };
+
+          const ensureTurn = (turnId: string): TurnCard => {
+            const existing = next[turnId];
+            if (existing) return existing;
+            const created: TurnCard = {
+              id: turnId,
+              status: "inProgress",
+              startedAt: null,
+              completedAt: null,
+              agentText: "",
+              error: null,
+            };
+            next[turnId] = created;
+            return created;
+          };
+
+          if (payload.name === "turn/started") {
+            const turnId = readString(turnFromPayload, "id") ?? resolvedTurnId;
+            if (turnId) {
+              const turn = ensureTurn(turnId);
+              turn.status = normalizeTurnStatus(readString(turnFromPayload, "status"));
+              turn.startedAt = turn.startedAt ?? new Date(payload.serverTs).toISOString();
+              turn.error = null;
+            }
+          }
+
+          if (payload.name === "turn/completed") {
+            const turnId = readString(turnFromPayload, "id") ?? resolvedTurnId;
+            if (turnId) {
+              const turn = ensureTurn(turnId);
+              turn.status = normalizeTurnStatus(readString(turnFromPayload, "status"));
+              turn.completedAt = new Date(payload.serverTs).toISOString();
+              const err = turnFromPayload?.error;
+              turn.error = err ? JSON.stringify(err) : null;
+            }
+          }
+
+          if (payload.name === "item/agentMessage/delta" && resolvedTurnId) {
+            const turn = ensureTurn(resolvedTurnId);
+            const delta =
+              readString(payloadRecord, "delta") ??
+              readString(payloadRecord, "textDelta") ??
+              readString(payloadRecord, "text");
+            if (delta) {
+              turn.agentText += delta;
+            }
+          }
+
+          if ((payload.name === "item/started" || payload.name === "item/completed") && itemFromPayload) {
+            const turnId = resolvedTurnId;
+            if (turnId && readString(itemFromPayload, "type") === "agentMessage") {
+              const turn = ensureTurn(turnId);
+              const fullText = readString(itemFromPayload, "text");
+              if (fullText !== null) {
+                turn.agentText = fullText;
+              }
+            }
+          }
+
+          return next;
+        });
       });
 
       es.addEventListener("heartbeat", () => {
@@ -118,13 +259,74 @@ export default function ThreadPage({ params }: Props) {
     return "CONNECTING";
   }, [connectionState]);
 
+  const orderedTurns = useMemo(
+    () =>
+      Object.values(turnCards).sort((a, b) => {
+        const left = a.startedAt ?? "";
+        const right = b.startedAt ?? "";
+        if (left !== right) {
+          return left.localeCompare(right);
+        }
+        return a.id.localeCompare(b.id);
+      }),
+    [turnCards],
+  );
+
+  async function sendTurn(): Promise<void> {
+    const text = prompt.trim();
+    if (!text || !threadId || submitting) {
+      return;
+    }
+
+    setSubmitting(true);
+    setSubmitError(null);
+
+    try {
+      const res = await fetch(`${gatewayUrl}/api/threads/${threadId}/turns`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          input: [{ type: "text", text }],
+        }),
+      });
+
+      if (!res.ok) {
+        throw new Error(`turn submit http ${res.status}`);
+      }
+
+      const payload = (await res.json()) as CreateTurnResponse;
+      setPrompt("");
+      setTurnCards((prev) => {
+        const existing = prev[payload.turnId];
+        if (existing) {
+          return prev;
+        }
+        return {
+          ...prev,
+          [payload.turnId]: {
+            id: payload.turnId,
+            status: "inProgress",
+            startedAt: new Date().toISOString(),
+            completedAt: null,
+            agentText: "",
+            error: null,
+          },
+        };
+      });
+    } catch (submitErr) {
+      setSubmitError(submitErr instanceof Error ? submitErr.message : "submit failed");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
   return (
     <main>
       <section className="panel">
         <h1 data-testid="thread-title">Thread {threadId || "..."}</h1>
-        <p className="muted">
-          Slice 2: timeline + SSE
-        </p>
+        <p className="muted">Slice 3: turn start + streaming output</p>
         <div className="status">
           <span className={`badge ${connectionState === "connected" ? "ok" : "down"}`}>
             {connectionText}
@@ -134,11 +336,64 @@ export default function ThreadPage({ params }: Props) {
 
         {loading ? <p className="muted">Loading thread...</p> : null}
         {error ? <p className="muted">{error}</p> : null}
+        {submitError ? <p className="muted">{submitError}</p> : null}
+
+        <div
+          style={{
+            display: "grid",
+            gap: 10,
+            marginTop: 16,
+            padding: 12,
+            border: "1px solid rgba(148, 163, 184, 0.2)",
+            borderRadius: 12,
+            background: "rgba(2, 6, 23, 0.35)",
+          }}
+        >
+          <label htmlFor="turn-input" style={{ fontSize: 13, fontWeight: 600 }}>
+            New Turn
+          </label>
+          <textarea
+            id="turn-input"
+            data-testid="turn-input"
+            value={prompt}
+            onChange={(event) => setPrompt(event.target.value)}
+            placeholder="輸入給 Codex 的指令..."
+            rows={3}
+            style={{
+              width: "100%",
+              borderRadius: 10,
+              border: "1px solid rgba(148,163,184,0.35)",
+              background: "rgba(15, 23, 42, 0.8)",
+              color: "#e2e8f0",
+              padding: "10px 12px",
+            }}
+          />
+          <div style={{ display: "flex", justifyContent: "flex-end" }}>
+            <button
+              type="button"
+              data-testid="turn-submit"
+              onClick={() => void sendTurn()}
+              disabled={submitting || prompt.trim().length === 0}
+              style={{
+                border: "none",
+                borderRadius: 10,
+                background: submitting ? "#475569" : "#16a34a",
+                color: "white",
+                padding: "8px 14px",
+                fontWeight: 700,
+                cursor: submitting ? "not-allowed" : "pointer",
+              }}
+            >
+              {submitting ? "送出中..." : "送出"}
+            </button>
+          </div>
+        </div>
 
         <div data-testid="timeline" style={{ marginTop: 20, display: "grid", gap: 12 }}>
-          {detail?.turns?.map((turn) => (
+          {orderedTurns.map((turn) => (
             <article
               key={`turn-${turn.id}`}
+              data-testid={`turn-card-${turn.id}`}
               style={{
                 border: "1px solid rgba(148, 163, 184, 0.2)",
                 borderRadius: 10,
@@ -146,13 +401,37 @@ export default function ThreadPage({ params }: Props) {
                 background: "rgba(15,23,42,0.5)",
               }}
             >
-              <strong>Turn {turn.id}</strong>
-              <p className="muted" style={{ margin: "6px 0 0" }}>
-                status={turn.status}
-              </p>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
+                <strong>Turn {turn.id}</strong>
+                <span className={`badge ${statusClass(turn.status)}`} data-testid={`turn-status-${turn.id}`}>
+                  {turn.status}
+                </span>
+              </div>
+              <pre
+                data-testid={`turn-agent-${turn.id}`}
+                style={{
+                  marginTop: 10,
+                  marginBottom: 0,
+                  whiteSpace: "pre-wrap",
+                  wordBreak: "break-word",
+                  color: "#e2e8f0",
+                  fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+                  fontSize: 12,
+                }}
+              >
+                {turn.agentText || "(waiting for output...)"}
+              </pre>
+              {turn.error ? (
+                <p className="muted" style={{ marginTop: 8 }}>
+                  error: {turn.error}
+                </p>
+              ) : null}
             </article>
           ))}
 
+          <div style={{ borderTop: "1px dashed rgba(148,163,184,0.2)", paddingTop: 10 }}>
+            <strong style={{ fontSize: 13 }}>Raw Events</strong>
+          </div>
           {events.map((event) => (
             <article
               key={`event-${event.seq}`}

@@ -52,6 +52,35 @@ export type ThreadDetailResponse = {
   nextCursor: string | null;
 };
 
+export type UserInputItem =
+  | {
+      type: "text";
+      text: string;
+    }
+  | {
+      type: "image";
+      url: string;
+    }
+  | {
+      type: "localImage";
+      path: string;
+    };
+
+export type TurnStartOptions = {
+  model?: string;
+  effort?: string;
+  cwd?: string;
+};
+
+export type CreateTurnRequest = {
+  input: UserInputItem[];
+  options?: TurnStartOptions;
+};
+
+export type CreateTurnResponse = {
+  turnId: string;
+};
+
 export type GatewayEvent = {
   seq: number;
   serverTs: string;

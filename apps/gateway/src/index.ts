@@ -1,6 +1,8 @@
 import cors from "@fastify/cors";
 import Fastify from "fastify";
 import type {
+  CreateTurnRequest,
+  CreateTurnResponse,
   GatewayEvent,
   HealthResponse,
   ThreadDetailResponse,
@@ -507,6 +509,46 @@ app.get("/api/threads/:id/events", async (request, reply) => {
     unsubscribe();
     reply.raw.end();
   });
+});
+
+app.post("/api/threads/:id/turns", async (request): Promise<CreateTurnResponse> => {
+  const params = request.params as { id: string };
+  const body = request.body as CreateTurnRequest;
+
+  if (!Array.isArray(body?.input) || body.input.length === 0) {
+    const error = new Error("input is required") as Error & { statusCode?: number };
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const startTurn = async (): Promise<{ turn?: RawTurn }> =>
+    (await appServer.request("turn/start", {
+      threadId: params.id,
+      input: body.input,
+      ...(body.options?.model ? { model: body.options.model } : {}),
+      ...(body.options?.effort ? { effort: body.options.effort } : {}),
+      ...(body.options?.cwd ? { cwd: body.options.cwd } : {}),
+    })) as { turn?: RawTurn };
+
+  let result: { turn?: RawTurn };
+  try {
+    result = await startTurn();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!message.includes("thread not loaded")) {
+      throw error;
+    }
+
+    await appServer.request("thread/resume", { threadId: params.id });
+    result = await startTurn();
+  }
+
+  const turnId = result.turn?.id;
+  if (!turnId) {
+    throw new Error("turn/start response missing turn.id");
+  }
+
+  return { turnId };
 });
 
 await app.listen({ host, port });
