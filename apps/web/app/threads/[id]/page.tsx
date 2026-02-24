@@ -390,6 +390,7 @@ type ConversationTurn = {
   startedAt: string | null;
   completedAt: string | null;
   status: TurnStatus;
+  isStreaming: boolean;
   userText: string | null;
   assistantText: string | null;
   thinkingText: string | null;
@@ -583,6 +584,7 @@ function buildConversationTurns(items: ThreadTimelineItem[]): ConversationTurn[]
         startedAt: turn.startedAt,
         completedAt: turn.completedAt,
         status: turn.status,
+        isStreaming: turn.status === "inProgress",
         userText: bestUserText,
         assistantText,
         thinkingText,
@@ -677,7 +679,7 @@ export default function ThreadPage({ params }: Props) {
   const [threadList, setThreadList] = useState<ThreadListItem[]>([]);
   const [threadListLoading, setThreadListLoading] = useState(true);
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [bottomPanelOpen, setBottomPanelOpen] = useState(true);
+  const [bottomPanelOpen, setBottomPanelOpen] = useState(false);
   const [showRawEvents, setShowRawEvents] = useState(false);
   const [showAllTurns, setShowAllTurns] = useState(false);
   const modelOptions = useMemo(() => {
@@ -1296,6 +1298,29 @@ export default function ThreadPage({ params }: Props) {
     };
   }, [sendControl]);
 
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.isComposing || event.altKey) {
+        return;
+      }
+      const key = event.key.toLowerCase();
+      if (!(event.metaKey || event.ctrlKey) || key !== "j") {
+        return;
+      }
+      const target = event.target;
+      if (target instanceof HTMLElement && target.tagName === "SELECT") {
+        return;
+      }
+      event.preventDefault();
+      setBottomPanelOpen((value) => !value);
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, []);
+
   async function sendTurn(): Promise<void> {
     const text = prompt.trim();
     if (!text || !threadId || submitting) {
@@ -1388,7 +1413,7 @@ export default function ThreadPage({ params }: Props) {
             type="button"
             className="cdx-toolbar-btn cdx-toolbar-btn--icon"
             aria-label="Toggle terminal"
-            title="Toggle terminal"
+            title="Toggle terminal (Cmd+J)"
             onClick={() => setBottomPanelOpen((v) => !v)}
           >
             ▦
@@ -1520,12 +1545,25 @@ export default function ThreadPage({ params }: Props) {
               <p className="cdx-helper">No conversation yet.</p>
             ) : (
               visibleConversationTurns.map((turn) => (
-                <article className="cdx-turn-card cdx-turn-card--conversation" key={turn.turnId}>
+                <article
+                  className={`cdx-turn-card cdx-turn-card--conversation ${
+                    turn.isStreaming ? "cdx-turn-card--streaming" : ""
+                  }`}
+                  key={turn.turnId}
+                >
                   <div className="cdx-turn-head">
                     <strong>Turn</strong>
-                    <span className={`cdx-status ${statusClass(turn.status)}`}>
-                      {statusLabel(turn.status)}
-                    </span>
+                    <div className="cdx-turn-state">
+                      {turn.isStreaming ? (
+                        <span className="cdx-stream-indicator" aria-live="polite">
+                          <span className="cdx-stream-indicator-dot" aria-hidden="true" />
+                          Responding
+                        </span>
+                      ) : null}
+                      <span className={`cdx-status ${statusClass(turn.status)}`}>
+                        {statusLabel(turn.status)}
+                      </span>
+                    </div>
                   </div>
                   <p className="cdx-turn-meta">
                     {formatTimestamp(turn.startedAt)} · turn {turn.turnId}
@@ -1539,7 +1577,11 @@ export default function ThreadPage({ params }: Props) {
                     </section>
                   ) : null}
                   {turn.assistantText ? (
-                    <section className="cdx-message cdx-message--assistant">
+                    <section
+                      className={`cdx-message cdx-message--assistant ${
+                        turn.isStreaming ? "cdx-message--assistant-streaming" : ""
+                      }`}
+                    >
                       <div className="cdx-message-meta">
                         <strong className="cdx-message-role">Codex</strong>
                         <button
@@ -1550,10 +1592,15 @@ export default function ThreadPage({ params }: Props) {
                           Copy
                         </button>
                       </div>
-                      <pre className="cdx-turn-body">{truncateText(turn.assistantText, 9000)}</pre>
+                      <pre className="cdx-turn-body">
+                        {truncateText(turn.assistantText, 9000)}
+                        {turn.isStreaming ? <span className="cdx-stream-cursor" aria-hidden="true" /> : null}
+                      </pre>
                     </section>
                   ) : (
-                    <p className="cdx-helper">Waiting for response...</p>
+                    <p className={`cdx-helper ${turn.isStreaming ? "cdx-helper--streaming" : ""}`}>
+                      {turn.isStreaming ? "Codex is responding..." : "Waiting for response..."}
+                    </p>
                   )}
                   {turn.thinkingText || turn.toolCalls.length > 0 || turn.toolResults.length > 0 ? (
                     <details className="cdx-message-collapsible">
