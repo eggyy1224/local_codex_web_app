@@ -474,7 +474,7 @@ textarea {
   overflow: auto;
   display: grid;
   align-content: start;
-  gap: 8px;
+  gap: 14px;
   padding-right: 2px;
   width: min(860px, 100%);
   justify-self: center;
@@ -488,7 +488,7 @@ textarea {
   border: 1px solid var(--border-soft);
   border-radius: 18px;
   background: rgba(37, 37, 37, 0.72);
-  padding: 11px;
+  padding: 12px;
   display: grid;
   gap: 8px;
 }
@@ -499,6 +499,8 @@ textarea {
 
 .cdx-turn-card--conversation {
   gap: 10px;
+  background: rgba(28, 28, 28, 0.78);
+  border-color: rgba(255, 255, 255, 0.11);
 }
 
 .cdx-turn-card--event {
@@ -543,9 +545,9 @@ textarea {
   white-space: pre-wrap;
   word-break: break-word;
   color: rgba(255, 255, 255, 0.84);
-  font-size: 12px;
-  line-height: 1.45;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px;
+  line-height: 1.55;
+  font-family: "SF Pro Text", "Segoe UI", "Noto Sans TC", sans-serif;
 }
 
 .cdx-message-stack {
@@ -559,9 +561,9 @@ textarea {
 
 .cdx-message {
   border: 1px solid var(--border-soft);
-  border-radius: 14px;
-  background: rgba(31, 31, 31, 0.78);
-  padding: 9px 10px;
+  border-radius: 16px;
+  background: rgba(31, 31, 31, 0.82);
+  padding: 10px 12px;
   display: grid;
   gap: 6px;
 }
@@ -572,16 +574,17 @@ textarea {
 }
 
 .cdx-message--assistant {
-  background: rgba(33, 33, 33, 0.9);
+  background: rgba(25, 25, 25, 0.9);
+  border-color: rgba(255, 255, 255, 0.12);
 }
 
 .cdx-message--detail {
-  background: rgba(28, 28, 28, 0.75);
+  background: rgba(24, 24, 24, 0.82);
 }
 
 .cdx-message--tool {
-  background: rgba(59, 49, 16, 0.35);
-  border-color: rgba(214, 168, 30, 0.32);
+  background: rgba(58, 45, 14, 0.38);
+  border-color: rgba(214, 168, 30, 0.35);
 }
 
 .cdx-message-meta {
@@ -594,19 +597,28 @@ textarea {
 .cdx-message-role {
   color: rgba(255, 255, 255, 0.78);
   font-size: 12px;
+  letter-spacing: 0.01em;
 }
 
 .cdx-message-collapsible {
   border: 1px solid var(--border-soft);
-  border-radius: 14px;
-  background: rgba(26, 26, 26, 0.72);
-  padding: 8px 10px;
+  border-radius: 16px;
+  background: rgba(22, 22, 22, 0.78);
+  padding: 9px 11px;
 }
 
 .cdx-message-collapsible > summary {
   cursor: pointer;
   color: var(--muted);
   font-size: 12px;
+  user-select: none;
+}
+
+.cdx-message--detail .cdx-turn-body,
+.cdx-message--tool .cdx-turn-body {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.48;
 }
 
 .cdx-event-copy {

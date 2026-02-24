@@ -62,6 +62,14 @@ function statusClass(status: TurnStatus): string {
   return "is-offline";
 }
 
+function statusLabel(status: TurnStatus): string {
+  if (status === "completed") return "Completed";
+  if (status === "inProgress") return "In progress";
+  if (status === "failed") return "Failed";
+  if (status === "interrupted") return "Interrupted";
+  return "Unknown";
+}
+
 function truncateText(text: string, maxLength: number): string {
   if (text.length <= maxLength) {
     return text;
@@ -203,7 +211,63 @@ function timelineItemFromGatewayEvent(event: GatewayEvent): ThreadTimelineItem |
   }
 
   if (event.name === "item/agentMessage/delta") {
-    return null;
+    const text = normalizeText(readString(payload, "delta") ?? readString(payload, "text"));
+    if (!text) {
+      return null;
+    }
+    const itemTurnId = readString(payload, "turn_id") ?? readString(payload, "turnId") ?? event.turnId;
+    const callId = readString(payload, "itemId") ?? readString(payload, "item_id");
+    return {
+      id: `${eventId}-assistant-delta`,
+      ts: event.serverTs,
+      turnId: itemTurnId,
+      type: "assistantMessage",
+      title: "Assistant",
+      text,
+      rawType: event.name,
+      toolName: null,
+      callId,
+    };
+  }
+
+  if (event.name === "item/reasoning/summaryTextDelta" || event.name === "item/reasoning/textDelta") {
+    const text = normalizeText(readString(payload, "delta") ?? readString(payload, "text"));
+    if (!text) {
+      return null;
+    }
+    const itemTurnId = readString(payload, "turn_id") ?? readString(payload, "turnId") ?? event.turnId;
+    const callId = readString(payload, "itemId") ?? readString(payload, "item_id");
+    return {
+      id: `${eventId}-reasoning-delta`,
+      ts: event.serverTs,
+      turnId: itemTurnId,
+      type: "reasoning",
+      title: "Thinking",
+      text,
+      rawType: event.name,
+      toolName: null,
+      callId,
+    };
+  }
+
+  if (event.name === "item/commandExecution/outputDelta" || event.name === "item/fileChange/outputDelta") {
+    const text = normalizeText(readString(payload, "delta") ?? readString(payload, "output"));
+    if (!text) {
+      return null;
+    }
+    const itemTurnId = readString(payload, "turn_id") ?? readString(payload, "turnId") ?? event.turnId;
+    const callId = readString(payload, "itemId") ?? readString(payload, "item_id");
+    return {
+      id: `${eventId}-tool-output-delta`,
+      ts: event.serverTs,
+      turnId: itemTurnId,
+      type: "toolResult",
+      title: "Tool output",
+      text,
+      rawType: event.name,
+      toolName: event.name.includes("commandExecution") ? "command" : "apply_patch",
+      callId,
+    };
   }
 
   if ((event.name === "item/started" || event.name === "item/completed") && item) {
@@ -314,6 +378,226 @@ function timelineItemFromGatewayEvent(event: GatewayEvent): ThreadTimelineItem |
   }
 
   return null;
+}
+
+type ConversationToolCall = {
+  toolName: string;
+  text: string | null;
+};
+
+type ConversationTurn = {
+  turnId: string;
+  startedAt: string | null;
+  completedAt: string | null;
+  status: TurnStatus;
+  userText: string | null;
+  assistantText: string | null;
+  thinkingText: string | null;
+  toolCalls: ConversationToolCall[];
+  toolResults: string[];
+};
+
+type MutableConversationTurn = {
+  turnId: string;
+  startedAt: string | null;
+  completedAt: string | null;
+  status: TurnStatus;
+  userTexts: string[];
+  assistantTexts: string[];
+  thinkingTexts: string[];
+  assistantDelta: string;
+  thinkingDelta: string;
+  toolCalls: ConversationToolCall[];
+  toolResults: string[];
+  toolCallSeen: Set<string>;
+  toolResultSeen: Set<string>;
+  userSeen: Set<string>;
+  assistantSeen: Set<string>;
+  thinkingSeen: Set<string>;
+};
+
+function comparableText(text: string): string {
+  return text.replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+function appendUniqueText(target: string[], seen: Set<string>, text: string): void {
+  const key = comparableText(text);
+  if (!key || seen.has(key)) {
+    return;
+  }
+  seen.add(key);
+  target.push(text);
+}
+
+function parseTurnStatus(item: ThreadTimelineItem): TurnStatus | null {
+  if (item.rawType === "turn/started") {
+    return "inProgress";
+  }
+  if (item.rawType === "turn/completed") {
+    const text = (item.text ?? "").toLowerCase();
+    if (text.includes("failed")) return "failed";
+    if (text.includes("interrupted")) return "interrupted";
+    if (text.includes("completed")) return "completed";
+    return "completed";
+  }
+  return null;
+}
+
+function mergeStreamedText(fullText: string | null, streamedText: string): string {
+  if (!fullText) {
+    return streamedText;
+  }
+  if (fullText.includes(streamedText)) {
+    return fullText;
+  }
+  if (streamedText.includes(fullText)) {
+    return streamedText;
+  }
+  if (fullText.length >= streamedText.length) {
+    return fullText;
+  }
+  return streamedText;
+}
+
+function buildConversationTurns(items: ThreadTimelineItem[]): ConversationTurn[] {
+  const byTurnId = new Map<string, MutableConversationTurn>();
+
+  const sortedItems = [...items].sort((a, b) => {
+    if (a.ts !== b.ts) {
+      return a.ts.localeCompare(b.ts);
+    }
+    return a.id.localeCompare(b.id);
+  });
+
+  for (const item of sortedItems) {
+    if (!item.turnId) {
+      continue;
+    }
+
+    const turnId = item.turnId;
+    const existing = byTurnId.get(turnId);
+    const turn: MutableConversationTurn =
+      existing ??
+      {
+        turnId,
+        startedAt: null,
+        completedAt: null,
+        status: "unknown",
+        userTexts: [],
+        assistantTexts: [],
+        thinkingTexts: [],
+        assistantDelta: "",
+        thinkingDelta: "",
+        toolCalls: [],
+        toolResults: [],
+        toolCallSeen: new Set<string>(),
+        toolResultSeen: new Set<string>(),
+        userSeen: new Set<string>(),
+        assistantSeen: new Set<string>(),
+        thinkingSeen: new Set<string>(),
+      };
+
+    if (!existing) {
+      byTurnId.set(turnId, turn);
+    }
+
+    if (!turn.startedAt || item.ts < turn.startedAt) {
+      turn.startedAt = item.ts;
+    }
+    if (!turn.completedAt || item.ts > turn.completedAt) {
+      turn.completedAt = item.ts;
+    }
+
+    const nextStatus = parseTurnStatus(item);
+    if (nextStatus) {
+      turn.status = nextStatus;
+    }
+
+    if (!item.text) {
+      continue;
+    }
+
+    if (item.type === "userMessage") {
+      appendUniqueText(turn.userTexts, turn.userSeen, item.text);
+      continue;
+    }
+
+    if (item.type === "assistantMessage") {
+      if (item.rawType === "item/agentMessage/delta") {
+        turn.assistantDelta += item.text;
+        if (turn.status === "unknown") {
+          turn.status = "inProgress";
+        }
+      } else {
+        appendUniqueText(turn.assistantTexts, turn.assistantSeen, item.text);
+      }
+      continue;
+    }
+
+    if (item.type === "reasoning") {
+      if (item.rawType.includes("delta")) {
+        turn.thinkingDelta += item.text;
+      } else {
+        appendUniqueText(turn.thinkingTexts, turn.thinkingSeen, item.text);
+      }
+      continue;
+    }
+
+    if (item.type === "toolCall") {
+      const toolName = item.toolName ?? "tool";
+      const key = `${toolName}|${comparableText(item.text)}`;
+      if (!turn.toolCallSeen.has(key)) {
+        turn.toolCallSeen.add(key);
+        turn.toolCalls.push({ toolName, text: item.text });
+      }
+      continue;
+    }
+
+    if (item.type === "toolResult") {
+      const key = comparableText(item.text);
+      if (!turn.toolResultSeen.has(key)) {
+        turn.toolResultSeen.add(key);
+        turn.toolResults.push(item.text);
+      }
+    }
+  }
+
+  return Array.from(byTurnId.values())
+    .map((turn) => {
+      const bestUserText =
+        turn.userTexts.sort((a, b) => b.length - a.length)[0] ?? null;
+      const assistantBase =
+        turn.assistantTexts.sort((a, b) => b.length - a.length)[0] ?? null;
+      const assistantText =
+        turn.assistantDelta.length > 0
+          ? mergeStreamedText(assistantBase, turn.assistantDelta)
+          : assistantBase;
+      const thinkingBase = turn.thinkingTexts.join("\n\n");
+      const thinkingText =
+        turn.thinkingDelta.length > 0
+          ? mergeStreamedText(thinkingBase || null, turn.thinkingDelta)
+          : thinkingBase || null;
+
+      return {
+        turnId: turn.turnId,
+        startedAt: turn.startedAt,
+        completedAt: turn.completedAt,
+        status: turn.status,
+        userText: bestUserText,
+        assistantText,
+        thinkingText,
+        toolCalls: turn.toolCalls,
+        toolResults: turn.toolResults,
+      };
+    })
+    .filter(
+      (turn) =>
+        Boolean(turn.userText) ||
+        Boolean(turn.assistantText) ||
+        Boolean(turn.thinkingText) ||
+        turn.toolCalls.length > 0 ||
+        turn.toolResults.length > 0,
+    );
 }
 
 function formatTimestamp(value: string | null): string {
@@ -762,8 +1046,14 @@ export default function ThreadPage({ params }: Props) {
       });
     return merged;
   }, [timelineItems, liveTimelineItems]);
-  const hiddenTimelineCount = Math.max(0, allTimelineItems.length - 200);
-  const visibleTimelineItems = showAllTurns ? allTimelineItems : allTimelineItems.slice(-200);
+  const allConversationTurns = useMemo(
+    () => buildConversationTurns(allTimelineItems),
+    [allTimelineItems],
+  );
+  const hiddenTimelineCount = Math.max(0, allConversationTurns.length - 120);
+  const visibleConversationTurns = showAllTurns
+    ? allConversationTurns
+    : allConversationTurns.slice(-120);
 
   const activeThread = threadList.find((thread) => thread.id === threadId);
   const groupedThreads = useMemo(() => groupThreadsByProject(threadList), [threadList]);
@@ -834,7 +1124,7 @@ export default function ThreadPage({ params }: Props) {
     threadId,
     showAllTurns,
     hiddenTimelineCount,
-    visibleTimelineItems,
+    visibleConversationTurns,
     activeApproval?.approvalId,
     syncTimelineStickyState,
   ]);
@@ -1190,7 +1480,7 @@ export default function ThreadPage({ params }: Props) {
                 className="cdx-toolbar-btn cdx-timeline-toggle"
                 onClick={() => setShowAllTurns(true)}
               >
-                {hiddenTimelineCount} previous events
+                {hiddenTimelineCount} previous turns
               </button>
             ) : null}
 
@@ -1200,38 +1490,88 @@ export default function ThreadPage({ params }: Props) {
                 className="cdx-toolbar-btn cdx-timeline-toggle"
                 onClick={() => setShowAllTurns(false)}
               >
-                Show fewer events
+                Show fewer turns
               </button>
             ) : null}
 
-            {visibleTimelineItems.length === 0 ? (
-              <p className="cdx-helper">No timeline events yet.</p>
+            {visibleConversationTurns.length === 0 ? (
+              <p className="cdx-helper">No conversation yet.</p>
             ) : (
-              visibleTimelineItems.map((item) => (
-                <article className={`cdx-turn-card cdx-turn-card--event cdx-turn-card--${item.type}`} key={item.id}>
+              visibleConversationTurns.map((turn) => (
+                <article className="cdx-turn-card cdx-turn-card--conversation" key={turn.turnId}>
                   <div className="cdx-turn-head">
-                    <strong>{item.title}</strong>
-                    <span className={`cdx-status ${timelineTypeClass(item.type)}`}>
-                      {timelineTypeLabel(item.type)}
+                    <strong>Turn</strong>
+                    <span className={`cdx-status ${statusClass(turn.status)}`}>
+                      {statusLabel(turn.status)}
                     </span>
                   </div>
                   <p className="cdx-turn-meta">
-                    {formatTimestamp(item.ts)} · turn {item.turnId ?? "-"}
+                    {formatTimestamp(turn.startedAt)} · turn {turn.turnId}
                   </p>
-                  {item.toolName ? <p className="cdx-turn-meta">tool: {item.toolName}</p> : null}
-                  {item.text ? (
-                    <pre className="cdx-turn-body">{truncateText(item.text, 9000)}</pre>
+                  {turn.userText ? (
+                    <section className="cdx-message cdx-message--user">
+                      <div className="cdx-message-meta">
+                        <strong className="cdx-message-role">You</strong>
+                      </div>
+                      <pre className="cdx-turn-body">{truncateText(turn.userText, 9000)}</pre>
+                    </section>
+                  ) : null}
+                  {turn.assistantText ? (
+                    <section className="cdx-message cdx-message--assistant">
+                      <div className="cdx-message-meta">
+                        <strong className="cdx-message-role">Codex</strong>
+                        <button
+                          type="button"
+                          className="cdx-toolbar-btn cdx-toolbar-btn--small cdx-event-copy"
+                          onClick={() => void copyMessage(turn.assistantText ?? "")}
+                        >
+                          Copy
+                        </button>
+                      </div>
+                      <pre className="cdx-turn-body">{truncateText(turn.assistantText, 9000)}</pre>
+                    </section>
                   ) : (
-                    <p className="cdx-helper">(no text)</p>
+                    <p className="cdx-helper">Waiting for response...</p>
                   )}
-                  {item.text ? (
-                    <button
-                      type="button"
-                      className="cdx-toolbar-btn cdx-toolbar-btn--small cdx-event-copy"
-                      onClick={() => void copyMessage(item.text ?? "")}
-                    >
-                      Copy
-                    </button>
+                  {turn.thinkingText || turn.toolCalls.length > 0 || turn.toolResults.length > 0 ? (
+                    <details className="cdx-message-collapsible">
+                      <summary>
+                        Thinking & tools (
+                        {(turn.thinkingText ? 1 : 0) + turn.toolCalls.length + turn.toolResults.length})
+                      </summary>
+                      <div className="cdx-message-stack cdx-message-stack--details">
+                        {turn.thinkingText ? (
+                          <section className="cdx-message cdx-message--detail">
+                            <div className="cdx-message-meta">
+                              <strong className="cdx-message-role">Thinking</strong>
+                            </div>
+                            <pre className="cdx-turn-body">{truncateText(turn.thinkingText, 6000)}</pre>
+                          </section>
+                        ) : null}
+                        {turn.toolCalls.map((call, index) => (
+                          <section
+                            className="cdx-message cdx-message--tool"
+                            key={`${turn.turnId}-tool-call-${index}-${call.toolName}`}
+                          >
+                            <div className="cdx-message-meta">
+                              <strong className="cdx-message-role">Tool call: {call.toolName}</strong>
+                            </div>
+                            {call.text ? <pre className="cdx-turn-body">{truncateText(call.text, 4500)}</pre> : null}
+                          </section>
+                        ))}
+                        {turn.toolResults.map((result, index) => (
+                          <section
+                            className="cdx-message cdx-message--detail"
+                            key={`${turn.turnId}-tool-result-${index}`}
+                          >
+                            <div className="cdx-message-meta">
+                              <strong className="cdx-message-role">Tool output</strong>
+                            </div>
+                            <pre className="cdx-turn-body">{truncateText(result, 4500)}</pre>
+                          </section>
+                        ))}
+                      </div>
+                    </details>
                   ) : null}
                 </article>
               ))
