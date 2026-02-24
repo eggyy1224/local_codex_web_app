@@ -13,6 +13,8 @@ import type {
   CreateTurnResponse,
   GatewayEvent,
   HealthResponse,
+  ModelOption,
+  ModelsResponse,
   PendingApprovalsResponse,
   ThreadDetailResponse,
   ThreadControlRequest,
@@ -60,6 +62,29 @@ type RawThread = {
   updatedAt?: number;
   status?: unknown;
   turns?: RawTurn[];
+};
+
+type RawReasoningEffort = {
+  effort?: unknown;
+  description?: unknown;
+};
+
+type RawModel = {
+  id?: unknown;
+  model?: unknown;
+  displayName?: unknown;
+  hidden?: unknown;
+  defaultReasoningEffort?: unknown;
+  reasoningEffort?: unknown;
+  upgrade?: unknown;
+  inputModalities?: unknown;
+  supportsPersonality?: unknown;
+  isDefault?: unknown;
+};
+
+type RawModelListResult = {
+  data?: RawModel[];
+  nextCursor?: string | null;
 };
 
 const host = process.env.HOST ?? "127.0.0.1";
@@ -381,6 +406,53 @@ function toTurnView(raw: RawTurn): TurnView {
     completedAt: raw.completedAt ? unixSecondsToIso(raw.completedAt) : null,
     error: raw.error ?? null,
     items: raw.items ?? [],
+  };
+}
+
+function toModelOption(raw: RawModel): ModelOption | null {
+  const fallbackId = typeof raw.model === "string" ? raw.model : null;
+  const id = typeof raw.id === "string" ? raw.id : fallbackId;
+  if (!id) {
+    return null;
+  }
+
+  const model = typeof raw.model === "string" ? raw.model : id;
+  const reasoningEffort = Array.isArray(raw.reasoningEffort)
+    ? raw.reasoningEffort
+        .map((option) => {
+          const item = option as RawReasoningEffort;
+          if (typeof item?.effort !== "string") {
+            return null;
+          }
+          return {
+            effort: item.effort,
+            ...(typeof item.description === "string" ? { description: item.description } : {}),
+          };
+        })
+        .filter((option): option is NonNullable<typeof option> => option !== null)
+    : undefined;
+
+  return {
+    id,
+    model,
+    ...(typeof raw.displayName === "string" ? { displayName: raw.displayName } : {}),
+    ...(typeof raw.hidden === "boolean" ? { hidden: raw.hidden } : {}),
+    ...(typeof raw.defaultReasoningEffort === "string"
+      ? { defaultReasoningEffort: raw.defaultReasoningEffort }
+      : {}),
+    ...(reasoningEffort ? { reasoningEffort } : {}),
+    ...(typeof raw.upgrade === "string" ? { upgrade: raw.upgrade } : {}),
+    ...(Array.isArray(raw.inputModalities)
+      ? {
+          inputModalities: raw.inputModalities.filter(
+            (modality): modality is string => typeof modality === "string",
+          ),
+        }
+      : {}),
+    ...(typeof raw.supportsPersonality === "boolean"
+      ? { supportsPersonality: raw.supportsPersonality }
+      : {}),
+    ...(typeof raw.isDefault === "boolean" ? { isDefault: raw.isDefault } : {}),
   };
 }
 
@@ -882,6 +954,39 @@ app.get("/health", async (): Promise<HealthResponse> => {
     timestamp: new Date().toISOString(),
     message: appServer.errorMessage ?? undefined,
   };
+});
+
+app.get("/api/models", async (request): Promise<ModelsResponse> => {
+  const query = request.query as { includeHidden?: string };
+  const includeHidden = query.includeHidden === "true";
+
+  const models: ModelOption[] = [];
+  const seen = new Set<string>();
+  let cursor: string | null = null;
+
+  for (let i = 0; i < 20; i += 1) {
+    const result = (await appServer.request("model/list", {
+      cursor,
+      limit: 100,
+      includeHidden,
+    })) as RawModelListResult;
+
+    for (const rawModel of result.data ?? []) {
+      const model = toModelOption(rawModel);
+      if (!model || seen.has(model.id)) {
+        continue;
+      }
+      seen.add(model.id);
+      models.push(model);
+    }
+
+    cursor = result.nextCursor ?? null;
+    if (!cursor) {
+      break;
+    }
+  }
+
+  return { data: models };
 });
 
 app.get("/api/threads", async (request): Promise<ThreadListResponse> => {
