@@ -1245,7 +1245,7 @@ export default function ThreadPage({ params }: Props) {
     }
   }
 
-  async function sendControl(action: ThreadControlRequest["action"]): Promise<void> {
+  const sendControl = useCallback(async (action: ThreadControlRequest["action"]): Promise<void> => {
     if (!threadId || controlBusy) {
       return;
     }
@@ -1272,7 +1272,29 @@ export default function ThreadPage({ params }: Props) {
     } finally {
       setControlBusy(null);
     }
-  }
+  }, [controlBusy, threadId]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") {
+        return;
+      }
+      if (event.defaultPrevented || event.isComposing || event.metaKey || event.ctrlKey || event.altKey) {
+        return;
+      }
+      const target = event.target;
+      if (target instanceof HTMLElement && target.tagName === "SELECT") {
+        return;
+      }
+      event.preventDefault();
+      void sendControl("stop");
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [sendControl]);
 
   async function sendTurn(): Promise<void> {
     const text = prompt.trim();
@@ -1632,15 +1654,6 @@ export default function ThreadPage({ params }: Props) {
             />
             <div className="cdx-composer-row">
               <div className="cdx-inline-actions">
-                <button
-                  type="button"
-                  data-testid="control-stop"
-                  className="cdx-toolbar-btn cdx-toolbar-btn--danger"
-                  disabled={controlBusy !== null}
-                  onClick={() => void sendControl("stop")}
-                >
-                  {controlBusy === "stop" ? "Stopping..." : "Stop"}
-                </button>
                 <button
                   type="button"
                   data-testid="control-retry"
