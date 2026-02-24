@@ -23,6 +23,7 @@ import type {
   ThreadStatus,
   ThreadTimelineItem,
   ThreadTimelineResponse,
+  TurnPermissionMode,
   TurnView,
 } from "@lcwa/shared-types";
 import { AppServerClient } from "./appServerClient.js";
@@ -174,6 +175,29 @@ function normalizeProjectKey(cwd?: string | null): string {
   }
   const normalized = cwd.trim().replace(/\\/g, "/").replace(/\/+$/, "");
   return normalized || "unknown";
+}
+
+function permissionModeToTurnStartParams(
+  mode?: TurnPermissionMode,
+): Record<string, unknown> {
+  if (mode === "full-access") {
+    return {
+      approvalPolicy: "never",
+      sandboxPolicy: {
+        type: "dangerFullAccess",
+      },
+    };
+  }
+  if (mode === "local") {
+    return {
+      approvalPolicy: "on-request",
+      sandboxPolicy: {
+        type: "workspaceWrite",
+        networkAccess: false,
+      },
+    };
+  }
+  return {};
 }
 
 async function buildSessionFileIndex(dirPath: string): Promise<void> {
@@ -1168,6 +1192,7 @@ app.post("/api/threads/:id/turns", async (request): Promise<CreateTurnResponse> 
       ...(body.options?.model ? { model: body.options.model } : {}),
       ...(body.options?.effort ? { effort: body.options.effort } : {}),
       ...(body.options?.cwd ? { cwd: body.options.cwd } : {}),
+      ...permissionModeToTurnStartParams(body.options?.permissionMode),
     })) as { turn?: RawTurn };
 
   const isResumeNeeded = (message: string): boolean =>
@@ -1307,6 +1332,7 @@ app.post("/api/threads/:id/control", async (request): Promise<ThreadControlRespo
         ...(previous.options?.model ? { model: previous.options.model } : {}),
         ...(previous.options?.effort ? { effort: previous.options.effort } : {}),
         ...(previous.options?.cwd ? { cwd: previous.options.cwd } : {}),
+        ...permissionModeToTurnStartParams(previous.options?.permissionMode),
       })) as { turn?: RawTurn };
 
     let result: { turn?: RawTurn };

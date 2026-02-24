@@ -95,7 +95,10 @@ export type TurnStartOptions = {
   model?: string;
   effort?: string;
   cwd?: string;
+  permissionMode?: TurnPermissionMode;
 };
+
+export type TurnPermissionMode = "local" | "full-access";
 
 export type CreateTurnRequest = {
   input: UserInputItem[];
