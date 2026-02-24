@@ -100,6 +100,28 @@ export type TurnStartOptions = {
 
 export type TurnPermissionMode = "local" | "full-access";
 
+export type ModelReasoningEffortOption = {
+  effort: string;
+  description?: string;
+};
+
+export type ModelOption = {
+  id: string;
+  model: string;
+  displayName?: string;
+  hidden?: boolean;
+  defaultReasoningEffort?: string;
+  reasoningEffort?: ModelReasoningEffortOption[];
+  upgrade?: string;
+  inputModalities?: string[];
+  supportsPersonality?: boolean;
+  isDefault?: boolean;
+};
+
+export type ModelsResponse = {
+  data: ModelOption[];
+};
+
 export type CreateTurnRequest = {
   input: UserInputItem[];
   options?: TurnStartOptions;
