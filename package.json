@@ -9,9 +9,24 @@
     "dev:web": "pnpm --filter @lcwa/web dev",
     "build": "pnpm -r build",
     "lint": "pnpm -r lint",
-    "typecheck": "pnpm -r typecheck"
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r --if-present test",
+    "test:unit": "pnpm -r --if-present test:unit",
+    "test:integration": "pnpm -r --if-present test:integration",
+    "test:e2e": "pnpm --filter @lcwa/web test:e2e",
+    "test:coverage": "pnpm -r --if-present test:coverage",
+    "check": "pnpm lint && pnpm typecheck && pnpm test:coverage && pnpm test:e2e"
   },
   "devDependencies": {
-    "@types/node": "^24.3.0"
+    "@playwright/test": "^1.58.2",
+    "@testing-library/dom": "^10.4.1",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.1",
+    "@types/node": "^24.3.0",
+    "@vitest/coverage-v8": "^4.0.18",
+    "jsdom": "^28.1.0",
+    "msw": "^2.12.10",
+    "vitest": "^4.0.18"
   }
 }

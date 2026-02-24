@@ -11,7 +11,12 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "lint": "echo 'no lint configured for shared-types'"
+    "lint": "echo 'no lint configured for shared-types'",
+    "test": "pnpm test:unit && pnpm test:integration",
+    "test:unit": "vitest run --passWithNoTests",
+    "test:integration": "vitest run --passWithNoTests",
+    "test:e2e": "echo 'no e2e configured for shared-types'",
+    "test:coverage": "vitest run --passWithNoTests --coverage.enabled=false"
   },
   "devDependencies": {
     "typescript": "^5.9.2"
