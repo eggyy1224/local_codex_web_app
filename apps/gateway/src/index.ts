@@ -1,8 +1,33 @@
 import cors from "@fastify/cors";
 import Fastify from "fastify";
-import type { HealthResponse, ThreadListItem, ThreadListResponse, ThreadStatus } from "@lcwa/shared-types";
+import type {
+  GatewayEvent,
+  HealthResponse,
+  ThreadDetailResponse,
+  ThreadListItem,
+  ThreadListResponse,
+  ThreadMeta,
+  ThreadStatus,
+  TurnView,
+} from "@lcwa/shared-types";
 import { AppServerClient } from "./appServerClient.js";
-import { listProjectedThreads, upsertThreads, type ThreadProjection } from "./db.js";
+import {
+  getProjectedThread,
+  insertGatewayEvent,
+  listGatewayEventsSince,
+  listProjectedThreads,
+  upsertThreads,
+  type ThreadProjection,
+} from "./db.js";
+
+type RawTurn = {
+  id: string;
+  status?: string;
+  error?: unknown;
+  items?: unknown[];
+  startedAt?: number;
+  completedAt?: number;
+};
 
 type RawThread = {
   id: string;
@@ -11,6 +36,7 @@ type RawThread = {
   createdAt?: number;
   updatedAt?: number;
   status?: unknown;
+  turns?: RawTurn[];
 };
 
 const host = process.env.HOST ?? "127.0.0.1";
@@ -22,8 +48,11 @@ const corsAllowlist = (process.env.CORS_ALLOWLIST ?? defaultWebOrigin)
   .filter(Boolean);
 
 const app = Fastify({
-  logger: true,
+  logger: {
+    level: process.env.LOG_LEVEL ?? "info",
+  },
   bodyLimit: 1024 * 1024,
+  disableRequestLogging: true,
 });
 
 await app.register(cors, {
@@ -38,16 +67,33 @@ await app.register(cors, {
 });
 
 const appServer = new AppServerClient();
+const subscribers = new Map<string, Set<(event: GatewayEvent) => void>>();
 
-try {
-  await appServer.start();
-} catch (error) {
-  app.log.error({ err: error }, "Failed to start app-server on boot");
+function subscribe(threadId: string, fn: (event: GatewayEvent) => void): () => void {
+  const set = subscribers.get(threadId) ?? new Set<(event: GatewayEvent) => void>();
+  set.add(fn);
+  subscribers.set(threadId, set);
+
+  return () => {
+    const current = subscribers.get(threadId);
+    if (!current) return;
+    current.delete(fn);
+    if (current.size === 0) {
+      subscribers.delete(threadId);
+    }
+  };
 }
 
-appServer.on("stderr", (line) => {
-  app.log.warn({ appServerStderr: line.trim() }, "app-server stderr");
-});
+function broadcast(event: GatewayEvent): void {
+  const set = subscribers.get(event.threadId);
+  if (!set || set.size === 0) {
+    return;
+  }
+
+  for (const handler of set) {
+    handler(event);
+  }
+}
 
 function statusFromRaw(raw: unknown): ThreadStatus {
   if (raw && typeof raw === "object" && "type" in (raw as Record<string, unknown>)) {
@@ -59,6 +105,13 @@ function statusFromRaw(raw: unknown): ThreadStatus {
       if (typeValue === "systemError") return "systemError";
     }
   }
+
+  if (typeof raw === "string") {
+    if (raw === "notLoaded" || raw === "idle" || raw === "active" || raw === "systemError") {
+      return raw;
+    }
+  }
+
   return "unknown";
 }
 
@@ -87,6 +140,28 @@ function toThreadListItem(raw: RawThread): ThreadListItem {
   };
 }
 
+function toThreadMeta(raw: RawThread): ThreadMeta {
+  return {
+    id: raw.id,
+    title: raw.name ?? raw.preview?.slice(0, 80) ?? raw.id,
+    preview: raw.preview ?? "",
+    status: statusFromRaw(raw.status),
+    createdAt: raw.createdAt ? unixSecondsToIso(raw.createdAt) : null,
+    updatedAt: raw.updatedAt ? unixSecondsToIso(raw.updatedAt) : null,
+  };
+}
+
+function toTurnView(raw: RawTurn): TurnView {
+  return {
+    id: raw.id,
+    status: raw.status ?? "unknown",
+    startedAt: raw.startedAt ? unixSecondsToIso(raw.startedAt) : null,
+    completedAt: raw.completedAt ? unixSecondsToIso(raw.completedAt) : null,
+    error: raw.error ?? null,
+    items: raw.items ?? [],
+  };
+}
+
 function applyFilters(
   items: ThreadListItem[],
   options: { q?: string; status?: string; archived?: string },
@@ -110,6 +185,82 @@ function applyFilters(
     }
     return true;
   });
+}
+
+function extractThreadId(params: unknown): string | null {
+  if (!params || typeof params !== "object") {
+    return null;
+  }
+  const p = params as Record<string, unknown>;
+  if (typeof p.threadId === "string") return p.threadId;
+  if (typeof p.thread_id === "string") return p.thread_id;
+  if (p.thread && typeof p.thread === "object") {
+    const thread = p.thread as Record<string, unknown>;
+    if (typeof thread.id === "string") return thread.id;
+  }
+  return null;
+}
+
+function extractTurnId(params: unknown): string | null {
+  if (!params || typeof params !== "object") {
+    return null;
+  }
+  const p = params as Record<string, unknown>;
+  if (typeof p.turnId === "string") return p.turnId;
+  if (typeof p.turn_id === "string") return p.turn_id;
+  if (p.turn && typeof p.turn === "object") {
+    const turn = p.turn as Record<string, unknown>;
+    if (typeof turn.id === "string") return turn.id;
+  }
+  return null;
+}
+
+function kindFromMethod(method: string): GatewayEvent["kind"] {
+  if (method.includes("requestApproval") || method.startsWith("tool/requestUserInput")) {
+    return "approval";
+  }
+  if (method.startsWith("thread/")) return "thread";
+  if (method.startsWith("turn/")) return "turn";
+  if (method.startsWith("item/")) return "item";
+  return "system";
+}
+
+appServer.on("stderr", (line) => {
+  app.log.warn({ appServerStderr: line.trim() }, "app-server stderr");
+});
+
+appServer.on("message", (msg: unknown) => {
+  if (!msg || typeof msg !== "object" || !("method" in (msg as Record<string, unknown>))) {
+    return;
+  }
+
+  const raw = msg as {
+    method: string;
+    params?: unknown;
+  };
+
+  const threadId = extractThreadId(raw.params);
+  if (!threadId) {
+    return;
+  }
+
+  const eventBase: Omit<GatewayEvent, "seq"> = {
+    serverTs: new Date().toISOString(),
+    threadId,
+    turnId: extractTurnId(raw.params),
+    kind: kindFromMethod(raw.method),
+    name: raw.method,
+    payload: raw.params ?? null,
+  };
+
+  const seq = insertGatewayEvent(eventBase);
+  broadcast({ ...eventBase, seq });
+});
+
+try {
+  await appServer.start();
+} catch (error) {
+  app.log.error({ err: error }, "Failed to start app-server on boot");
 }
 
 app.get("/health", async (): Promise<HealthResponse> => {
@@ -232,6 +383,130 @@ app.post("/api/threads", async (request): Promise<{ threadId: string }> => {
   ]);
 
   return { threadId: thread.id };
+});
+
+app.get("/api/threads/:id", async (request): Promise<ThreadDetailResponse> => {
+  const params = request.params as { id: string };
+  const query = request.query as { includeTurns?: string };
+
+  const includeTurnsRequested = query.includeTurns !== "false";
+
+  const fallbackFromProjection = (): ThreadDetailResponse => {
+    const projected = getProjectedThread(params.id);
+    return {
+      thread: {
+        id: params.id,
+        title: projected?.title ?? params.id,
+        preview: projected?.preview ?? "",
+        status: projected?.status ?? "unknown",
+        createdAt: null,
+        updatedAt: projected?.lastActiveAt ?? null,
+      },
+      turns: [],
+      nextCursor: null,
+    };
+  };
+
+  const readThread = async (includeTurns: boolean): Promise<{ thread?: RawThread }> =>
+    (await appServer.request("thread/read", {
+      threadId: params.id,
+      includeTurns,
+    })) as { thread?: RawThread };
+
+  const tryReadWithFallback = async (): Promise<{ thread?: RawThread }> => {
+    if (includeTurnsRequested) {
+      try {
+        return await readThread(true);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (message.includes("not materialized yet")) {
+          return await readThread(false);
+        }
+        throw error;
+      }
+    }
+    return await readThread(false);
+  };
+
+  let result: { thread?: RawThread };
+  try {
+    result = await tryReadWithFallback();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (message.includes("no rollout found")) {
+      return fallbackFromProjection();
+    }
+
+    if (!message.includes("thread not loaded")) {
+      throw error;
+    }
+
+    await appServer.request("thread/resume", { threadId: params.id });
+
+    try {
+      result = await tryReadWithFallback();
+    } catch (innerError) {
+      const innerMessage =
+        innerError instanceof Error ? innerError.message : String(innerError);
+      if (innerMessage.includes("no rollout found")) {
+        return fallbackFromProjection();
+      }
+      throw innerError;
+    }
+  }
+
+  const thread = result.thread;
+  if (!thread?.id) {
+    return fallbackFromProjection();
+  }
+
+  return {
+    thread: toThreadMeta(thread),
+    turns: includeTurnsRequested ? (thread.turns ?? []).map(toTurnView) : [],
+    nextCursor: null,
+  };
+});
+
+app.get("/api/threads/:id/events", async (request, reply) => {
+  const params = request.params as { id: string };
+  const query = request.query as { since?: string };
+  const since = Number(query.since ?? "0") || 0;
+  const origin =
+    typeof request.headers.origin === "string" ? request.headers.origin : undefined;
+  const allowOrigin = origin && corsAllowlist.includes(origin) ? origin : corsAllowlist[0];
+
+  reply.raw.writeHead(200, {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache, no-transform",
+    Connection: "keep-alive",
+    "X-Accel-Buffering": "no",
+    "Access-Control-Allow-Origin": allowOrigin ?? "",
+    Vary: "Origin",
+  });
+
+  const writeEvent = (event: GatewayEvent): void => {
+    reply.raw.write(`id: ${event.seq}\n`);
+    reply.raw.write(`event: gateway\n`);
+    reply.raw.write(`data: ${JSON.stringify(event)}\n\n`);
+  };
+
+  const replay = listGatewayEventsSince(params.id, since, 1000);
+  for (const event of replay) {
+    writeEvent(event);
+  }
+
+  const unsubscribe = subscribe(params.id, writeEvent);
+
+  const heartbeat = setInterval(() => {
+    reply.raw.write("event: heartbeat\n");
+    reply.raw.write(`data: {"ts":"${new Date().toISOString()}"}\n\n`);
+  }, 15_000);
+
+  request.raw.on("close", () => {
+    clearInterval(heartbeat);
+    unsubscribe();
+    reply.raw.end();
+  });
 });
 
 await app.listen({ host, port });

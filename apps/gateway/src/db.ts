@@ -2,7 +2,7 @@ import { mkdirSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import type { ThreadListItem, ThreadStatus } from "@lcwa/shared-types";
+import type { GatewayEvent, ThreadListItem, ThreadStatus } from "@lcwa/shared-types";
 
 export type ThreadProjection = {
   thread_id: string;
@@ -97,6 +97,27 @@ ORDER BY updated_at DESC
 LIMIT ?
 `);
 
+const getThreadByIdStmt = db.prepare(`
+SELECT thread_id, title, preview, status, archived, updated_at, last_error
+FROM threads_projection
+WHERE thread_id = ?
+LIMIT 1
+`);
+
+const insertEventStmt = db.prepare(`
+INSERT INTO events_log (thread_id, turn_id, kind, name, payload_json, server_ts)
+VALUES (?, ?, ?, ?, ?, ?)
+RETURNING seq
+`);
+
+const listEventsSinceStmt = db.prepare(`
+SELECT seq, thread_id, turn_id, kind, name, payload_json, server_ts
+FROM events_log
+WHERE thread_id = ? AND seq > ?
+ORDER BY seq ASC
+LIMIT ?
+`);
+
 export function upsertThreads(rows: ThreadProjection[]): void {
   db.exec("BEGIN");
   try {
@@ -129,5 +150,61 @@ export function listProjectedThreads(limit: number): ThreadListItem[] {
     archived: row.archived === 1,
     waitingApprovalCount: 0,
     errorCount: row.last_error ? 1 : 0,
+  }));
+}
+
+export function getProjectedThread(threadId: string): ThreadListItem | null {
+  const row = getThreadByIdStmt.get(threadId) as ThreadProjection | undefined;
+  if (!row) {
+    return null;
+  }
+
+  return {
+    id: row.thread_id,
+    title: row.title,
+    preview: row.preview,
+    status: row.status,
+    lastActiveAt: row.updated_at,
+    archived: row.archived === 1,
+    waitingApprovalCount: 0,
+    errorCount: row.last_error ? 1 : 0,
+  };
+}
+
+export function insertGatewayEvent(event: Omit<GatewayEvent, "seq">): number {
+  const row = insertEventStmt.get(
+    event.threadId,
+    event.turnId,
+    event.kind,
+    event.name,
+    JSON.stringify(event.payload ?? null),
+    event.serverTs,
+  ) as { seq: number };
+  return row.seq;
+}
+
+export function listGatewayEventsSince(
+  threadId: string,
+  since: number,
+  limit = 500,
+): GatewayEvent[] {
+  const rows = listEventsSinceStmt.all(threadId, since, limit) as Array<{
+    seq: number;
+    thread_id: string;
+    turn_id: string | null;
+    kind: GatewayEvent["kind"];
+    name: string;
+    payload_json: string;
+    server_ts: string;
+  }>;
+
+  return rows.map((row) => ({
+    seq: row.seq,
+    threadId: row.thread_id,
+    turnId: row.turn_id,
+    kind: row.kind,
+    name: row.name,
+    payload: JSON.parse(row.payload_json),
+    serverTs: row.server_ts,
   }));
 }

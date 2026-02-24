@@ -13,6 +13,11 @@ type JsonRpcNotification = {
   params?: unknown;
 };
 
+type JsonRpcResponse = {
+  id: string | number;
+  result: unknown;
+};
+
 type PendingCall = {
   resolve: (value: any) => void;
   reject: (reason?: unknown) => void;
@@ -106,6 +111,14 @@ export class AppServerClient extends EventEmitter {
     }
 
     const payload: JsonRpcNotification = { method, params };
+    this.proc.stdin?.write(`${JSON.stringify(payload)}\n`);
+  }
+
+  respond(id: string | number, result: unknown): void {
+    if (!this.proc) {
+      return;
+    }
+    const payload: JsonRpcResponse = { id, result };
     this.proc.stdin?.write(`${JSON.stringify(payload)}\n`);
   }
 
