@@ -109,9 +109,8 @@
 2. 每個切片完成前，必須用 CDP MCP 做桌機與手機 viewport 驗證。
 3. 每個切片完成後立刻 commit（每切片 1 commit）。
 4. commit 規範固定使用 Conventional Commits。
-5. 開發分支固定 `codex/mvp-web`（MVP 階段）。
-6. push 策略：先本機 commit，不強制每片立即 push。
-7. 任何偏離本文件的設計，必須先在 PR/issue 說明原因。
-8. 文件與介面命名盡量一致（thread/turn/event/approval）。
-9. 實作 app-server 相關能力時，必須優先參考官方 OpenAI/Codex 文件（openai-docs skill）。
-10. 本專案溝通預設使用繁體中文。
+5. push 策略：先本機 commit，不強制每片立即 push。
+6. 任何偏離本文件的設計，必須先在 PR/issue 說明原因。
+7. 文件與介面命名盡量一致（thread/turn/event/approval）。
+8. 實作 app-server 相關能力時，必須優先參考官方 OpenAI/Codex 文件（openai-docs skill）。
+9. 本專案溝通預設使用繁體中文。
