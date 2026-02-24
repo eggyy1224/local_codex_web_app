@@ -6,15 +6,14 @@ import { useRouter } from "next/navigation";
 import type {
   ApprovalDecisionRequest,
   ApprovalView,
-  CreateTurnResponse,
   GatewayEvent,
   PendingApprovalsResponse,
   ThreadControlRequest,
-  ThreadControlResponse,
   ThreadDetailResponse,
   ThreadListItem,
   ThreadTimelineItem,
   ThreadTimelineResponse,
+  TurnPermissionMode,
 } from "@lcwa/shared-types";
 import { groupThreadsByProject, pickDefaultProjectKey, projectLabelFromKey } from "../../lib/projects";
 
@@ -25,44 +24,11 @@ type Props = {
   params: Promise<{ id: string }>;
 };
 
-type TurnCard = {
-  id: string;
-  status: TurnStatus;
-  startedAt: string | null;
-  completedAt: string | null;
-  agentText: string;
-  error: string | null;
-};
-
 type PendingApprovalCard = ApprovalView;
-
-type TurnMessageKind = "user" | "assistant" | "thinking" | "plan" | "status";
-
-type TurnMessage = {
-  id: string;
-  kind: TurnMessageKind;
-  text: string;
-};
-
-type TurnSection = {
-  id: string;
-  status: TurnStatus;
-  startedAt: string | null;
-  completedAt: string | null;
-  messages: TurnMessage[];
-};
-
-type ToolActivity = {
-  id: string;
-  turnId: string | null;
-  ts: string;
-  toolName: string;
-  input: string | null;
-  output: string | null;
-};
 
 const gatewayUrl = process.env.NEXT_PUBLIC_GATEWAY_URL ?? "http://127.0.0.1:8787";
 const SIDEBAR_SCROLL_STORAGE_KEY = "lcwa.sidebar.scroll.v1";
+const PERMISSION_MODE_STORAGE_KEY = "lcwa.permission.mode.v1";
 const TIMELINE_STICKY_THRESHOLD_PX = 56;
 const ACTIVE_THREAD_SCROLL_SNAP_THRESHOLD_PX = 24;
 
@@ -77,26 +43,6 @@ function readString(obj: Record<string, unknown> | null, key: string): string | 
   if (!obj) return null;
   const value = obj[key];
   return typeof value === "string" ? value : null;
-}
-
-function extractTurnId(payload: unknown): string | null {
-  const p = asRecord(payload);
-  if (!p) return null;
-  if (typeof p.turnId === "string") return p.turnId;
-  if (typeof p.turn_id === "string") return p.turn_id;
-  const turn = asRecord(p.turn);
-  if (turn && typeof turn.id === "string") {
-    return turn.id;
-  }
-  return null;
-}
-
-function normalizeTurnStatus(status: unknown): TurnStatus {
-  if (status === "inProgress") return "inProgress";
-  if (status === "completed") return "completed";
-  if (status === "failed") return "failed";
-  if (status === "interrupted") return "interrupted";
-  return "unknown";
 }
 
 function statusClass(status: TurnStatus): string {
@@ -138,101 +84,217 @@ function extractUserMessageText(item: Record<string, unknown>): string | null {
   return normalizeText(parts.join("\n"));
 }
 
-function parseTurnMessages(items: unknown[]): TurnMessage[] {
-  const parsed: TurnMessage[] = [];
-
-  for (const item of items) {
-    const record = asRecord(item);
-    if (!record) {
-      continue;
-    }
-    const type = readString(record, "type");
-    const itemId = readString(record, "id") ?? `item-${parsed.length + 1}`;
-
-    if (type === "userMessage") {
-      const text = extractUserMessageText(record);
-      if (text) {
-        parsed.push({ id: itemId, kind: "user", text });
-      }
-      continue;
-    }
-
-    if (type === "agentMessage") {
-      const text = normalizeText(readString(record, "text"));
-      if (text) {
-        parsed.push({ id: itemId, kind: "assistant", text });
-      }
-      continue;
-    }
-
-    if (type === "reasoning") {
-      const summary = record.summary;
-      const lines =
-        Array.isArray(summary)
-          ? summary
-              .filter((entry): entry is string => typeof entry === "string")
-              .map((entry) => entry.trim())
-              .filter((entry) => entry.length > 0)
-          : [];
-      const text = normalizeText(lines.join("\n"));
-      if (text) {
-        parsed.push({ id: itemId, kind: "thinking", text });
-      }
-      continue;
-    }
-
-    if (type === "plan") {
-      const text = normalizeText(readString(record, "text"));
-      if (text) {
-        parsed.push({ id: itemId, kind: "plan", text });
-      }
-      continue;
-    }
-
-    if (type === "enteredReviewMode") {
-      const review = normalizeText(readString(record, "review"));
-      parsed.push({
-        id: itemId,
-        kind: "status",
-        text: review ? `Entered review mode: ${review}` : "Entered review mode",
-      });
-      continue;
-    }
-
-    if (type === "exitedReviewMode") {
-      parsed.push({
-        id: itemId,
-        kind: "status",
-        text: "Exited review mode",
-      });
-      continue;
-    }
-
-    if (type === "contextCompaction") {
-      parsed.push({
-        id: itemId,
-        kind: "status",
-        text: "Context compacted",
-      });
-    }
-  }
-
-  return parsed;
-}
-
-function messageRoleLabel(kind: TurnMessageKind): string {
-  if (kind === "user") return "User";
-  if (kind === "assistant") return "Assistant";
-  if (kind === "thinking") return "Thinking";
-  if (kind === "plan") return "Plan";
+function timelineTypeLabel(type: ThreadTimelineItem["type"]): string {
+  if (type === "assistantMessage") return "Assistant";
+  if (type === "userMessage") return "User";
+  if (type === "reasoning") return "Thinking";
+  if (type === "toolCall") return "Tool call";
+  if (type === "toolResult") return "Tool output";
   return "Status";
 }
 
-function messageRoleClass(kind: TurnMessageKind): string {
-  if (kind === "assistant") return "is-online";
-  if (kind === "thinking" || kind === "plan") return "is-pending";
-  if (kind === "status") return "is-offline";
+function timelineTypeClass(type: ThreadTimelineItem["type"]): string {
+  if (type === "assistantMessage" || type === "toolResult") return "is-online";
+  if (type === "reasoning" || type === "toolCall") return "is-pending";
+  if (type === "status") return "is-offline";
   return "";
+}
+
+function stringifyUnknown(value: unknown): string | null {
+  if (typeof value === "string") {
+    return value;
+  }
+  if (value === null || value === undefined) {
+    return null;
+  }
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function timelineItemFromGatewayEvent(event: GatewayEvent): ThreadTimelineItem | null {
+  const payload = asRecord(event.payload);
+  const item = asRecord(payload?.item);
+  const eventId = `live-${event.seq}`;
+
+  if (event.name === "turn/started") {
+    return {
+      id: `${eventId}-turn-started`,
+      ts: event.serverTs,
+      turnId: event.turnId,
+      type: "status",
+      title: "Turn started",
+      text: event.turnId ? `turn ${event.turnId}` : null,
+      rawType: event.name,
+      toolName: null,
+      callId: null,
+    };
+  }
+
+  if (event.name === "turn/completed") {
+    const turn = asRecord(payload?.turn);
+    const status = readString(turn, "status");
+    return {
+      id: `${eventId}-turn-completed`,
+      ts: event.serverTs,
+      turnId: event.turnId,
+      type: "status",
+      title: "Turn completed",
+      text: normalizeText(status ? `status: ${status}` : null),
+      rawType: event.name,
+      toolName: null,
+      callId: null,
+    };
+  }
+
+  if (event.name === "approval/decision") {
+    const decision = readString(payload, "decision");
+    return {
+      id: `${eventId}-approval-decision`,
+      ts: event.serverTs,
+      turnId: event.turnId,
+      type: "status",
+      title: "Approval decision",
+      text: decision ? `decision: ${decision}` : null,
+      rawType: event.name,
+      toolName: null,
+      callId: null,
+    };
+  }
+
+  if (event.name.includes("requestApproval")) {
+    const reason = readString(payload, "reason");
+    const command = readString(payload, "command");
+    const grantRoot = readString(payload, "grantRoot");
+    const lines = [reason, command ? `command: ${command}` : null, grantRoot ? `path: ${grantRoot}` : null]
+      .filter((line): line is string => Boolean(line));
+    return {
+      id: `${eventId}-approval-request`,
+      ts: event.serverTs,
+      turnId: event.turnId,
+      type: "status",
+      title: "Approval requested",
+      text: normalizeText(lines.join("\n")),
+      rawType: event.name,
+      toolName: null,
+      callId: null,
+    };
+  }
+
+  if (event.name === "item/agentMessage/delta") {
+    return null;
+  }
+
+  if ((event.name === "item/started" || event.name === "item/completed") && item) {
+    const itemType = readString(item, "type");
+    const callId = readString(item, "call_id") ?? readString(item, "callId");
+    const itemTurnId = readString(item, "turn_id") ?? readString(item, "turnId") ?? event.turnId;
+
+    if (itemType === "userMessage") {
+      const text = extractUserMessageText(item);
+      return text
+        ? {
+            id: `${eventId}-user`,
+            ts: event.serverTs,
+            turnId: itemTurnId,
+            type: "userMessage",
+            title: "User",
+            text,
+            rawType: itemType,
+            toolName: null,
+            callId,
+          }
+        : null;
+    }
+
+    if (itemType === "agentMessage") {
+      const text = normalizeText(readString(item, "text"));
+      return text
+        ? {
+            id: `${eventId}-assistant`,
+            ts: event.serverTs,
+            turnId: itemTurnId,
+            type: "assistantMessage",
+            title: "Assistant",
+            text,
+            rawType: itemType,
+            toolName: null,
+            callId,
+          }
+        : null;
+    }
+
+    if (itemType === "reasoning") {
+      const summary = item.summary;
+      const summaryText = Array.isArray(summary)
+        ? summary
+            .map((entry) => {
+              if (typeof entry === "string") {
+                return entry;
+              }
+              const entryRecord = asRecord(entry);
+              return readString(entryRecord, "text");
+            })
+            .filter((entry): entry is string => Boolean(entry))
+            .join("\n")
+        : null;
+      const text = normalizeText(summaryText ?? readString(item, "text"));
+      return text
+        ? {
+            id: `${eventId}-reasoning`,
+            ts: event.serverTs,
+            turnId: itemTurnId,
+            type: "reasoning",
+            title: "Thinking",
+            text,
+            rawType: itemType,
+            toolName: null,
+            callId,
+          }
+        : null;
+    }
+
+    if (itemType === "function_call" || itemType === "custom_tool_call" || itemType === "web_search_call") {
+      const toolName = readString(item, "name") ?? (itemType === "web_search_call" ? "web_search" : "tool");
+      const text = normalizeText(
+        readString(item, "arguments") ?? stringifyUnknown(item.arguments ?? item.input ?? item.query),
+      );
+      return {
+        id: `${eventId}-tool-call`,
+        ts: event.serverTs,
+        turnId: itemTurnId,
+        type: "toolCall",
+        title: `Tool call: ${toolName}`,
+        text,
+        rawType: itemType,
+        toolName,
+        callId,
+      };
+    }
+
+    if (
+      itemType === "function_call_output" ||
+      itemType === "custom_tool_call_output" ||
+      itemType === "web_search_call_output"
+    ) {
+      const text = normalizeText(readString(item, "output") ?? stringifyUnknown(item.output ?? item.result));
+      return {
+        id: `${eventId}-tool-output`,
+        ts: event.serverTs,
+        turnId: itemTurnId,
+        type: "toolResult",
+        title: "Tool output",
+        text,
+        rawType: itemType,
+        toolName: null,
+        callId,
+      };
+    }
+  }
+
+  return null;
 }
 
 function formatTimestamp(value: string | null): string {
@@ -284,6 +346,7 @@ export default function ThreadPage({ params }: Props) {
   const router = useRouter();
   const timelineRef = useRef<HTMLElement | null>(null);
   const timelineStickyRef = useRef(true);
+  const timelineInitializedRef = useRef(false);
   const sidebarRef = useRef<HTMLElement | null>(null);
   const activeThreadCardRef = useRef<HTMLElement | null>(null);
   const [threadId, setThreadId] = useState<string>("");
@@ -294,8 +357,8 @@ export default function ThreadPage({ params }: Props) {
   const [lastSeq, setLastSeq] = useState(0);
   const [connectionState, setConnectionState] = useState<ConnectionState>("connecting");
   const [lastEventAtMs, setLastEventAtMs] = useState<number>(Date.now());
-  const [turnCards, setTurnCards] = useState<Record<string, TurnCard>>({});
   const [prompt, setPrompt] = useState("");
+  const [permissionMode, setPermissionMode] = useState<TurnPermissionMode>("local");
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [pendingApprovals, setPendingApprovals] = useState<Record<string, PendingApprovalCard>>({});
@@ -314,6 +377,17 @@ export default function ThreadPage({ params }: Props) {
   useEffect(() => {
     params.then((value) => setThreadId(value.id));
   }, [params]);
+
+  useEffect(() => {
+    const saved = window.localStorage.getItem(PERMISSION_MODE_STORAGE_KEY);
+    if (saved === "local" || saved === "full-access") {
+      setPermissionMode(saved);
+    }
+  }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem(PERMISSION_MODE_STORAGE_KEY, permissionMode);
+  }, [permissionMode]);
 
   useEffect(() => {
     if (!threadId) {
@@ -353,20 +427,6 @@ export default function ThreadPage({ params }: Props) {
           setDetail(data);
           setThreadListLoading(false);
           setThreadList(threadListResult.data);
-          setTurnCards(() => {
-            const next: Record<string, TurnCard> = {};
-            for (const turn of data.turns) {
-              next[turn.id] = {
-                id: turn.id,
-                status: normalizeTurnStatus(turn.status),
-                startedAt: turn.startedAt,
-                completedAt: turn.completedAt,
-                agentText: "",
-                error: turn.error ? JSON.stringify(turn.error) : null,
-              };
-            }
-            return next;
-          });
           setPendingApprovals(() =>
             Object.fromEntries(pending.data.map((item) => [item.approvalId, item])),
           );
@@ -428,76 +488,6 @@ export default function ThreadPage({ params }: Props) {
         setLastEventAtMs(Date.now());
         reconnectAttempt = 0;
         setConnectionState("connected");
-
-        const payloadRecord = asRecord(payload.payload);
-        const turnFromPayload = asRecord(payloadRecord?.turn);
-        const itemFromPayload = asRecord(payloadRecord?.item);
-        const resolvedTurnId =
-          payload.turnId ?? extractTurnId(payload.payload) ?? readString(payloadRecord, "turnId");
-
-        setTurnCards((prev) => {
-          const next = { ...prev };
-
-          const ensureTurn = (turnIdValue: string): TurnCard => {
-            const existing = next[turnIdValue];
-            if (existing) return existing;
-            const created: TurnCard = {
-              id: turnIdValue,
-              status: "inProgress",
-              startedAt: null,
-              completedAt: null,
-              agentText: "",
-              error: null,
-            };
-            next[turnIdValue] = created;
-            return created;
-          };
-
-          if (payload.name === "turn/started") {
-            const turnIdValue = readString(turnFromPayload, "id") ?? resolvedTurnId;
-            if (turnIdValue) {
-              const turn = ensureTurn(turnIdValue);
-              turn.status = normalizeTurnStatus(readString(turnFromPayload, "status"));
-              turn.startedAt = turn.startedAt ?? new Date(payload.serverTs).toISOString();
-              turn.error = null;
-            }
-          }
-
-          if (payload.name === "turn/completed") {
-            const turnIdValue = readString(turnFromPayload, "id") ?? resolvedTurnId;
-            if (turnIdValue) {
-              const turn = ensureTurn(turnIdValue);
-              turn.status = normalizeTurnStatus(readString(turnFromPayload, "status"));
-              turn.completedAt = new Date(payload.serverTs).toISOString();
-              const err = turnFromPayload?.error;
-              turn.error = err ? JSON.stringify(err) : null;
-            }
-          }
-
-          if (payload.name === "item/agentMessage/delta" && resolvedTurnId) {
-            const turn = ensureTurn(resolvedTurnId);
-            const delta =
-              readString(payloadRecord, "delta") ??
-              readString(payloadRecord, "textDelta") ??
-              readString(payloadRecord, "text");
-            if (delta) {
-              turn.agentText += delta;
-            }
-          }
-
-          if ((payload.name === "item/started" || payload.name === "item/completed") && itemFromPayload) {
-            const turnIdValue = resolvedTurnId;
-            if (turnIdValue && readString(itemFromPayload, "type") === "agentMessage") {
-              const turn = ensureTurn(turnIdValue);
-              const fullText = readString(itemFromPayload, "text");
-              if (fullText !== null) {
-                turn.agentText = fullText;
-              }
-            }
-          }
-
-          return next;
-        });
 
         if (payload.name === "approval/decision") {
           const decisionPayload = asRecord(payload.payload);
@@ -578,168 +568,42 @@ export default function ThreadPage({ params }: Props) {
     return "Connecting";
   }, [connectionState]);
 
-  const orderedTurns = useMemo(
+  const visibleEvents = useMemo(() => events.slice(-120), [events]);
+  const liveTimelineItems = useMemo(
     () =>
-      Object.values(turnCards).sort((a, b) => {
-        const left = a.startedAt ?? "";
-        const right = b.startedAt ?? "";
-        if (left !== right) {
-          return left.localeCompare(right);
+      events
+        .map((event) => timelineItemFromGatewayEvent(event))
+        .filter((item): item is ThreadTimelineItem => item !== null),
+    [events],
+  );
+  const allTimelineItems = useMemo(() => {
+    const dedupe = new Set<string>();
+    const merged = [...timelineItems, ...liveTimelineItems]
+      .sort((a, b) => {
+        if (a.ts !== b.ts) {
+          return a.ts.localeCompare(b.ts);
         }
         return a.id.localeCompare(b.id);
-      }),
-    [turnCards],
-  );
-
-  const turnSections = useMemo(() => {
-    const sections = new Map<string, TurnSection>();
-
-    for (const turn of detail?.turns ?? []) {
-      const parsedItems = Array.isArray(turn.items) ? turn.items : [];
-      sections.set(turn.id, {
-        id: turn.id,
-        status: normalizeTurnStatus(turn.status),
-        startedAt: turn.startedAt,
-        completedAt: turn.completedAt,
-        messages: parseTurnMessages(parsedItems),
-      });
-    }
-
-    for (const liveTurn of orderedTurns) {
-      const existing = sections.get(liveTurn.id);
-      const liveText = normalizeText(liveTurn.agentText);
-
-      if (!existing) {
-        sections.set(liveTurn.id, {
-          id: liveTurn.id,
-          status: liveTurn.status,
-          startedAt: liveTurn.startedAt,
-          completedAt: liveTurn.completedAt,
-          messages: liveText
-            ? [{ id: `live-${liveTurn.id}`, kind: "assistant", text: liveText }]
-            : liveTurn.status === "inProgress"
-              ? [{ id: `live-wait-${liveTurn.id}`, kind: "status", text: "Generating response..." }]
-              : [],
-        });
-        continue;
-      }
-
-      existing.status = liveTurn.status;
-      existing.startedAt = existing.startedAt ?? liveTurn.startedAt;
-      existing.completedAt = existing.completedAt ?? liveTurn.completedAt;
-
-      if (liveTurn.status === "inProgress" && liveText) {
-        const hasSame = existing.messages.some(
-          (message) => message.kind === "assistant" && message.text === liveText,
-        );
-        if (!hasSame) {
-          existing.messages = [
-            ...existing.messages,
-            { id: `live-${liveTurn.id}`, kind: "assistant", text: liveText },
-          ];
+      })
+      .filter((item) => {
+        const signature = [
+          item.ts,
+          item.turnId ?? "",
+          item.type,
+          item.rawType,
+          item.callId ?? "",
+          item.text ?? "",
+        ].join("|");
+        if (dedupe.has(signature)) {
+          return false;
         }
-      }
-    }
-
-    return [...sections.values()].sort((a, b) => {
-      const left = a.startedAt ?? a.completedAt ?? "";
-      const right = b.startedAt ?? b.completedAt ?? "";
-      if (left !== right) {
-        return left.localeCompare(right);
-      }
-      return a.id.localeCompare(b.id);
-    });
-  }, [detail?.turns, orderedTurns]);
-
-  const toolActivitiesByTurn = useMemo(() => {
-    const sortedTimeline = [...timelineItems].sort((a, b) => {
-      if (a.ts !== b.ts) {
-        return a.ts.localeCompare(b.ts);
-      }
-      return a.id.localeCompare(b.id);
-    });
-
-    const activityByCallId = new Map<string, ToolActivity>();
-    const activitiesByTurn = new Map<string, ToolActivity[]>();
-
-    const addToTurn = (turnId: string, activity: ToolActivity): void => {
-      const list = activitiesByTurn.get(turnId) ?? [];
-      if (!list.find((entry) => entry.id === activity.id)) {
-        list.push(activity);
-        activitiesByTurn.set(turnId, list);
-      }
-    };
-
-    for (const item of sortedTimeline) {
-      if (item.type !== "toolCall" && item.type !== "toolResult") {
-        continue;
-      }
-
-      const key = item.callId ?? item.id;
-      const turnKey = item.turnId ?? "__unknown";
-
-      if (item.type === "toolCall") {
-        const activity: ToolActivity = {
-          id: key,
-          turnId: item.turnId,
-          ts: item.ts,
-          toolName: item.toolName ?? item.title ?? "tool",
-          input: normalizeText(item.text ?? null),
-          output: null,
-        };
-        activityByCallId.set(key, activity);
-        addToTurn(turnKey, activity);
-        continue;
-      }
-
-      const existing = activityByCallId.get(key);
-      if (existing) {
-        existing.output = normalizeText(item.text ?? null);
-        continue;
-      }
-
-      const fallback: ToolActivity = {
-        id: key,
-        turnId: item.turnId,
-        ts: item.ts,
-        toolName: item.toolName ?? "tool",
-        input: null,
-        output: normalizeText(item.text ?? null),
-      };
-      activityByCallId.set(key, fallback);
-      addToTurn(turnKey, fallback);
-    }
-
-    return activitiesByTurn;
-  }, [timelineItems]);
-
-  const hiddenTurnCount = Math.max(0, turnSections.length - 6);
-  const visibleTurnSections = showAllTurns ? turnSections : turnSections.slice(-6);
-  const visibleEvents = useMemo(() => events.slice(-120), [events]);
-  const unknownToolActivities = toolActivitiesByTurn.get("__unknown") ?? [];
-  const turnTimelineCards = useMemo(
-    () =>
-      visibleTurnSections.map((section) => {
-        const userMessages = section.messages.filter((message) => message.kind === "user");
-        const nonUserMessages = section.messages.filter((message) => message.kind !== "user");
-        const visibleMessage =
-          [...nonUserMessages].reverse().find((message) => message.kind === "assistant") ??
-          nonUserMessages.at(-1) ??
-          null;
-        const hiddenMessages = visibleMessage
-          ? nonUserMessages.filter((message) => message.id !== visibleMessage.id)
-          : nonUserMessages;
-
-        return {
-          ...section,
-          userMessages,
-          visibleMessage,
-          hiddenMessages,
-          toolActivities: toolActivitiesByTurn.get(section.id) ?? [],
-        };
-      }),
-    [visibleTurnSections, toolActivitiesByTurn],
-  );
+        dedupe.add(signature);
+        return true;
+      });
+    return merged;
+  }, [timelineItems, liveTimelineItems]);
+  const hiddenTimelineCount = Math.max(0, allTimelineItems.length - 200);
+  const visibleTimelineItems = showAllTurns ? allTimelineItems : allTimelineItems.slice(-200);
 
   const activeThread = threadList.find((thread) => thread.id === threadId);
   const groupedThreads = useMemo(() => groupThreadsByProject(threadList), [threadList]);
@@ -778,11 +642,25 @@ export default function ThreadPage({ params }: Props) {
 
   useEffect(() => {
     timelineStickyRef.current = true;
+    timelineInitializedRef.current = false;
   }, [threadId]);
 
   useEffect(() => {
     const timeline = timelineRef.current;
-    if (!timeline || !timelineStickyRef.current) {
+    if (!timeline) {
+      return;
+    }
+    if (!timelineInitializedRef.current) {
+      const rafId = window.requestAnimationFrame(() => {
+        timeline.scrollTop = timeline.scrollHeight;
+        timelineInitializedRef.current = true;
+        syncTimelineStickyState();
+      });
+      return () => {
+        window.cancelAnimationFrame(rafId);
+      };
+    }
+    if (!timelineStickyRef.current) {
       return;
     }
     const rafId = window.requestAnimationFrame(() => {
@@ -795,9 +673,8 @@ export default function ThreadPage({ params }: Props) {
   }, [
     threadId,
     showAllTurns,
-    hiddenTurnCount,
-    turnTimelineCards,
-    unknownToolActivities.length,
+    hiddenTimelineCount,
+    visibleTimelineItems,
     activeApproval?.approvalId,
     syncTimelineStickyState,
   ]);
@@ -940,27 +817,6 @@ export default function ThreadPage({ params }: Props) {
       if (!res.ok) {
         throw new Error(`control http ${res.status}`);
       }
-
-      const payload = (await res.json()) as ThreadControlResponse;
-      const appliedTurnId = payload.appliedToTurnId;
-      if (appliedTurnId && action === "retry") {
-        setTurnCards((prev) => {
-          if (prev[appliedTurnId]) {
-            return prev;
-          }
-          return {
-            ...prev,
-            [appliedTurnId]: {
-              id: appliedTurnId,
-              status: "inProgress",
-              startedAt: new Date().toISOString(),
-              completedAt: null,
-              agentText: "",
-              error: null,
-            },
-          };
-        });
-      }
     } catch (controlErr) {
       setControlError(controlErr instanceof Error ? controlErr.message : "control failed");
     } finally {
@@ -978,6 +834,16 @@ export default function ThreadPage({ params }: Props) {
     setSubmitError(null);
 
     try {
+      const options: {
+        cwd?: string;
+        permissionMode: TurnPermissionMode;
+      } = {
+        permissionMode,
+      };
+      if (activeProjectKey !== "unknown") {
+        options.cwd = activeProjectKey;
+      }
+
       const res = await fetch(`${gatewayUrl}/api/threads/${threadId}/turns`, {
         method: "POST",
         headers: {
@@ -985,7 +851,7 @@ export default function ThreadPage({ params }: Props) {
         },
         body: JSON.stringify({
           input: [{ type: "text", text }],
-          options: activeProjectKey !== "unknown" ? { cwd: activeProjectKey } : undefined,
+          options,
         }),
       });
 
@@ -993,25 +859,8 @@ export default function ThreadPage({ params }: Props) {
         throw new Error(`turn submit http ${res.status}`);
       }
 
-      const payload = (await res.json()) as CreateTurnResponse;
+      await res.json();
       setPrompt("");
-      setTurnCards((prev) => {
-        const existing = prev[payload.turnId];
-        if (existing) {
-          return prev;
-        }
-        return {
-          ...prev,
-          [payload.turnId]: {
-            id: payload.turnId,
-            status: "inProgress",
-            startedAt: new Date().toISOString(),
-            completedAt: null,
-            agentText: "",
-            error: null,
-          },
-        };
-      });
     } catch (submitErr) {
       setSubmitError(submitErr instanceof Error ? submitErr.message : "submit failed");
     } finally {
@@ -1168,149 +1017,58 @@ export default function ThreadPage({ params }: Props) {
             ref={timelineRef}
             onScroll={handleTimelineScroll}
           >
-            {hiddenTurnCount > 0 && !showAllTurns ? (
+            {hiddenTimelineCount > 0 && !showAllTurns ? (
               <button
                 type="button"
                 className="cdx-toolbar-btn cdx-timeline-toggle"
                 onClick={() => setShowAllTurns(true)}
               >
-                {hiddenTurnCount} previous messages
+                {hiddenTimelineCount} previous events
               </button>
             ) : null}
 
-            {hiddenTurnCount > 0 && showAllTurns ? (
+            {hiddenTimelineCount > 0 && showAllTurns ? (
               <button
                 type="button"
                 className="cdx-toolbar-btn cdx-timeline-toggle"
                 onClick={() => setShowAllTurns(false)}
               >
-                Show fewer turns
+                Show fewer events
               </button>
             ) : null}
 
-            {turnTimelineCards.length === 0 ? (
-              orderedTurns.map((turn) => (
-                <article className="cdx-turn-card" key={`turn-${turn.id}`} data-testid={`turn-card-${turn.id}`}>
+            {visibleTimelineItems.length === 0 ? (
+              <p className="cdx-helper">No timeline events yet.</p>
+            ) : (
+              visibleTimelineItems.map((item) => (
+                <article className={`cdx-turn-card cdx-turn-card--event cdx-turn-card--${item.type}`} key={item.id}>
                   <div className="cdx-turn-head">
-                    <strong>Turn {turn.id}</strong>
-                    <span className={`cdx-status ${statusClass(turn.status)}`} data-testid={`turn-status-${turn.id}`}>
-                      {turn.status}
+                    <strong>{item.title}</strong>
+                    <span className={`cdx-status ${timelineTypeClass(item.type)}`}>
+                      {timelineTypeLabel(item.type)}
                     </span>
                   </div>
-                  <pre className="cdx-turn-body" data-testid={`turn-agent-${turn.id}`}>
-                    {turn.agentText || "(waiting for output...)"}
-                  </pre>
-                  {turn.error ? <p className="cdx-error">error: {turn.error}</p> : null}
+                  <p className="cdx-turn-meta">
+                    {formatTimestamp(item.ts)} · turn {item.turnId ?? "-"}
+                  </p>
+                  {item.toolName ? <p className="cdx-turn-meta">tool: {item.toolName}</p> : null}
+                  {item.text ? (
+                    <pre className="cdx-turn-body">{truncateText(item.text, 9000)}</pre>
+                  ) : (
+                    <p className="cdx-helper">(no text)</p>
+                  )}
+                  {item.text ? (
+                    <button
+                      type="button"
+                      className="cdx-toolbar-btn cdx-toolbar-btn--small cdx-event-copy"
+                      onClick={() => void copyMessage(item.text ?? "")}
+                    >
+                      Copy
+                    </button>
+                  ) : null}
                 </article>
               ))
-            ) : (
-              turnTimelineCards.map((turn) => {
-                const previousMessageCount = turn.hiddenMessages.length + turn.toolActivities.length;
-
-                return (
-                  <article className="cdx-turn-card cdx-turn-card--conversation" key={turn.id}>
-                    <div className="cdx-message-stack">
-                      {turn.userMessages.map((message) => (
-                        <article className="cdx-message cdx-message--user" key={`${turn.id}-${message.id}`}>
-                          <div className="cdx-message-meta">
-                            <span className="cdx-message-role">{messageRoleLabel(message.kind)}</span>
-                            <button
-                              type="button"
-                              className="cdx-toolbar-btn cdx-toolbar-btn--small"
-                              onClick={() => void copyMessage(message.text)}
-                            >
-                              Copy message
-                            </button>
-                          </div>
-                          <pre className="cdx-turn-body">{message.text}</pre>
-                        </article>
-                      ))}
-
-                      {previousMessageCount > 0 ? (
-                        <details className="cdx-message-collapsible">
-                          <summary>{previousMessageCount} previous messages</summary>
-                          <div className="cdx-message-stack cdx-message-stack--details">
-                            {turn.hiddenMessages.map((message) => (
-                              <article className="cdx-message cdx-message--detail" key={`${turn.id}-${message.id}`}>
-                                <div className="cdx-message-meta">
-                                  <span className={`cdx-status ${messageRoleClass(message.kind)}`}>
-                                    {messageRoleLabel(message.kind)}
-                                  </span>
-                                </div>
-                                <pre className="cdx-turn-body">{message.text}</pre>
-                              </article>
-                            ))}
-
-                            {turn.toolActivities.map((activity) => (
-                              <article className="cdx-message cdx-message--tool" key={`${turn.id}-tool-${activity.id}`}>
-                                <div className="cdx-message-meta">
-                                  <span className="cdx-status is-pending">Tool call</span>
-                                  <span className="cdx-helper">{activity.toolName}</span>
-                                </div>
-                                {activity.input ? (
-                                  <pre className="cdx-turn-body">{truncateText(activity.input, 1800)}</pre>
-                                ) : null}
-                                {activity.output ? (
-                                  <pre className="cdx-turn-body">{truncateText(activity.output, 1800)}</pre>
-                                ) : null}
-                              </article>
-                            ))}
-                          </div>
-                        </details>
-                      ) : null}
-
-                      {turn.visibleMessage ? (
-                        <article className="cdx-message cdx-message--assistant">
-                          <div className="cdx-message-meta">
-                            <span className={`cdx-status ${messageRoleClass(turn.visibleMessage.kind)}`}>
-                              {messageRoleLabel(turn.visibleMessage.kind)}
-                            </span>
-                            <button
-                              type="button"
-                              className="cdx-toolbar-btn cdx-toolbar-btn--small"
-                              onClick={() => void copyMessage(turn.visibleMessage?.text ?? "")}
-                            >
-                              Copy message
-                            </button>
-                          </div>
-                          <pre className="cdx-turn-body">{turn.visibleMessage.text}</pre>
-                        </article>
-                      ) : (
-                        <p className="cdx-helper">(waiting for output...)</p>
-                      )}
-                    </div>
-                  </article>
-                );
-              })
             )}
-
-            {unknownToolActivities.length > 0 ? (
-              <article className="cdx-turn-card cdx-turn-card--timeline">
-                <div className="cdx-turn-head">
-                  <strong>Thread tool activity</strong>
-                  <span className="cdx-status is-pending">{unknownToolActivities.length}</span>
-                </div>
-                <details className="cdx-message-collapsible">
-                  <summary>Show thread-level tool activity</summary>
-                  <div className="cdx-message-stack cdx-message-stack--details">
-                    {unknownToolActivities.map((activity) => (
-                      <article className="cdx-message cdx-message--tool" key={`thread-tool-${activity.id}`}>
-                        <div className="cdx-message-meta">
-                          <span className="cdx-status is-pending">{activity.toolName}</span>
-                          <span className="cdx-helper">{formatTimestamp(activity.ts)}</span>
-                        </div>
-                        {activity.input ? (
-                          <pre className="cdx-turn-body">{truncateText(activity.input, 1800)}</pre>
-                        ) : null}
-                        {activity.output ? (
-                          <pre className="cdx-turn-body">{truncateText(activity.output, 1800)}</pre>
-                        ) : null}
-                      </article>
-                    ))}
-                  </div>
-                </details>
-              </article>
-            ) : null}
           </section>
 
           {activeApproval ? (
@@ -1396,6 +1154,22 @@ export default function ThreadPage({ params }: Props) {
                 </button>
               </div>
               <div className="cdx-composer-right">
+                <label className="cdx-permission-select" htmlFor="permission-mode">
+                  <span>Permission</span>
+                  <select
+                    id="permission-mode"
+                    value={permissionMode}
+                    onChange={(event) => {
+                      const next = event.target.value;
+                      if (next === "local" || next === "full-access") {
+                        setPermissionMode(next);
+                      }
+                    }}
+                  >
+                    <option value="local">Local (on-request)</option>
+                    <option value="full-access">Full access (never)</option>
+                  </select>
+                </label>
                 <button type="button" className="cdx-toolbar-btn" disabled>
                   GPT-5.3-Codex-Spark
                 </button>
