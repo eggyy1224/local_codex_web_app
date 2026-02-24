@@ -114,3 +114,11 @@
 7. 文件與介面命名盡量一致（thread/turn/event/approval）。
 8. 實作 app-server 相關能力時，必須優先參考官方 OpenAI/Codex 文件（openai-docs skill）。
 9. 本專案溝通預設使用繁體中文。
+10. 測試強制條款：
+11. 新功能：必須附對應 unit + integration 測試，否則不可 merge。
+12. Bug 修復：必須先有可重現失敗測試，再修復並轉綠。
+13. 行為變更：必須同步更新既有測試與文件，不允許保留紅測試。
+14. UI 互動變更：至少補 integration；關鍵流程需補 e2e（desktop + mobile）。
+15. 每個切片 commit 前，至少執行該切片最小驗證命令；PR 前必跑 `pnpm check`。
+16. `pnpm check` 為本機 merge gate：`lint + typecheck + test:coverage + test:e2e`，任一失敗即不可合併。
+17. CDP 桌機/手機 viewport 驗證屬人工補強，不能替代自動化測試。
