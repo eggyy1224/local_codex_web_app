@@ -14,6 +14,7 @@ export type ThreadStatus =
 
 export type ThreadListItem = {
   id: string;
+  projectKey: string;
   title: string;
   preview: string;
   status: ThreadStatus;
@@ -50,6 +51,30 @@ export type ThreadDetailResponse = {
   thread: ThreadMeta;
   turns: TurnView[];
   nextCursor: string | null;
+};
+
+export type ThreadTimelineItemType =
+  | "userMessage"
+  | "assistantMessage"
+  | "reasoning"
+  | "toolCall"
+  | "toolResult"
+  | "status";
+
+export type ThreadTimelineItem = {
+  id: string;
+  ts: string;
+  turnId: string | null;
+  type: ThreadTimelineItemType;
+  title: string;
+  text: string | null;
+  rawType: string;
+  toolName: string | null;
+  callId: string | null;
+};
+
+export type ThreadTimelineResponse = {
+  data: ThreadTimelineItem[];
 };
 
 export type UserInputItem =

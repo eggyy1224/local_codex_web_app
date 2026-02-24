@@ -13,6 +13,7 @@ import type {
 
 export type ThreadProjection = {
   thread_id: string;
+  project_key: string;
   title: string;
   preview: string;
   status: ThreadStatus;
@@ -47,6 +48,7 @@ PRAGMA journal_mode = WAL;
 
 CREATE TABLE IF NOT EXISTS threads_projection (
   thread_id TEXT PRIMARY KEY,
+  project_key TEXT NOT NULL DEFAULT 'unknown',
   title TEXT NOT NULL,
   preview TEXT NOT NULL,
   status TEXT NOT NULL,
@@ -99,10 +101,20 @@ CREATE TABLE IF NOT EXISTS audit_log (
 );
 `);
 
+try {
+  db.exec("ALTER TABLE threads_projection ADD COLUMN project_key TEXT NOT NULL DEFAULT 'unknown'");
+} catch (error) {
+  const message = error instanceof Error ? error.message : String(error);
+  if (!message.includes("duplicate column name")) {
+    throw error;
+  }
+}
+
 const upsertThreadStmt = db.prepare(`
-INSERT INTO threads_projection (thread_id, title, preview, status, archived, updated_at, last_error)
-VALUES (?, ?, ?, ?, ?, ?, ?)
+INSERT INTO threads_projection (thread_id, project_key, title, preview, status, archived, updated_at, last_error)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(thread_id) DO UPDATE SET
+  project_key = excluded.project_key,
   title = excluded.title,
   preview = excluded.preview,
   status = excluded.status,
@@ -112,17 +124,23 @@ ON CONFLICT(thread_id) DO UPDATE SET
 `);
 
 const listThreadsStmt = db.prepare(`
-SELECT thread_id, title, preview, status, archived, updated_at, last_error
+SELECT thread_id, project_key, title, preview, status, archived, updated_at, last_error
 FROM threads_projection
 ORDER BY updated_at DESC
 LIMIT ?
 `);
 
 const getThreadByIdStmt = db.prepare(`
-SELECT thread_id, title, preview, status, archived, updated_at, last_error
+SELECT thread_id, project_key, title, preview, status, archived, updated_at, last_error
 FROM threads_projection
 WHERE thread_id = ?
 LIMIT 1
+`);
+
+const updateThreadProjectStmt = db.prepare(`
+UPDATE threads_projection
+SET project_key = ?
+WHERE thread_id = ?
 `);
 
 const insertEventStmt = db.prepare(`
@@ -220,6 +238,7 @@ export function upsertThreads(rows: ThreadProjection[]): void {
     for (const row of rows) {
       upsertThreadStmt.run(
         row.thread_id,
+        row.project_key,
         row.title,
         row.preview,
         row.status,
@@ -239,6 +258,7 @@ export function listProjectedThreads(limit: number): ThreadListItem[] {
   const rows = listThreadsStmt.all(limit) as ThreadProjection[];
   return rows.map((row) => ({
     id: row.thread_id,
+    projectKey: row.project_key || "unknown",
     title: row.title,
     preview: row.preview,
     status: row.status,
@@ -257,6 +277,7 @@ export function getProjectedThread(threadId: string): ThreadListItem | null {
 
   return {
     id: row.thread_id,
+    projectKey: row.project_key || "unknown",
     title: row.title,
     preview: row.preview,
     status: row.status,
@@ -265,6 +286,10 @@ export function getProjectedThread(threadId: string): ThreadListItem | null {
     waitingApprovalCount: 0,
     errorCount: row.last_error ? 1 : 0,
   };
+}
+
+export function updateThreadProjectKey(threadId: string, projectKey: string): void {
+  updateThreadProjectStmt.run(projectKey, threadId);
 }
 
 export function insertGatewayEvent(event: Omit<GatewayEvent, "seq">): number {

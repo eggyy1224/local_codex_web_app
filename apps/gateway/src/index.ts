@@ -1,3 +1,8 @@
+import { createReadStream } from "node:fs";
+import { readdir } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { createInterface } from "node:readline";
 import cors from "@fastify/cors";
 import Fastify from "fastify";
 import type {
@@ -16,6 +21,8 @@ import type {
   ThreadListResponse,
   ThreadMeta,
   ThreadStatus,
+  ThreadTimelineItem,
+  ThreadTimelineResponse,
   TurnView,
 } from "@lcwa/shared-types";
 import { AppServerClient } from "./appServerClient.js";
@@ -28,6 +35,7 @@ import {
   listGatewayEventsSince,
   listProjectedThreads,
   resolveApprovalRequest,
+  updateThreadProjectKey,
   upsertApprovalRequest,
   upsertThreads,
   type ApprovalProjection,
@@ -83,6 +91,13 @@ await app.register(cors, {
 const appServer = new AppServerClient();
 const subscribers = new Map<string, Set<(event: GatewayEvent) => void>>();
 const activeTurnByThread = new Map<string, string>();
+const codexSessionsDir = process.env.CODEX_SESSIONS_DIR ?? path.join(os.homedir(), ".codex", "sessions");
+const threadIdFromSessionFilePattern =
+  /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i;
+const sessionFileByThreadId = new Map<string, string>();
+const resolvedProjectKeyByThreadId = new Map<string, string>();
+const projectKeyLookupInFlight = new Map<string, Promise<string>>();
+let sessionIndexPromise: Promise<void> | null = null;
 const lastTurnInputByThread = new Map<
   string,
   {
@@ -153,7 +168,158 @@ function unixSecondsToIso(ts?: number): string {
   return new Date(ts * 1000).toISOString();
 }
 
-function toThreadListItem(raw: RawThread): ThreadListItem {
+function normalizeProjectKey(cwd?: string | null): string {
+  if (!cwd) {
+    return "unknown";
+  }
+  const normalized = cwd.trim().replace(/\\/g, "/").replace(/\/+$/, "");
+  return normalized || "unknown";
+}
+
+async function buildSessionFileIndex(dirPath: string): Promise<void> {
+  const entries = await readdir(dirPath, { encoding: "utf8", withFileTypes: true }).catch(() => null);
+  if (!entries) {
+    return;
+  }
+
+  await Promise.all(
+    entries.map(async (entry) => {
+      const fullPath = path.join(dirPath, entry.name);
+      if (entry.isDirectory()) {
+        await buildSessionFileIndex(fullPath);
+        return;
+      }
+
+      if (!entry.isFile()) {
+        return;
+      }
+
+      const match = entry.name.match(threadIdFromSessionFilePattern);
+      if (!match) {
+        return;
+      }
+
+      sessionFileByThreadId.set(match[1], fullPath);
+    }),
+  );
+}
+
+async function ensureSessionFileIndex(): Promise<void> {
+  if (sessionIndexPromise) {
+    return sessionIndexPromise;
+  }
+
+  sessionIndexPromise = (async () => {
+    await buildSessionFileIndex(codexSessionsDir);
+    app.log.info({ indexed: sessionFileByThreadId.size }, "session file index ready");
+  })();
+
+  return sessionIndexPromise;
+}
+
+async function readCwdFromSessionMeta(sessionFilePath: string): Promise<string | null> {
+  const stream = createReadStream(sessionFilePath, { encoding: "utf8" });
+  const reader = createInterface({ input: stream, crlfDelay: Infinity });
+
+  try {
+    for await (const line of reader) {
+      if (!line) {
+        break;
+      }
+
+      try {
+        const parsed = JSON.parse(line) as {
+          type?: string;
+          payload?: { cwd?: unknown };
+        };
+
+        if (parsed.type === "session_meta" && typeof parsed.payload?.cwd === "string") {
+          return parsed.payload.cwd;
+        }
+      } catch {
+        return null;
+      }
+
+      break;
+    }
+  } finally {
+    reader.close();
+    stream.destroy();
+  }
+
+  return null;
+}
+
+async function readLatestCwdFromTurnContext(sessionFilePath: string): Promise<string | null> {
+  let latestCwd: string | null = null;
+  const stream = createReadStream(sessionFilePath, { encoding: "utf8" });
+  const reader = createInterface({ input: stream, crlfDelay: Infinity });
+
+  try {
+    for await (const line of reader) {
+      if (!line.includes('"type":"turn_context"')) {
+        continue;
+      }
+
+      try {
+        const parsed = JSON.parse(line) as {
+          type?: string;
+          payload?: { cwd?: unknown };
+        };
+        if (parsed.type === "turn_context" && typeof parsed.payload?.cwd === "string") {
+          latestCwd = parsed.payload.cwd;
+        }
+      } catch {
+        // skip malformed session lines
+      }
+    }
+  } finally {
+    reader.close();
+    stream.destroy();
+  }
+
+  return latestCwd;
+}
+
+async function resolveProjectKeyFromSession(threadId: string): Promise<string> {
+  const cached = resolvedProjectKeyByThreadId.get(threadId);
+  if (cached) {
+    return cached;
+  }
+
+  const inFlight = projectKeyLookupInFlight.get(threadId);
+  if (inFlight) {
+    return inFlight;
+  }
+
+  const lookup = (async () => {
+    await ensureSessionFileIndex();
+    const sessionFilePath = sessionFileByThreadId.get(threadId);
+    if (!sessionFilePath) {
+      resolvedProjectKeyByThreadId.set(threadId, "unknown");
+      return "unknown";
+    }
+
+    const cwdFromMeta = await readCwdFromSessionMeta(sessionFilePath);
+    const cwd = cwdFromMeta ?? (await readLatestCwdFromTurnContext(sessionFilePath));
+    const projectKey = normalizeProjectKey(cwd);
+    resolvedProjectKeyByThreadId.set(threadId, projectKey);
+    if (projectKey !== "unknown") {
+      updateThreadProjectKey(threadId, projectKey);
+    }
+    return projectKey;
+  })();
+
+  projectKeyLookupInFlight.set(threadId, lookup);
+
+  try {
+    return await lookup;
+  } finally {
+    projectKeyLookupInFlight.delete(threadId);
+  }
+}
+
+function toThreadListItem(raw: RawThread, projectKey = "unknown"): ThreadListItem {
   const status = statusFromRaw(raw.status);
   const title = raw.name ?? raw.preview?.slice(0, 80) ?? raw.id;
   const preview = raw.preview ?? "";
@@ -161,6 +327,7 @@ function toThreadListItem(raw: RawThread): ThreadListItem {
 
   return {
     id: raw.id,
+    projectKey,
     title,
     preview,
     status,
@@ -191,6 +358,312 @@ function toTurnView(raw: RawTurn): TurnView {
     error: raw.error ?? null,
     items: raw.items ?? [],
   };
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  return value as Record<string, unknown>;
+}
+
+function pickString(
+  obj: Record<string, unknown> | null,
+  ...keys: string[]
+): string | null {
+  if (!obj) {
+    return null;
+  }
+  for (const key of keys) {
+    const value = obj[key];
+    if (typeof value === "string") {
+      return value;
+    }
+  }
+  return null;
+}
+
+function stringifyCompact(value: unknown): string | null {
+  if (typeof value === "string") {
+    return value;
+  }
+  if (value === null || value === undefined) {
+    return null;
+  }
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function truncateText(value: string | null, maxLength = 2000): string | null {
+  if (!value) {
+    return null;
+  }
+  if (value.length <= maxLength) {
+    return value;
+  }
+  return `${value.slice(0, maxLength)}\n...`;
+}
+
+function pushTimelineItem(
+  items: ThreadTimelineItem[],
+  next: ThreadTimelineItem,
+): void {
+  const previous = items[items.length - 1];
+  if (
+    previous &&
+    previous.type === next.type &&
+    previous.turnId === next.turnId &&
+    previous.text === next.text &&
+    previous.rawType === next.rawType
+  ) {
+    return;
+  }
+  items.push(next);
+}
+
+async function loadThreadTimelineFromSession(
+  threadId: string,
+  limit: number,
+): Promise<ThreadTimelineItem[]> {
+  await ensureSessionFileIndex();
+  const sessionFilePath = sessionFileByThreadId.get(threadId);
+  if (!sessionFilePath) {
+    return [];
+  }
+
+  const stream = createReadStream(sessionFilePath, { encoding: "utf8" });
+  const reader = createInterface({ input: stream, crlfDelay: Infinity });
+  const items: ThreadTimelineItem[] = [];
+  let lineNumber = 0;
+  let activeTurnId: string | null = null;
+
+  const buildId = (prefix: string): string => `${prefix}-${threadId}-${lineNumber}`;
+
+  try {
+    for await (const line of reader) {
+      lineNumber += 1;
+      if (!line) {
+        continue;
+      }
+
+      let parsed: Record<string, unknown>;
+      try {
+        parsed = JSON.parse(line) as Record<string, unknown>;
+      } catch {
+        continue;
+      }
+
+      const timestamp =
+        (typeof parsed.timestamp === "string" ? parsed.timestamp : null) ??
+        new Date().toISOString();
+      const lineType = typeof parsed.type === "string" ? parsed.type : "";
+
+      if (lineType === "event_msg") {
+        const payload = asRecord(parsed.payload);
+        const payloadType = pickString(payload, "type");
+        const turnFromPayload = pickString(payload, "turn_id", "turnId");
+        if (turnFromPayload) {
+          activeTurnId = turnFromPayload;
+        }
+        const eventTurnId = turnFromPayload ?? activeTurnId;
+
+        if (payloadType === "task_started") {
+          pushTimelineItem(items, {
+            id: buildId("status"),
+            ts: timestamp,
+            turnId: eventTurnId,
+            type: "status",
+            title: "Turn started",
+            text: eventTurnId ? `turn ${eventTurnId}` : null,
+            rawType: payloadType,
+            toolName: null,
+            callId: null,
+          });
+          continue;
+        }
+
+        if (payloadType === "task_complete") {
+          pushTimelineItem(items, {
+            id: buildId("status"),
+            ts: timestamp,
+            turnId: eventTurnId,
+            type: "status",
+            title: "Turn completed",
+            text: eventTurnId ? `turn ${eventTurnId}` : null,
+            rawType: payloadType,
+            toolName: null,
+            callId: null,
+          });
+          if (turnFromPayload && activeTurnId === turnFromPayload) {
+            activeTurnId = null;
+          }
+          continue;
+        }
+
+        if (payloadType === "turn_aborted") {
+          pushTimelineItem(items, {
+            id: buildId("status"),
+            ts: timestamp,
+            turnId: eventTurnId,
+            type: "status",
+            title: "Turn interrupted",
+            text: eventTurnId ? `turn ${eventTurnId}` : null,
+            rawType: payloadType,
+            toolName: null,
+            callId: null,
+          });
+          if (turnFromPayload && activeTurnId === turnFromPayload) {
+            activeTurnId = null;
+          }
+          continue;
+        }
+
+        if (payloadType === "entered_review_mode" || payloadType === "exited_review_mode") {
+          pushTimelineItem(items, {
+            id: buildId("status"),
+            ts: timestamp,
+            turnId: eventTurnId,
+            type: "status",
+            title: payloadType === "entered_review_mode" ? "Entered review mode" : "Exited review mode",
+            text: pickString(payload, "user_facing_hint"),
+            rawType: payloadType,
+            toolName: null,
+            callId: null,
+          });
+          continue;
+        }
+
+        if (payloadType === "context_compacted") {
+          pushTimelineItem(items, {
+            id: buildId("status"),
+            ts: timestamp,
+            turnId: eventTurnId,
+            type: "status",
+            title: "Context compacted",
+            text: null,
+            rawType: payloadType,
+            toolName: null,
+            callId: null,
+          });
+          continue;
+        }
+
+        if (payloadType === "user_message") {
+          pushTimelineItem(items, {
+            id: buildId("user"),
+            ts: timestamp,
+            turnId: eventTurnId,
+            type: "userMessage",
+            title: "User",
+            text: truncateText(pickString(payload, "message"), 4000),
+            rawType: payloadType,
+            toolName: null,
+            callId: null,
+          });
+          continue;
+        }
+
+        if (payloadType === "agent_message") {
+          pushTimelineItem(items, {
+            id: buildId("assistant"),
+            ts: timestamp,
+            turnId: eventTurnId,
+            type: "assistantMessage",
+            title: "Assistant",
+            text: truncateText(pickString(payload, "message"), 6000),
+            rawType: payloadType,
+            toolName: null,
+            callId: null,
+          });
+          continue;
+        }
+
+        if (payloadType === "agent_reasoning") {
+          pushTimelineItem(items, {
+            id: buildId("reasoning"),
+            ts: timestamp,
+            turnId: eventTurnId,
+            type: "reasoning",
+            title: "Thinking",
+            text: truncateText(pickString(payload, "text"), 2000),
+            rawType: payloadType,
+            toolName: null,
+            callId: null,
+          });
+        }
+        continue;
+      }
+
+      if (lineType !== "response_item") {
+        continue;
+      }
+
+      const payload = asRecord(parsed.payload);
+      const payloadType = pickString(payload, "type");
+      const callId = pickString(payload, "call_id");
+
+      if (
+        payloadType === "function_call" ||
+        payloadType === "custom_tool_call" ||
+        payloadType === "web_search_call"
+      ) {
+        const toolName =
+          pickString(payload, "name") ??
+          (payloadType === "web_search_call" ? "web_search" : "tool");
+        const argumentsText = truncateText(
+          pickString(payload, "arguments", "input", "query") ??
+            stringifyCompact(payload?.arguments ?? payload?.input ?? payload?.query),
+          1800,
+        );
+        pushTimelineItem(items, {
+          id: buildId("tool-call"),
+          ts: timestamp,
+          turnId: activeTurnId,
+          type: "toolCall",
+          title: `Tool call: ${toolName}`,
+          text: argumentsText,
+          rawType: payloadType,
+          toolName,
+          callId,
+        });
+        continue;
+      }
+
+      if (
+        payloadType === "function_call_output" ||
+        payloadType === "custom_tool_call_output" ||
+        payloadType === "web_search_call_output"
+      ) {
+        const outputText = truncateText(
+          pickString(payload, "output") ??
+            stringifyCompact(payload?.output ?? payload?.result ?? payload?.response),
+          2200,
+        );
+        pushTimelineItem(items, {
+          id: buildId("tool-result"),
+          ts: timestamp,
+          turnId: activeTurnId,
+          type: "toolResult",
+          title: "Tool output",
+          text: outputText,
+          rawType: payloadType,
+          toolName: null,
+          callId,
+        });
+      }
+    }
+  } finally {
+    reader.close();
+    stream.destroy();
+  }
+
+  if (items.length <= limit) {
+    return items;
+  }
+  return items.slice(-limit);
 }
 
 function applyFilters(
@@ -408,10 +881,20 @@ app.get("/api/threads", async (request): Promise<ThreadListResponse> => {
       nextCursor?: string | null;
     };
 
-    const items = (result.data ?? []).map(toThreadListItem);
+    const items = await Promise.all(
+      (result.data ?? []).map(async (thread) => {
+        const projected = getProjectedThread(thread.id);
+        let projectKey = projected?.projectKey ?? "unknown";
+        if (projectKey === "unknown") {
+          projectKey = await resolveProjectKeyFromSession(thread.id);
+        }
+        return toThreadListItem(thread, projectKey);
+      }),
+    );
 
     const rows: ThreadProjection[] = items.map((item) => ({
       thread_id: item.id,
+      project_key: item.projectKey,
       title: item.title,
       preview: item.preview,
       status: item.status,
@@ -429,8 +912,22 @@ app.get("/api/threads", async (request): Promise<ThreadListResponse> => {
   } catch (error) {
     app.log.error({ err: error }, "thread/list failed, fallback to projection cache");
 
+    const projected = listProjectedThreads(limit);
+    const hydrated = await Promise.all(
+      projected.map(async (thread) => {
+        if (thread.projectKey !== "unknown") {
+          return thread;
+        }
+        const projectKey = await resolveProjectKeyFromSession(thread.id);
+        return {
+          ...thread,
+          projectKey,
+        };
+      }),
+    );
+
     return {
-      data: applyFilters(listProjectedThreads(limit), query),
+      data: applyFilters(hydrated, query),
       nextCursor: null,
     };
   }
@@ -445,6 +942,9 @@ app.post("/api/threads", async (request): Promise<{ threadId: string }> => {
   };
 
   if (body.mode === "fork" && body.fromThreadId) {
+    const sourceThread = getProjectedThread(body.fromThreadId);
+    const projectKey = sourceThread?.projectKey ?? "unknown";
+
     const result = (await appServer.request("thread/fork", {
       threadId: body.fromThreadId,
     })) as {
@@ -455,10 +955,11 @@ app.post("/api/threads", async (request): Promise<{ threadId: string }> => {
       throw new Error("thread/fork response missing thread.id");
     }
 
-    const item = toThreadListItem(thread);
+    const item = toThreadListItem(thread, projectKey);
     upsertThreads([
       {
         thread_id: item.id,
+        project_key: item.projectKey,
         title: item.title,
         preview: item.preview,
         status: item.status,
@@ -470,6 +971,8 @@ app.post("/api/threads", async (request): Promise<{ threadId: string }> => {
 
     return { threadId: thread.id };
   }
+
+  const projectKey = normalizeProjectKey(body.cwd);
 
   const result = (await appServer.request("thread/start", {
     model: body.model,
@@ -483,10 +986,11 @@ app.post("/api/threads", async (request): Promise<{ threadId: string }> => {
     throw new Error("thread/start response missing thread.id");
   }
 
-  const item = toThreadListItem(thread);
+  const item = toThreadListItem(thread, projectKey);
   upsertThreads([
     {
       thread_id: item.id,
+      project_key: item.projectKey,
       title: item.title,
       preview: item.preview,
       status: item.status,
@@ -581,6 +1085,15 @@ app.get("/api/threads/:id", async (request): Promise<ThreadDetailResponse> => {
   };
 });
 
+app.get("/api/threads/:id/timeline", async (request): Promise<ThreadTimelineResponse> => {
+  const params = request.params as { id: string };
+  const query = request.query as { limit?: string };
+  const limit = Math.min(Math.max(Number(query.limit ?? "800") || 800, 1), 2000);
+
+  const data = await loadThreadTimelineFromSession(params.id, limit);
+  return { data };
+});
+
 app.get("/api/threads/:id/events", async (request, reply) => {
   const params = request.params as { id: string };
   const query = request.query as { since?: string };
@@ -657,12 +1170,15 @@ app.post("/api/threads/:id/turns", async (request): Promise<CreateTurnResponse> 
       ...(body.options?.cwd ? { cwd: body.options.cwd } : {}),
     })) as { turn?: RawTurn };
 
+  const isResumeNeeded = (message: string): boolean =>
+    message.includes("thread not loaded") || message.includes("thread not found");
+
   let result: { turn?: RawTurn };
   try {
     result = await startTurn();
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    if (!message.includes("thread not loaded")) {
+    if (!isResumeNeeded(message)) {
       throw error;
     }
 
@@ -676,6 +1192,9 @@ app.post("/api/threads/:id/turns", async (request): Promise<CreateTurnResponse> 
   }
 
   activeTurnByThread.set(params.id, turnId);
+  if (body.options?.cwd) {
+    updateThreadProjectKey(params.id, normalizeProjectKey(body.options.cwd));
+  }
 
   return { turnId };
 });
@@ -808,6 +1327,9 @@ app.post("/api/threads/:id/control", async (request): Promise<ThreadControlRespo
     }
 
     activeTurnByThread.set(params.id, turnId);
+    if (previous.options?.cwd) {
+      updateThreadProjectKey(params.id, normalizeProjectKey(previous.options.cwd));
+    }
     return { ok: true, appliedToTurnId: turnId };
   }
 
