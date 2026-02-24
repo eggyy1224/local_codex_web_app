@@ -4,7 +4,7 @@
   "private": true,
   "packageManager": "pnpm@10.6.2",
   "scripts": {
-    "dev": "pnpm -r --parallel dev",
+    "dev": "pnpm -r --parallel --stream --no-bail dev",
     "dev:gateway": "pnpm --filter @lcwa/gateway dev",
     "dev:web": "pnpm --filter @lcwa/web dev",
     "build": "pnpm -r build",
