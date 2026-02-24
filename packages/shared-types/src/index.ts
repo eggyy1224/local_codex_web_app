@@ -53,6 +53,20 @@ export type ThreadDetailResponse = {
   nextCursor: string | null;
 };
 
+export type ThreadContextSource =
+  | "session_meta"
+  | "turn_context"
+  | "projection"
+  | "fallback";
+
+export type ThreadContextResponse = {
+  threadId: string;
+  cwd: string | null;
+  resolvedCwd: string;
+  isFallback: boolean;
+  source: ThreadContextSource;
+};
+
 export type ThreadTimelineItemType =
   | "userMessage"
   | "assistantMessage"
@@ -180,3 +194,51 @@ export type GatewayEvent = {
   name: string;
   payload: unknown;
 };
+
+export type TerminalClientMessage =
+  | {
+      type: "terminal/open";
+      threadId: string;
+      cwd?: string;
+    }
+  | {
+      type: "terminal/input";
+      data: string;
+    }
+  | {
+      type: "terminal/resize";
+      cols: number;
+      rows: number;
+    }
+  | {
+      type: "terminal/setCwd";
+      cwd: string;
+    }
+  | {
+      type: "terminal/close";
+    };
+
+export type TerminalServerMessage =
+  | {
+      type: "terminal/ready";
+      sessionId: string;
+      threadId: string;
+    }
+  | {
+      type: "terminal/output";
+      data: string;
+      stream?: "stdout" | "stderr";
+    }
+  | {
+      type: "terminal/error";
+      message: string;
+      code?: string;
+    }
+  | {
+      type: "terminal/status";
+      connected: boolean;
+      cwd: string;
+      pid: number | null;
+      isFallback: boolean;
+      source: ThreadContextSource;
+    };

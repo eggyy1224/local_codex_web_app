@@ -11,8 +11,10 @@
   },
   "dependencies": {
     "@fastify/cors": "^10.1.0",
+    "@fastify/websocket": "^11.2.0",
     "@lcwa/shared-types": "workspace:*",
-    "fastify": "^5.2.1"
+    "fastify": "^5.2.1",
+    "node-pty": "^1.1.0"
   },
   "devDependencies": {
     "tsx": "^4.20.5",

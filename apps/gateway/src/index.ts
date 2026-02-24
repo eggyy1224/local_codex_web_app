@@ -1,9 +1,7 @@
 import { createReadStream } from "node:fs";
-import { readdir } from "node:fs/promises";
-import os from "node:os";
-import path from "node:path";
 import { createInterface } from "node:readline";
 import cors from "@fastify/cors";
+import websocket from "@fastify/websocket";
 import Fastify from "fastify";
 import type {
   ApprovalDecisionRequest,
@@ -16,7 +14,10 @@ import type {
   ModelOption,
   ModelsResponse,
   PendingApprovalsResponse,
+  TerminalClientMessage,
+  TerminalServerMessage,
   ThreadDetailResponse,
+  ThreadContextResponse,
   ThreadControlRequest,
   ThreadControlResponse,
   ThreadListItem,
@@ -44,6 +45,8 @@ import {
   type ApprovalProjection,
   type ThreadProjection,
 } from "./db.js";
+import { TerminalManager } from "./terminalManager.js";
+import { ThreadContextResolver, normalizeProjectKey } from "./threadContext.js";
 
 type RawTurn = {
   id: string;
@@ -116,16 +119,24 @@ await app.register(cors, {
   methods: ["GET", "POST", "OPTIONS"],
 });
 
+await app.register(websocket, {
+  options: {
+    maxPayload: 1024 * 128,
+  },
+});
+
 const appServer = new AppServerClient();
 const subscribers = new Map<string, Set<(event: GatewayEvent) => void>>();
 const activeTurnByThread = new Map<string, string>();
-const codexSessionsDir = process.env.CODEX_SESSIONS_DIR ?? path.join(os.homedir(), ".codex", "sessions");
-const threadIdFromSessionFilePattern =
-  /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i;
-const sessionFileByThreadId = new Map<string, string>();
-const resolvedProjectKeyByThreadId = new Map<string, string>();
-const projectKeyLookupInFlight = new Map<string, Promise<string>>();
-let sessionIndexPromise: Promise<void> | null = null;
+const threadContextResolver = new ThreadContextResolver({
+  codexSessionsDir: process.env.CODEX_SESSIONS_DIR,
+  logger: app.log,
+});
+const terminalManager = new TerminalManager({
+  maxSessions: 5,
+  ttlMs: 30 * 60 * 1000,
+  logger: app.log,
+});
 const lastTurnInputByThread = new Map<
   string,
   {
@@ -196,14 +207,6 @@ function unixSecondsToIso(ts?: number): string {
   return new Date(ts * 1000).toISOString();
 }
 
-function normalizeProjectKey(cwd?: string | null): string {
-  if (!cwd) {
-    return "unknown";
-  }
-  const normalized = cwd.trim().replace(/\\/g, "/").replace(/\/+$/, "");
-  return normalized || "unknown";
-}
-
 function permissionModeToTurnStartParams(
   mode?: TurnPermissionMode,
 ): Record<string, unknown> {
@@ -225,149 +228,6 @@ function permissionModeToTurnStartParams(
     };
   }
   return {};
-}
-
-async function buildSessionFileIndex(dirPath: string): Promise<void> {
-  const entries = await readdir(dirPath, { encoding: "utf8", withFileTypes: true }).catch(() => null);
-  if (!entries) {
-    return;
-  }
-
-  await Promise.all(
-    entries.map(async (entry) => {
-      const fullPath = path.join(dirPath, entry.name);
-      if (entry.isDirectory()) {
-        await buildSessionFileIndex(fullPath);
-        return;
-      }
-
-      if (!entry.isFile()) {
-        return;
-      }
-
-      const match = entry.name.match(threadIdFromSessionFilePattern);
-      if (!match) {
-        return;
-      }
-
-      sessionFileByThreadId.set(match[1], fullPath);
-    }),
-  );
-}
-
-async function ensureSessionFileIndex(): Promise<void> {
-  if (sessionIndexPromise) {
-    return sessionIndexPromise;
-  }
-
-  sessionIndexPromise = (async () => {
-    await buildSessionFileIndex(codexSessionsDir);
-    app.log.info({ indexed: sessionFileByThreadId.size }, "session file index ready");
-  })();
-
-  return sessionIndexPromise;
-}
-
-async function readCwdFromSessionMeta(sessionFilePath: string): Promise<string | null> {
-  const stream = createReadStream(sessionFilePath, { encoding: "utf8" });
-  const reader = createInterface({ input: stream, crlfDelay: Infinity });
-
-  try {
-    for await (const line of reader) {
-      if (!line) {
-        break;
-      }
-
-      try {
-        const parsed = JSON.parse(line) as {
-          type?: string;
-          payload?: { cwd?: unknown };
-        };
-
-        if (parsed.type === "session_meta" && typeof parsed.payload?.cwd === "string") {
-          return parsed.payload.cwd;
-        }
-      } catch {
-        return null;
-      }
-
-      break;
-    }
-  } finally {
-    reader.close();
-    stream.destroy();
-  }
-
-  return null;
-}
-
-async function readLatestCwdFromTurnContext(sessionFilePath: string): Promise<string | null> {
-  let latestCwd: string | null = null;
-  const stream = createReadStream(sessionFilePath, { encoding: "utf8" });
-  const reader = createInterface({ input: stream, crlfDelay: Infinity });
-
-  try {
-    for await (const line of reader) {
-      if (!line.includes('"type":"turn_context"')) {
-        continue;
-      }
-
-      try {
-        const parsed = JSON.parse(line) as {
-          type?: string;
-          payload?: { cwd?: unknown };
-        };
-        if (parsed.type === "turn_context" && typeof parsed.payload?.cwd === "string") {
-          latestCwd = parsed.payload.cwd;
-        }
-      } catch {
-        // skip malformed session lines
-      }
-    }
-  } finally {
-    reader.close();
-    stream.destroy();
-  }
-
-  return latestCwd;
-}
-
-async function resolveProjectKeyFromSession(threadId: string): Promise<string> {
-  const cached = resolvedProjectKeyByThreadId.get(threadId);
-  if (cached) {
-    return cached;
-  }
-
-  const inFlight = projectKeyLookupInFlight.get(threadId);
-  if (inFlight) {
-    return inFlight;
-  }
-
-  const lookup = (async () => {
-    await ensureSessionFileIndex();
-    const sessionFilePath = sessionFileByThreadId.get(threadId);
-    if (!sessionFilePath) {
-      resolvedProjectKeyByThreadId.set(threadId, "unknown");
-      return "unknown";
-    }
-
-    const cwdFromMeta = await readCwdFromSessionMeta(sessionFilePath);
-    const cwd = cwdFromMeta ?? (await readLatestCwdFromTurnContext(sessionFilePath));
-    const projectKey = normalizeProjectKey(cwd);
-    resolvedProjectKeyByThreadId.set(threadId, projectKey);
-    if (projectKey !== "unknown") {
-      updateThreadProjectKey(threadId, projectKey);
-    }
-    return projectKey;
-  })();
-
-  projectKeyLookupInFlight.set(threadId, lookup);
-
-  try {
-    return await lookup;
-  } finally {
-    projectKeyLookupInFlight.delete(threadId);
-  }
 }
 
 function toThreadListItem(raw: RawThread, projectKey = "unknown"): ThreadListItem {
@@ -537,8 +397,7 @@ async function loadThreadTimelineFromSession(
   threadId: string,
   limit: number,
 ): Promise<ThreadTimelineItem[]> {
-  await ensureSessionFileIndex();
-  const sessionFilePath = sessionFileByThreadId.get(threadId);
+  const sessionFilePath = await threadContextResolver.getSessionFilePath(threadId);
   if (!sessionFilePath) {
     return [];
   }
@@ -800,6 +659,82 @@ function applyFilters(
   });
 }
 
+function isAllowedWsOrigin(origin: string | undefined): boolean {
+  if (!origin) {
+    return true;
+  }
+  return corsAllowlist.includes(origin);
+}
+
+function terminalError(message: string, code?: string): TerminalServerMessage {
+  return {
+    type: "terminal/error",
+    message,
+    ...(code ? { code } : {}),
+  };
+}
+
+function parseTerminalClientMessage(raw: unknown): TerminalClientMessage | null {
+  if (!raw || typeof raw !== "object") {
+    return null;
+  }
+  const record = raw as Record<string, unknown>;
+  const type = typeof record.type === "string" ? record.type : null;
+  if (!type) {
+    return null;
+  }
+
+  if (type === "terminal/open") {
+    return {
+      type,
+      threadId: typeof record.threadId === "string" ? record.threadId : "",
+      ...(typeof record.cwd === "string" ? { cwd: record.cwd } : {}),
+    };
+  }
+
+  if (type === "terminal/input") {
+    if (typeof record.data !== "string") {
+      return null;
+    }
+    return {
+      type,
+      data: record.data,
+    };
+  }
+
+  if (type === "terminal/resize") {
+    if (
+      typeof record.cols !== "number" ||
+      typeof record.rows !== "number" ||
+      !Number.isFinite(record.cols) ||
+      !Number.isFinite(record.rows)
+    ) {
+      return null;
+    }
+    return {
+      type,
+      cols: Math.floor(record.cols),
+      rows: Math.floor(record.rows),
+    };
+  }
+
+  if (type === "terminal/setCwd") {
+    if (typeof record.cwd !== "string") {
+      return null;
+    }
+    return {
+      type,
+      cwd: record.cwd,
+    };
+  }
+
+  if (type === "terminal/close") {
+    return { type };
+  }
+
+  return null;
+}
+
 function extractThreadId(params: unknown): string | null {
   if (!params || typeof params !== "object") {
     return null;
@@ -1028,7 +963,11 @@ app.get("/api/threads", async (request): Promise<ThreadListResponse> => {
         const projected = getProjectedThread(thread.id);
         let projectKey = projected?.projectKey ?? "unknown";
         if (projectKey === "unknown") {
-          projectKey = await resolveProjectKeyFromSession(thread.id);
+          projectKey = await threadContextResolver.resolveProjectKey(thread.id, projected?.projectKey);
+          if (projectKey !== "unknown") {
+            updateThreadProjectKey(thread.id, projectKey);
+            threadContextResolver.invalidate(thread.id);
+          }
         }
         return toThreadListItem(thread, projectKey);
       }),
@@ -1060,7 +999,11 @@ app.get("/api/threads", async (request): Promise<ThreadListResponse> => {
         if (thread.projectKey !== "unknown") {
           return thread;
         }
-        const projectKey = await resolveProjectKeyFromSession(thread.id);
+        const projectKey = await threadContextResolver.resolveProjectKey(thread.id, thread.projectKey);
+        if (projectKey !== "unknown") {
+          updateThreadProjectKey(thread.id, projectKey);
+          threadContextResolver.invalidate(thread.id);
+        }
         return {
           ...thread,
           projectKey,
@@ -1227,6 +1170,20 @@ app.get("/api/threads/:id", async (request): Promise<ThreadDetailResponse> => {
   };
 });
 
+app.get("/api/threads/:id/context", async (request): Promise<ThreadContextResponse> => {
+  const params = request.params as { id: string };
+  const projected = getProjectedThread(params.id);
+  const context = await threadContextResolver.resolveThreadContext(
+    params.id,
+    projected?.projectKey,
+  );
+  if (!context.isFallback && context.cwd) {
+    updateThreadProjectKey(params.id, normalizeProjectKey(context.cwd));
+    threadContextResolver.invalidate(params.id);
+  }
+  return context;
+});
+
 app.get("/api/threads/:id/timeline", async (request): Promise<ThreadTimelineResponse> => {
   const params = request.params as { id: string };
   const query = request.query as { limit?: string };
@@ -1234,6 +1191,111 @@ app.get("/api/threads/:id/timeline", async (request): Promise<ThreadTimelineResp
 
   const data = await loadThreadTimelineFromSession(params.id, limit);
   return { data };
+});
+
+app.get("/api/terminal/ws", { websocket: true }, (ws, request) => {
+  const origin =
+    typeof request.headers.origin === "string" ? request.headers.origin : undefined;
+
+  const send = (message: TerminalServerMessage): void => {
+    if (ws.readyState !== 1) {
+      return;
+    }
+    ws.send(JSON.stringify(message));
+  };
+
+  if (!isAllowedWsOrigin(origin)) {
+    send(terminalError("origin not allowed", "TERMINAL_WS_ORIGIN_DENIED"));
+    ws.close(1008, "origin not allowed");
+    return;
+  }
+
+  const client = { send };
+
+  ws.on(
+    "message",
+    (raw: string | Buffer | ArrayBuffer | Buffer[], isBinary: boolean) => {
+      if (isBinary) {
+        send(terminalError("binary payload is not supported", "TERMINAL_WS_BINARY_UNSUPPORTED"));
+        return;
+      }
+
+      const text = raw.toString();
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+        send(terminalError("invalid JSON payload", "TERMINAL_WS_INVALID_JSON"));
+        return;
+      }
+
+      const message = parseTerminalClientMessage(parsed);
+      if (!message) {
+        send(terminalError("invalid terminal message", "TERMINAL_WS_INVALID_MESSAGE"));
+        return;
+      }
+
+      if (message.type === "terminal/open") {
+        if (!message.threadId) {
+          send(terminalError("threadId is required", "TERMINAL_WS_MISSING_THREAD_ID"));
+          return;
+        }
+        void (async () => {
+          try {
+            const projected = getProjectedThread(message.threadId);
+            const context = await threadContextResolver.resolveThreadContext(
+              message.threadId,
+              projected?.projectKey,
+            );
+            terminalManager.openClient(client, message.threadId, context);
+            if (!context.isFallback && context.cwd) {
+              updateThreadProjectKey(message.threadId, normalizeProjectKey(context.cwd));
+              threadContextResolver.invalidate(message.threadId);
+            }
+          } catch (error) {
+            send(
+              terminalError(
+                error instanceof Error ? error.message : "failed to open terminal",
+                "TERMINAL_WS_OPEN_FAILED",
+              ),
+            );
+          }
+        })();
+        return;
+      }
+
+      if (message.type === "terminal/input") {
+        if (!terminalManager.writeInput(client, message.data)) {
+          send(terminalError("terminal session not ready", "TERMINAL_WS_NOT_READY"));
+        }
+        return;
+      }
+
+      if (message.type === "terminal/resize") {
+        const cols = Math.max(2, Math.min(400, message.cols));
+        const rows = Math.max(1, Math.min(200, message.rows));
+        if (!terminalManager.resize(client, cols, rows)) {
+          send(terminalError("terminal session not ready", "TERMINAL_WS_NOT_READY"));
+        }
+        return;
+      }
+
+      if (message.type === "terminal/setCwd") {
+        if (!terminalManager.setCwd(client, message.cwd)) {
+          send(terminalError("terminal session not ready", "TERMINAL_WS_NOT_READY"));
+        }
+        return;
+      }
+
+      if (message.type === "terminal/close") {
+        terminalManager.closeClient(client);
+      }
+    },
+  );
+
+  ws.on("close", () => {
+    terminalManager.onClientDisconnect(client);
+  });
 });
 
 app.get("/api/threads/:id/events", async (request, reply) => {
@@ -1337,6 +1399,7 @@ app.post("/api/threads/:id/turns", async (request): Promise<CreateTurnResponse> 
   activeTurnByThread.set(params.id, turnId);
   if (body.options?.cwd) {
     updateThreadProjectKey(params.id, normalizeProjectKey(body.options.cwd));
+    threadContextResolver.invalidate(params.id);
   }
 
   return { turnId };
@@ -1473,6 +1536,7 @@ app.post("/api/threads/:id/control", async (request): Promise<ThreadControlRespo
     activeTurnByThread.set(params.id, turnId);
     if (previous.options?.cwd) {
       updateThreadProjectKey(params.id, normalizeProjectKey(previous.options.cwd));
+      threadContextResolver.invalidate(params.id);
     }
     return { ok: true, appliedToTurnId: turnId };
   }
@@ -1501,6 +1565,10 @@ app.post("/api/threads/:id/control", async (request): Promise<ThreadControlRespo
   }
 
   return { ok: true, appliedToTurnId: activeTurnId };
+});
+
+app.addHook("onClose", async () => {
+  terminalManager.destroy();
 });
 
 await app.listen({ host, port });
