@@ -1,7 +1,15 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
 import { useRouter } from "next/navigation";
 import type {
   ApprovalDecisionRequest,
@@ -12,12 +20,14 @@ import type {
   PendingApprovalsResponse,
   ThreadControlRequest,
   ThreadDetailResponse,
+  ThreadContextResponse,
   ThreadListItem,
   ThreadTimelineItem,
   ThreadTimelineResponse,
   TurnPermissionMode,
 } from "@lcwa/shared-types";
 import { groupThreadsByProject, pickDefaultProjectKey, projectLabelFromKey } from "../../lib/projects";
+import TerminalDock from "./TerminalDock";
 
 type ConnectionState = "connecting" | "connected" | "reconnecting" | "lagging";
 type TurnStatus = "inProgress" | "completed" | "failed" | "interrupted" | "unknown";
@@ -35,6 +45,9 @@ const MODEL_STORAGE_KEY = "lcwa.model.v1";
 const THINKING_EFFORT_STORAGE_KEY = "lcwa.thinking.effort.v1";
 const TIMELINE_STICKY_THRESHOLD_PX = 56;
 const ACTIVE_THREAD_SCROLL_SNAP_THRESHOLD_PX = 24;
+const TERMINAL_WIDTH_STORAGE_KEY = "lcwa.terminal.width.v1";
+const TERMINAL_MIN_WIDTH = 320;
+const TERMINAL_MAX_WIDTH = 720;
 
 const FALLBACK_MODEL_OPTIONS: Array<{ value: string; label: string }> = [
   { value: "gpt-5.3-codex", label: "GPT-5.3-Codex" },
@@ -91,6 +104,18 @@ function formatEffortLabel(effort: string): string {
     .filter(Boolean)
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(" ");
+}
+
+function maxTerminalWidthForViewport(): number {
+  if (typeof window === "undefined") {
+    return TERMINAL_MAX_WIDTH;
+  }
+  return Math.min(TERMINAL_MAX_WIDTH, Math.floor(window.innerWidth * 0.6));
+}
+
+function clampTerminalWidth(width: number): number {
+  const max = Math.max(TERMINAL_MIN_WIDTH, maxTerminalWidthForViewport());
+  return Math.min(max, Math.max(TERMINAL_MIN_WIDTH, Math.round(width)));
 }
 
 function extractUserMessageText(item: Record<string, unknown>): string | null {
@@ -679,8 +704,10 @@ export default function ThreadPage({ params }: Props) {
   const [threadList, setThreadList] = useState<ThreadListItem[]>([]);
   const [threadListLoading, setThreadListLoading] = useState(true);
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [bottomPanelOpen, setBottomPanelOpen] = useState(false);
-  const [showRawEvents, setShowRawEvents] = useState(false);
+  const [threadContext, setThreadContext] = useState<ThreadContextResponse | null>(null);
+  const [terminalOpen, setTerminalOpen] = useState(false);
+  const [terminalWidth, setTerminalWidth] = useState(420);
+  const [isMobileViewport, setIsMobileViewport] = useState(false);
   const [showAllTurns, setShowAllTurns] = useState(false);
   const modelOptions = useMemo(() => {
     if (modelCatalog.length === 0) {
@@ -745,6 +772,72 @@ export default function ThreadPage({ params }: Props) {
   useEffect(() => {
     params.then((value) => setThreadId(value.id));
   }, [params]);
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia("(max-width: 1024px)");
+    const syncViewport = () => {
+      setIsMobileViewport(mediaQuery.matches);
+    };
+    syncViewport();
+    mediaQuery.addEventListener("change", syncViewport);
+    return () => {
+      mediaQuery.removeEventListener("change", syncViewport);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (isMobileViewport) {
+      setTerminalOpen(false);
+      return;
+    }
+    const savedWidth = window.localStorage.getItem(TERMINAL_WIDTH_STORAGE_KEY);
+    if (savedWidth) {
+      const parsed = Number.parseFloat(savedWidth);
+      if (Number.isFinite(parsed)) {
+        setTerminalWidth(clampTerminalWidth(parsed));
+      }
+    }
+  }, [isMobileViewport]);
+
+  const handleTerminalResizeStart = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      if (isMobileViewport) {
+        return;
+      }
+      event.preventDefault();
+      const onMove = (moveEvent: PointerEvent) => {
+        const nextWidth = clampTerminalWidth(window.innerWidth - moveEvent.clientX);
+        setTerminalWidth(nextWidth);
+      };
+      const onUp = () => {
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onUp);
+      };
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", onUp);
+    },
+    [isMobileViewport],
+  );
+
+  useEffect(() => {
+    if (isMobileViewport) {
+      return;
+    }
+    window.localStorage.setItem(TERMINAL_WIDTH_STORAGE_KEY, String(terminalWidth));
+  }, [isMobileViewport, terminalWidth]);
+
+  useEffect(() => {
+    if (isMobileViewport) {
+      return;
+    }
+    const onResize = () => {
+      setTerminalWidth((prev) => clampTerminalWidth(prev));
+    };
+    window.addEventListener("resize", onResize);
+    return () => {
+      window.removeEventListener("resize", onResize);
+    };
+  }, [isMobileViewport]);
 
   useEffect(() => {
     const saved = window.localStorage.getItem(PERMISSION_MODE_STORAGE_KEY);
@@ -844,11 +937,12 @@ export default function ThreadPage({ params }: Props) {
 
     async function load() {
       try {
-        const [detailRes, approvalsRes, threadsRes, timelineRes] = await Promise.all([
+        const [detailRes, approvalsRes, threadsRes, timelineRes, contextRes] = await Promise.all([
           fetch(`${gatewayUrl}/api/threads/${threadId}?includeTurns=true`),
           fetch(`${gatewayUrl}/api/threads/${threadId}/approvals/pending`),
           fetch(`${gatewayUrl}/api/threads?limit=200`),
           fetch(`${gatewayUrl}/api/threads/${threadId}/timeline?limit=600`),
+          fetch(`${gatewayUrl}/api/threads/${threadId}/context`),
         ]);
 
         if (!detailRes.ok) {
@@ -863,16 +957,21 @@ export default function ThreadPage({ params }: Props) {
         if (!timelineRes.ok) {
           throw new Error(`timeline http ${timelineRes.status}`);
         }
+        if (!contextRes.ok) {
+          throw new Error(`thread context http ${contextRes.status}`);
+        }
 
         const data = (await detailRes.json()) as ThreadDetailResponse;
         const pending = (await approvalsRes.json()) as PendingApprovalsResponse;
         const threadListResult = (await threadsRes.json()) as { data: ThreadListItem[] };
         const timeline = (await timelineRes.json()) as ThreadTimelineResponse;
+        const context = (await contextRes.json()) as ThreadContextResponse;
 
         if (!cancelled) {
           setDetail(data);
           setThreadListLoading(false);
           setThreadList(threadListResult.data);
+          setThreadContext(context);
           setPendingApprovals(() =>
             Object.fromEntries(pending.data.map((item) => [item.approvalId, item])),
           );
@@ -884,6 +983,7 @@ export default function ThreadPage({ params }: Props) {
         if (!cancelled) {
           setThreadListLoading(false);
           setLoading(false);
+          setThreadContext(null);
           setError(loadError instanceof Error ? loadError.message : "unknown error");
         }
       }
@@ -1014,7 +1114,6 @@ export default function ThreadPage({ params }: Props) {
     return "Connecting";
   }, [connectionState]);
 
-  const visibleEvents = useMemo(() => events.slice(-120), [events]);
   const liveTimelineItems = useMemo(
     () =>
       events
@@ -1300,6 +1399,9 @@ export default function ThreadPage({ params }: Props) {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      if (isMobileViewport) {
+        return;
+      }
       if (event.defaultPrevented || event.isComposing || event.altKey) {
         return;
       }
@@ -1312,14 +1414,14 @@ export default function ThreadPage({ params }: Props) {
         return;
       }
       event.preventDefault();
-      setBottomPanelOpen((value) => !value);
+      setTerminalOpen((value) => !value);
     };
 
     window.addEventListener("keydown", onKeyDown);
     return () => {
       window.removeEventListener("keydown", onKeyDown);
     };
-  }, []);
+  }, [isMobileViewport]);
 
   async function sendTurn(): Promise<void> {
     const text = prompt.trim();
@@ -1380,6 +1482,13 @@ export default function ThreadPage({ params }: Props) {
     }
   }
 
+  const terminalEnabled = !isMobileViewport && terminalOpen;
+  const workspaceStyle = terminalEnabled
+    ? ({
+        "--cdx-terminal-width": `${terminalWidth}px`,
+      } as CSSProperties)
+    : undefined;
+
   return (
     <div className={`cdx-app ${sidebarOpen ? "" : "cdx-app--sidebar-collapsed"}`}>
       <header className="cdx-topbar">
@@ -1409,31 +1518,29 @@ export default function ThreadPage({ params }: Props) {
               ▾
             </button>
           </div>
-          <button
-            type="button"
-            className="cdx-toolbar-btn cdx-toolbar-btn--icon"
-            aria-label="Toggle terminal"
-            title="Toggle terminal (Cmd+J)"
-            onClick={() => setBottomPanelOpen((v) => !v)}
-          >
-            ▦
-          </button>
-          <button
-            type="button"
-            className="cdx-toolbar-btn cdx-toolbar-btn--icon"
-            aria-label="Toggle diff panel"
-            title="Toggle diff panel"
-            onClick={() => setBottomPanelOpen((v) => !v)}
-          >
-            ≋
-          </button>
+          {!isMobileViewport ? (
+            <button
+              type="button"
+              className="cdx-toolbar-btn cdx-toolbar-btn--icon"
+              aria-label="Toggle terminal"
+              title="Toggle terminal (Cmd+J)"
+              onClick={() => setTerminalOpen((v) => !v)}
+            >
+              ▦
+            </button>
+          ) : null}
           <button type="button" className="cdx-toolbar-btn" disabled>
             Pop out
           </button>
         </div>
       </header>
 
-      <div className="cdx-workspace">
+      <div
+        className={`cdx-workspace cdx-workspace--thread ${
+          terminalEnabled ? "cdx-workspace--with-terminal" : ""
+        }`}
+        style={workspaceStyle}
+      >
         {sidebarOpen ? (
           <aside className="cdx-sidebar" ref={sidebarRef}>
             <div className="cdx-sidebar-actions">
@@ -1498,6 +1605,15 @@ export default function ThreadPage({ params }: Props) {
               </span>
               <span className="cdx-status is-pending">
                 Pending approval: {Object.keys(pendingApprovals).length}
+              </span>
+              <span
+                className={`cdx-status ${
+                  threadContext?.isFallback ? "is-offline" : "is-online"
+                }`}
+              >
+                {threadContext?.isFallback
+                  ? "cwd unknown"
+                  : `cwd: ${threadContext?.resolvedCwd ?? "-"}`}
               </span>
               <Link href="/">
                 <button type="button" className="cdx-toolbar-btn">
@@ -1807,39 +1923,18 @@ export default function ThreadPage({ params }: Props) {
             </div>
           </section>
         </main>
-      </div>
 
-      {bottomPanelOpen ? (
-        <section className="cdx-bottom-panel">
-          <div className="cdx-bottom-header">
-            <span>Terminal</span>
-            <span>{showRawEvents ? "Raw Events" : "Event summary"}</span>
-            <button type="button" className="cdx-toolbar-btn cdx-toolbar-btn--small" onClick={() => setShowRawEvents((v) => !v)}>
-              {showRawEvents ? "Hide" : "Show"}
-            </button>
-          </div>
-          <div className="cdx-bottom-body">
-            {showRawEvents ? (
-              <div className="cdx-event-list">
-                {visibleEvents.map((event) => (
-                  <article key={`event-${event.seq}`} data-testid={`event-${event.seq}`} className="cdx-event-row">
-                    <div>
-                      <strong>{event.name}</strong>
-                      <p>
-                        kind={event.kind} turn={event.turnId ?? "-"}
-                      </p>
-                    </div>
-                    <span>#{event.seq}</span>
-                  </article>
-                ))}
-                {visibleEvents.length === 0 ? <p className="cdx-helper">No events yet.</p> : null}
-              </div>
-            ) : (
-              <p className="cdx-helper">Seq #{lastSeq}. Connection: {connectionText}.</p>
-            )}
-          </div>
-        </section>
-      ) : null}
+        {terminalEnabled ? (
+          <TerminalDock
+            gatewayUrl={gatewayUrl}
+            threadId={threadId}
+            width={terminalWidth}
+            context={threadContext}
+            onResizeStart={handleTerminalResizeStart}
+            onClose={() => setTerminalOpen(false)}
+          />
+        ) : null}
+      </div>
     </div>
   );
 }

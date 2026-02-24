@@ -47,7 +47,6 @@ export default function HomePage() {
     error: null,
   });
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [bottomPanelOpen, setBottomPanelOpen] = useState(false);
   const [composerText, setComposerText] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [modelCatalog, setModelCatalog] = useState<ModelOption[]>([]);
@@ -239,29 +238,6 @@ export default function HomePage() {
     window.localStorage.setItem(THINKING_EFFORT_STORAGE_KEY, thinkingEffort);
   }, [thinkingEffort]);
 
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.defaultPrevented || event.isComposing || event.altKey) {
-        return;
-      }
-      const key = event.key.toLowerCase();
-      if (!(event.metaKey || event.ctrlKey) || key !== "j") {
-        return;
-      }
-      const target = event.target;
-      if (target instanceof HTMLElement && target.tagName === "SELECT") {
-        return;
-      }
-      event.preventDefault();
-      setBottomPanelOpen((value) => !value);
-    };
-
-    window.addEventListener("keydown", onKeyDown);
-    return () => {
-      window.removeEventListener("keydown", onKeyDown);
-    };
-  }, []);
-
   async function createThread(projectKey: string, selectedModel: string): Promise<string> {
     const body: {
       cwd?: string;
@@ -376,24 +352,6 @@ export default function HomePage() {
               ▾
             </button>
           </div>
-          <button
-            type="button"
-            className="cdx-toolbar-btn cdx-toolbar-btn--icon"
-            aria-label="Toggle terminal"
-            title="Toggle terminal (Cmd+J)"
-            onClick={() => setBottomPanelOpen((v) => !v)}
-          >
-            ▦
-          </button>
-          <button
-            type="button"
-            className="cdx-toolbar-btn cdx-toolbar-btn--icon"
-            aria-label="Toggle diff panel"
-            title="Toggle diff panel"
-            onClick={() => setBottomPanelOpen((v) => !v)}
-          >
-            ≋
-          </button>
           <button type="button" className="cdx-toolbar-btn" disabled>
             Pop out
           </button>
@@ -547,18 +505,6 @@ export default function HomePage() {
           </section>
         </main>
       </div>
-
-      {bottomPanelOpen ? (
-        <section className="cdx-bottom-panel">
-          <div className="cdx-bottom-header">
-            <span>Terminal</span>
-            <span>Error</span>
-          </div>
-          <div className="cdx-bottom-body">
-            {state.error ? <p className="cdx-error">{state.error}</p> : <p className="cdx-helper">No active errors.</p>}
-          </div>
-        </section>
-      ) : null}
     </div>
   );
 }
