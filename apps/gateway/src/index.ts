@@ -1,10 +1,14 @@
 import cors from "@fastify/cors";
 import Fastify from "fastify";
 import type {
+  ApprovalDecisionRequest,
+  ApprovalDecisionResponse,
+  ApprovalType,
   CreateTurnRequest,
   CreateTurnResponse,
   GatewayEvent,
   HealthResponse,
+  PendingApprovalsResponse,
   ThreadDetailResponse,
   ThreadListItem,
   ThreadListResponse,
@@ -14,11 +18,17 @@ import type {
 } from "@lcwa/shared-types";
 import { AppServerClient } from "./appServerClient.js";
 import {
+  getApprovalById,
   getProjectedThread,
   insertGatewayEvent,
+  insertAuditLog,
+  listPendingApprovalsByThread,
   listGatewayEventsSince,
   listProjectedThreads,
+  resolveApprovalRequest,
+  upsertApprovalRequest,
   upsertThreads,
+  type ApprovalProjection,
   type ThreadProjection,
 } from "./db.js";
 
@@ -70,6 +80,15 @@ await app.register(cors, {
 
 const appServer = new AppServerClient();
 const subscribers = new Map<string, Set<(event: GatewayEvent) => void>>();
+const pendingApprovals = new Map<
+  string,
+  {
+    rpcId: string | number;
+    threadId: string;
+    turnId: string | null;
+    type: ApprovalType;
+  }
+>();
 
 function subscribe(threadId: string, fn: (event: GatewayEvent) => void): () => void {
   const set = subscribers.get(threadId) ?? new Set<(event: GatewayEvent) => void>();
@@ -227,6 +246,19 @@ function kindFromMethod(method: string): GatewayEvent["kind"] {
   return "system";
 }
 
+function approvalTypeFromMethod(method: string): ApprovalType | null {
+  if (method === "item/commandExecution/requestApproval") {
+    return "commandExecution";
+  }
+  if (method === "item/fileChange/requestApproval") {
+    return "fileChange";
+  }
+  if (method === "tool/requestUserInput") {
+    return "userInput";
+  }
+  return null;
+}
+
 appServer.on("stderr", (line) => {
   app.log.warn({ appServerStderr: line.trim() }, "app-server stderr");
 });
@@ -237,6 +269,7 @@ appServer.on("message", (msg: unknown) => {
   }
 
   const raw = msg as {
+    id?: string | number;
     method: string;
     params?: unknown;
   };
@@ -246,13 +279,71 @@ appServer.on("message", (msg: unknown) => {
     return;
   }
 
+  const turnId = extractTurnId(raw.params);
+  const approvalType = approvalTypeFromMethod(raw.method);
+  const paramsRecord =
+    raw.params && typeof raw.params === "object"
+      ? { ...(raw.params as Record<string, unknown>) }
+      : null;
+
+  let payloadForEvent: unknown = raw.params ?? null;
+
+  if (approvalType && raw.id !== undefined) {
+    const approvalId = String(raw.id);
+    const createdAt = new Date().toISOString();
+    const requestPayloadJson = JSON.stringify(raw.params ?? null);
+    const itemId =
+      paramsRecord && typeof paramsRecord.itemId === "string" ? paramsRecord.itemId : null;
+
+    const projection: ApprovalProjection = {
+      approval_id: approvalId,
+      thread_id: threadId,
+      turn_id: turnId,
+      item_id: itemId,
+      type: approvalType,
+      status: "pending",
+      request_payload_json: requestPayloadJson,
+      decision: null,
+      note: null,
+      created_at: createdAt,
+      resolved_at: null,
+    };
+
+    upsertApprovalRequest(projection);
+    pendingApprovals.set(approvalId, {
+      rpcId: raw.id,
+      threadId,
+      turnId,
+      type: approvalType,
+    });
+
+    insertAuditLog({
+      ts: createdAt,
+      actor: "gateway",
+      action: "approval.requested",
+      threadId,
+      turnId,
+      metadata: {
+        approvalId,
+        type: approvalType,
+        itemId,
+      },
+    });
+
+    payloadForEvent = {
+      ...(paramsRecord ?? {}),
+      approvalId,
+      approvalType,
+    };
+  }
+
   const eventBase: Omit<GatewayEvent, "seq"> = {
     serverTs: new Date().toISOString(),
     threadId,
-    turnId: extractTurnId(raw.params),
+    turnId,
     kind: kindFromMethod(raw.method),
     name: raw.method,
-    payload: raw.params ?? null,
+    payload: payloadForEvent,
   };
 
   const seq = insertGatewayEvent(eventBase);
@@ -511,6 +602,16 @@ app.get("/api/threads/:id/events", async (request, reply) => {
   });
 });
 
+app.get(
+  "/api/threads/:id/approvals/pending",
+  async (request): Promise<PendingApprovalsResponse> => {
+    const params = request.params as { id: string };
+    return {
+      data: listPendingApprovalsByThread(params.id),
+    };
+  },
+);
+
 app.post("/api/threads/:id/turns", async (request): Promise<CreateTurnResponse> => {
   const params = request.params as { id: string };
   const body = request.body as CreateTurnRequest;
@@ -550,5 +651,88 @@ app.post("/api/threads/:id/turns", async (request): Promise<CreateTurnResponse> 
 
   return { turnId };
 });
+
+app.post(
+  "/api/threads/:id/approvals/:approvalId",
+  async (request): Promise<ApprovalDecisionResponse> => {
+    const params = request.params as { id: string; approvalId: string };
+    const body = request.body as ApprovalDecisionRequest;
+
+    if (body.decision !== "allow" && body.decision !== "deny" && body.decision !== "cancel") {
+      const error = new Error("invalid decision") as Error & { statusCode?: number };
+      error.statusCode = 400;
+      throw error;
+    }
+
+    const pending = pendingApprovals.get(params.approvalId);
+    const approval = getApprovalById(params.approvalId);
+    if (!pending && !approval) {
+      const error = new Error("approval not found") as Error & { statusCode?: number };
+      error.statusCode = 404;
+      throw error;
+    }
+
+    const fallbackRpcId: string | number = /^\d+$/.test(params.approvalId)
+      ? Number(params.approvalId)
+      : params.approvalId;
+    const rpcId = pending?.rpcId ?? fallbackRpcId;
+    const threadId = pending?.threadId ?? approval?.threadId ?? params.id;
+    const turnId = pending?.turnId ?? approval?.turnId ?? null;
+
+    const mappedDecision =
+      body.decision === "allow"
+        ? "accept"
+        : body.decision === "deny"
+          ? "decline"
+          : "cancel";
+
+    appServer.respond(rpcId, {
+      decision: mappedDecision,
+    });
+
+    const resolvedAt = new Date().toISOString();
+    const status = body.decision === "allow" ? "approved" : body.decision === "deny" ? "denied" : "cancelled";
+    resolveApprovalRequest(
+      params.approvalId,
+      status,
+      body.decision,
+      body.note ?? null,
+      resolvedAt,
+    );
+
+    pendingApprovals.delete(params.approvalId);
+
+    insertAuditLog({
+      ts: resolvedAt,
+      actor: "user",
+      action: "approval.decided",
+      threadId,
+      turnId,
+      metadata: {
+        approvalId: params.approvalId,
+        decision: body.decision,
+        note: body.note ?? null,
+      },
+    });
+
+    const decisionEventBase: Omit<GatewayEvent, "seq"> = {
+      serverTs: resolvedAt,
+      threadId,
+      turnId,
+      kind: "approval",
+      name: "approval/decision",
+      payload: {
+        approvalId: params.approvalId,
+        decision: body.decision,
+        note: body.note ?? null,
+      },
+    };
+
+    const seq = insertGatewayEvent(decisionEventBase);
+    broadcast({ ...decisionEventBase, seq });
+
+    return { ok: true };
+  },
+);
 
 await app.listen({ host, port });

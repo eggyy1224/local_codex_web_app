@@ -2,7 +2,14 @@ import { mkdirSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import type { GatewayEvent, ThreadListItem, ThreadStatus } from "@lcwa/shared-types";
+import type {
+  ApprovalStatus,
+  ApprovalType,
+  ApprovalView,
+  GatewayEvent,
+  ThreadListItem,
+  ThreadStatus,
+} from "@lcwa/shared-types";
 
 export type ThreadProjection = {
   thread_id: string;
@@ -12,6 +19,20 @@ export type ThreadProjection = {
   archived: number;
   updated_at: string;
   last_error: string | null;
+};
+
+export type ApprovalProjection = {
+  approval_id: string;
+  thread_id: string;
+  turn_id: string | null;
+  item_id: string | null;
+  type: ApprovalType;
+  status: ApprovalStatus;
+  request_payload_json: string;
+  decision: string | null;
+  note: string | null;
+  created_at: string;
+  resolved_at: string | null;
 };
 
 const dataDir = process.env.GATEWAY_DATA_DIR ?? path.join(os.homedir(), ".codex-web-gateway");
@@ -118,6 +139,81 @@ ORDER BY seq ASC
 LIMIT ?
 `);
 
+const upsertApprovalStmt = db.prepare(`
+INSERT INTO approvals (
+  approval_id,
+  thread_id,
+  turn_id,
+  item_id,
+  type,
+  status,
+  request_payload_json,
+  decision,
+  note,
+  created_at,
+  resolved_at
+)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(approval_id) DO UPDATE SET
+  thread_id = excluded.thread_id,
+  turn_id = excluded.turn_id,
+  item_id = excluded.item_id,
+  type = excluded.type,
+  status = excluded.status,
+  request_payload_json = excluded.request_payload_json,
+  decision = excluded.decision,
+  note = excluded.note,
+  created_at = excluded.created_at,
+  resolved_at = excluded.resolved_at;
+`);
+
+const resolveApprovalStmt = db.prepare(`
+UPDATE approvals
+SET status = ?, decision = ?, note = ?, resolved_at = ?
+WHERE approval_id = ?
+`);
+
+const getApprovalByIdStmt = db.prepare(`
+SELECT
+  approval_id,
+  thread_id,
+  turn_id,
+  item_id,
+  type,
+  status,
+  request_payload_json,
+  decision,
+  note,
+  created_at,
+  resolved_at
+FROM approvals
+WHERE approval_id = ?
+LIMIT 1
+`);
+
+const listPendingApprovalsByThreadStmt = db.prepare(`
+SELECT
+  approval_id,
+  thread_id,
+  turn_id,
+  item_id,
+  type,
+  status,
+  request_payload_json,
+  decision,
+  note,
+  created_at,
+  resolved_at
+FROM approvals
+WHERE thread_id = ? AND status = 'pending'
+ORDER BY created_at ASC
+`);
+
+const insertAuditStmt = db.prepare(`
+INSERT INTO audit_log (ts, actor, action, thread_id, turn_id, metadata_json)
+VALUES (?, ?, ?, ?, ?, ?)
+`);
+
 export function upsertThreads(rows: ThreadProjection[]): void {
   db.exec("BEGIN");
   try {
@@ -207,4 +303,94 @@ export function listGatewayEventsSince(
     payload: JSON.parse(row.payload_json),
     serverTs: row.server_ts,
   }));
+}
+
+function toApprovalView(row: ApprovalProjection): ApprovalView {
+  const requestPayload = JSON.parse(row.request_payload_json) as Record<string, unknown>;
+
+  const commandPreview =
+    typeof requestPayload.command === "string" ? requestPayload.command : null;
+
+  let fileChangePreview: string | null = null;
+  const changes = requestPayload.changes;
+  if (Array.isArray(changes)) {
+    const firstPath = changes.find(
+      (entry) =>
+        entry && typeof entry === "object" && typeof (entry as Record<string, unknown>).path === "string",
+    ) as Record<string, unknown> | undefined;
+    if (firstPath && typeof firstPath.path === "string") {
+      fileChangePreview = firstPath.path;
+    }
+  }
+
+  return {
+    approvalId: row.approval_id,
+    threadId: row.thread_id,
+    turnId: row.turn_id,
+    itemId: row.item_id,
+    type: row.type,
+    status: row.status,
+    reason: typeof requestPayload.reason === "string" ? requestPayload.reason : null,
+    commandPreview,
+    fileChangePreview,
+    createdAt: row.created_at,
+    resolvedAt: row.resolved_at,
+  };
+}
+
+export function upsertApprovalRequest(row: ApprovalProjection): void {
+  upsertApprovalStmt.run(
+    row.approval_id,
+    row.thread_id,
+    row.turn_id,
+    row.item_id,
+    row.type,
+    row.status,
+    row.request_payload_json,
+    row.decision,
+    row.note,
+    row.created_at,
+    row.resolved_at,
+  );
+}
+
+export function resolveApprovalRequest(
+  approvalId: string,
+  status: ApprovalStatus,
+  decision: string,
+  note: string | null,
+  resolvedAt: string,
+): void {
+  resolveApprovalStmt.run(status, decision, note, resolvedAt, approvalId);
+}
+
+export function getApprovalById(approvalId: string): ApprovalView | null {
+  const row = getApprovalByIdStmt.get(approvalId) as ApprovalProjection | undefined;
+  if (!row) {
+    return null;
+  }
+  return toApprovalView(row);
+}
+
+export function listPendingApprovalsByThread(threadId: string): ApprovalView[] {
+  const rows = listPendingApprovalsByThreadStmt.all(threadId) as ApprovalProjection[];
+  return rows.map(toApprovalView);
+}
+
+export function insertAuditLog(entry: {
+  ts: string;
+  actor: string;
+  action: string;
+  threadId: string | null;
+  turnId: string | null;
+  metadata: unknown;
+}): void {
+  insertAuditStmt.run(
+    entry.ts,
+    entry.actor,
+    entry.action,
+    entry.threadId,
+    entry.turnId,
+    JSON.stringify(entry.metadata ?? null),
+  );
 }

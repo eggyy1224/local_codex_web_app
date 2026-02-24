@@ -81,6 +81,37 @@ export type CreateTurnResponse = {
   turnId: string;
 };
 
+export type ApprovalType = "commandExecution" | "fileChange" | "userInput";
+
+export type ApprovalStatus = "pending" | "approved" | "denied" | "cancelled";
+
+export type ApprovalView = {
+  approvalId: string;
+  threadId: string;
+  turnId: string | null;
+  itemId: string | null;
+  type: ApprovalType;
+  status: ApprovalStatus;
+  reason: string | null;
+  commandPreview: string | null;
+  fileChangePreview: string | null;
+  createdAt: string;
+  resolvedAt: string | null;
+};
+
+export type ApprovalDecisionRequest = {
+  decision: "allow" | "deny" | "cancel";
+  note?: string;
+};
+
+export type ApprovalDecisionResponse = {
+  ok: true;
+};
+
+export type PendingApprovalsResponse = {
+  data: ApprovalView[];
+};
+
 export type GatewayEvent = {
   seq: number;
   serverTs: string;

@@ -2,8 +2,11 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type {
+  ApprovalDecisionRequest,
+  ApprovalView,
   CreateTurnResponse,
   GatewayEvent,
+  PendingApprovalsResponse,
   ThreadDetailResponse,
 } from "@lcwa/shared-types";
 
@@ -22,6 +25,8 @@ type TurnCard = {
   agentText: string;
   error: string | null;
 };
+
+type PendingApprovalCard = ApprovalView;
 
 const gatewayUrl = process.env.NEXT_PUBLIC_GATEWAY_URL ?? "http://127.0.0.1:8787";
 
@@ -64,6 +69,40 @@ function statusClass(status: TurnStatus): string {
   return "down";
 }
 
+function approvalTypeFromEventName(eventName: string): PendingApprovalCard["type"] {
+  if (eventName === "item/commandExecution/requestApproval") return "commandExecution";
+  if (eventName === "item/fileChange/requestApproval") return "fileChange";
+  return "userInput";
+}
+
+function approvalFromEvent(event: GatewayEvent): PendingApprovalCard | null {
+  const payload = asRecord(event.payload);
+  const approvalId = readString(payload, "approvalId");
+  if (!approvalId) {
+    return null;
+  }
+
+  const approvalType = readString(payload, "approvalType");
+  const type =
+    approvalType === "commandExecution" || approvalType === "fileChange" || approvalType === "userInput"
+      ? approvalType
+      : approvalTypeFromEventName(event.name);
+
+  return {
+    approvalId,
+    threadId: event.threadId,
+    turnId: event.turnId,
+    itemId: readString(payload, "itemId"),
+    type,
+    status: "pending",
+    reason: readString(payload, "reason"),
+    commandPreview: readString(payload, "command"),
+    fileChangePreview: readString(payload, "grantRoot"),
+    createdAt: event.serverTs,
+    resolvedAt: null,
+  };
+}
+
 export default function ThreadPage({ params }: Props) {
   const [threadId, setThreadId] = useState<string>("");
   const [loading, setLoading] = useState(true);
@@ -76,6 +115,9 @@ export default function ThreadPage({ params }: Props) {
   const [prompt, setPrompt] = useState("");
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [pendingApprovals, setPendingApprovals] = useState<Record<string, PendingApprovalCard>>({});
+  const [approvalBusy, setApprovalBusy] = useState<string | null>(null);
+  const [approvalError, setApprovalError] = useState<string | null>(null);
 
   useEffect(() => {
     params.then((value) => setThreadId(value.id));
@@ -90,12 +132,19 @@ export default function ThreadPage({ params }: Props) {
 
     async function load() {
       try {
-        const res = await fetch(`${gatewayUrl}/api/threads/${threadId}?includeTurns=true`);
-        if (!res.ok) {
-          throw new Error(`thread detail http ${res.status}`);
+        const [detailRes, approvalsRes] = await Promise.all([
+          fetch(`${gatewayUrl}/api/threads/${threadId}?includeTurns=true`),
+          fetch(`${gatewayUrl}/api/threads/${threadId}/approvals/pending`),
+        ]);
+        if (!detailRes.ok) {
+          throw new Error(`thread detail http ${detailRes.status}`);
+        }
+        if (!approvalsRes.ok) {
+          throw new Error(`approvals http ${approvalsRes.status}`);
         }
 
-        const data = (await res.json()) as ThreadDetailResponse;
+        const data = (await detailRes.json()) as ThreadDetailResponse;
+        const pending = (await approvalsRes.json()) as PendingApprovalsResponse;
         if (!cancelled) {
           setDetail(data);
           setTurnCards(() => {
@@ -112,6 +161,9 @@ export default function ThreadPage({ params }: Props) {
             }
             return next;
           });
+          setPendingApprovals(() =>
+            Object.fromEntries(pending.data.map((item) => [item.approvalId, item])),
+          );
           setLoading(false);
           setError(null);
         }
@@ -224,6 +276,29 @@ export default function ThreadPage({ params }: Props) {
 
           return next;
         });
+
+        if (payload.name === "approval/decision") {
+          const decisionPayload = asRecord(payload.payload);
+          const approvalId = readString(decisionPayload, "approvalId");
+          if (approvalId) {
+            setPendingApprovals((prev) => {
+              if (!prev[approvalId]) {
+                return prev;
+              }
+              const next = { ...prev };
+              delete next[approvalId];
+              return next;
+            });
+          }
+        } else if (payload.kind === "approval") {
+          const approval = approvalFromEvent(payload);
+          if (approval) {
+            setPendingApprovals((prev) => ({
+              ...prev,
+              [approval.approvalId]: approval,
+            }));
+          }
+        }
       });
 
       es.addEventListener("heartbeat", () => {
@@ -271,6 +346,60 @@ export default function ThreadPage({ params }: Props) {
       }),
     [turnCards],
   );
+
+  const activeApproval = useMemo(
+    () =>
+      Object.values(pendingApprovals).sort((a, b) =>
+        a.createdAt.localeCompare(b.createdAt),
+      )[0] ?? null,
+    [pendingApprovals],
+  );
+
+  async function decideApproval(
+    approvalId: string,
+    decision: ApprovalDecisionRequest["decision"],
+  ): Promise<void> {
+    if (!threadId || approvalBusy) {
+      return;
+    }
+
+    setApprovalBusy(approvalId);
+    setApprovalError(null);
+
+    try {
+      const res = await fetch(
+        `${gatewayUrl}/api/threads/${threadId}/approvals/${approvalId}`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            decision,
+          } satisfies ApprovalDecisionRequest),
+        },
+      );
+
+      if (!res.ok) {
+        throw new Error(`approval http ${res.status}`);
+      }
+
+      setPendingApprovals((prev) => {
+        if (!prev[approvalId]) {
+          return prev;
+        }
+        const next = { ...prev };
+        delete next[approvalId];
+        return next;
+      });
+    } catch (approvalErr) {
+      setApprovalError(
+        approvalErr instanceof Error ? approvalErr.message : "approval failed",
+      );
+    } finally {
+      setApprovalBusy(null);
+    }
+  }
 
   async function sendTurn(): Promise<void> {
     const text = prompt.trim();
@@ -332,11 +461,13 @@ export default function ThreadPage({ params }: Props) {
             {connectionText}
           </span>
           <span data-testid="event-cursor">Last Seq: {lastSeq}</span>
+          <span data-testid="approval-count">Pending Approval: {Object.keys(pendingApprovals).length}</span>
         </div>
 
         {loading ? <p className="muted">Loading thread...</p> : null}
         {error ? <p className="muted">{error}</p> : null}
         {submitError ? <p className="muted">{submitError}</p> : null}
+        {approvalError ? <p className="muted">{approvalError}</p> : null}
 
         <div
           style={{
@@ -453,6 +584,103 @@ export default function ThreadPage({ params }: Props) {
             </article>
           ))}
         </div>
+
+        {activeApproval ? (
+          <aside
+            data-testid="approval-drawer"
+            style={{
+              marginTop: 18,
+              border: "1px solid rgba(251,191,36,0.55)",
+              borderRadius: 12,
+              padding: 14,
+              background: "rgba(120,53,15,0.15)",
+              display: "grid",
+              gap: 10,
+            }}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+              <strong>Approval Required</strong>
+              <span className="badge pending">{activeApproval.type}</span>
+            </div>
+            <p className="muted" style={{ margin: 0 }}>
+              {activeApproval.reason ?? "此操作需要你決策後才會繼續。"}
+            </p>
+            {activeApproval.commandPreview ? (
+              <pre
+                style={{
+                  margin: 0,
+                  padding: 8,
+                  borderRadius: 8,
+                  background: "rgba(15,23,42,0.7)",
+                  color: "#fde68a",
+                  whiteSpace: "pre-wrap",
+                  wordBreak: "break-word",
+                  fontSize: 12,
+                }}
+              >
+                {activeApproval.commandPreview}
+              </pre>
+            ) : null}
+            {activeApproval.fileChangePreview ? (
+              <p className="muted" style={{ margin: 0 }}>
+                target: {activeApproval.fileChangePreview}
+              </p>
+            ) : null}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
+              <button
+                type="button"
+                data-testid="approval-allow"
+                disabled={approvalBusy === activeApproval.approvalId}
+                onClick={() => void decideApproval(activeApproval.approvalId, "allow")}
+                style={{
+                  border: "none",
+                  borderRadius: 10,
+                  background: "#15803d",
+                  color: "white",
+                  padding: "9px 10px",
+                  fontWeight: 700,
+                  cursor: approvalBusy ? "not-allowed" : "pointer",
+                }}
+              >
+                Allow
+              </button>
+              <button
+                type="button"
+                data-testid="approval-deny"
+                disabled={approvalBusy === activeApproval.approvalId}
+                onClick={() => void decideApproval(activeApproval.approvalId, "deny")}
+                style={{
+                  border: "none",
+                  borderRadius: 10,
+                  background: "#b91c1c",
+                  color: "white",
+                  padding: "9px 10px",
+                  fontWeight: 700,
+                  cursor: approvalBusy ? "not-allowed" : "pointer",
+                }}
+              >
+                Deny
+              </button>
+              <button
+                type="button"
+                data-testid="approval-cancel"
+                disabled={approvalBusy === activeApproval.approvalId}
+                onClick={() => void decideApproval(activeApproval.approvalId, "cancel")}
+                style={{
+                  border: "none",
+                  borderRadius: 10,
+                  background: "#334155",
+                  color: "white",
+                  padding: "9px 10px",
+                  fontWeight: 700,
+                  cursor: approvalBusy ? "not-allowed" : "pointer",
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+          </aside>
+        ) : null}
       </section>
     </main>
   );
