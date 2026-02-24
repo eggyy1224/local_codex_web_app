@@ -7,6 +7,8 @@ import type {
   ApprovalDecisionRequest,
   ApprovalView,
   GatewayEvent,
+  ModelOption,
+  ModelsResponse,
   PendingApprovalsResponse,
   ThreadControlRequest,
   ThreadDetailResponse,
@@ -19,7 +21,6 @@ import { groupThreadsByProject, pickDefaultProjectKey, projectLabelFromKey } fro
 
 type ConnectionState = "connecting" | "connected" | "reconnecting" | "lagging";
 type TurnStatus = "inProgress" | "completed" | "failed" | "interrupted" | "unknown";
-type ThinkingEffort = "minimal" | "low" | "medium" | "high";
 
 type Props = {
   params: Promise<{ id: string }>;
@@ -35,11 +36,12 @@ const THINKING_EFFORT_STORAGE_KEY = "lcwa.thinking.effort.v1";
 const TIMELINE_STICKY_THRESHOLD_PX = 56;
 const ACTIVE_THREAD_SCROLL_SNAP_THRESHOLD_PX = 24;
 
-const MODEL_OPTIONS: Array<{ value: string; label: string }> = [
+const FALLBACK_MODEL_OPTIONS: Array<{ value: string; label: string }> = [
   { value: "gpt-5.3-codex", label: "GPT-5.3-Codex" },
   { value: "gpt-5-codex", label: "GPT-5-Codex" },
   { value: "gpt-5.3-codex-spark", label: "GPT-5.3-Codex-Spark" },
 ];
+const FALLBACK_THINKING_EFFORT_OPTIONS = ["minimal", "low", "medium", "high"];
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== "object") {
@@ -73,6 +75,14 @@ function normalizeText(value: string | null | undefined): string | null {
   }
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
+}
+
+function formatEffortLabel(effort: string): string {
+  return effort
+    .split(/[-_]/g)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
 }
 
 function extractUserMessageText(item: Record<string, unknown>): string | null {
@@ -367,8 +377,10 @@ export default function ThreadPage({ params }: Props) {
   const [connectionState, setConnectionState] = useState<ConnectionState>("connecting");
   const [lastEventAtMs, setLastEventAtMs] = useState<number>(Date.now());
   const [prompt, setPrompt] = useState("");
-  const [model, setModel] = useState<string>(MODEL_OPTIONS[0]?.value ?? "gpt-5.3-codex");
-  const [thinkingEffort, setThinkingEffort] = useState<ThinkingEffort>("high");
+  const [modelCatalog, setModelCatalog] = useState<ModelOption[]>([]);
+  const [modelCatalogError, setModelCatalogError] = useState<string | null>(null);
+  const [model, setModel] = useState<string>(FALLBACK_MODEL_OPTIONS[0]?.value ?? "gpt-5.3-codex");
+  const [thinkingEffort, setThinkingEffort] = useState<string>("high");
   const [permissionMode, setPermissionMode] = useState<TurnPermissionMode>("local");
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -384,6 +396,65 @@ export default function ThreadPage({ params }: Props) {
   const [bottomPanelOpen, setBottomPanelOpen] = useState(true);
   const [showRawEvents, setShowRawEvents] = useState(false);
   const [showAllTurns, setShowAllTurns] = useState(false);
+  const modelOptions = useMemo(() => {
+    if (modelCatalog.length === 0) {
+      return FALLBACK_MODEL_OPTIONS.map((option, index) => ({
+        value: option.value,
+        label: option.label,
+        isDefault: index === 0,
+      }));
+    }
+
+    const seen = new Set<string>();
+    const options: Array<{ value: string; label: string; isDefault: boolean }> = [];
+    for (const entry of modelCatalog) {
+      const value = entry.model || entry.id;
+      if (!value || seen.has(value)) {
+        continue;
+      }
+      seen.add(value);
+      options.push({
+        value,
+        label: entry.displayName ?? value,
+        isDefault: entry.isDefault === true,
+      });
+    }
+    return options.length > 0
+      ? options
+      : FALLBACK_MODEL_OPTIONS.map((option, index) => ({
+          value: option.value,
+          label: option.label,
+          isDefault: index === 0,
+        }));
+  }, [modelCatalog]);
+
+  const selectedModelCatalog = useMemo(
+    () =>
+      modelCatalog.find((entry) => entry.model === model || entry.id === model) ?? null,
+    [modelCatalog, model],
+  );
+
+  const thinkingEffortOptions = useMemo(() => {
+    const supported = Array.isArray(selectedModelCatalog?.reasoningEffort)
+      ? Array.from(
+          new Set(
+            selectedModelCatalog.reasoningEffort
+              .map((option) => option.effort)
+              .filter((effort): effort is string => Boolean(effort)),
+          ),
+        )
+      : [];
+
+    if (supported.length > 0) {
+      return supported;
+    }
+
+    if (selectedModelCatalog?.defaultReasoningEffort) {
+      return [selectedModelCatalog.defaultReasoningEffort];
+    }
+
+    return FALLBACK_THINKING_EFFORT_OPTIONS;
+  }, [selectedModelCatalog]);
 
   useEffect(() => {
     params.then((value) => setThreadId(value.id));
@@ -395,19 +466,76 @@ export default function ThreadPage({ params }: Props) {
       setPermissionMode(saved);
     }
     const savedModel = window.localStorage.getItem(MODEL_STORAGE_KEY);
-    if (savedModel && MODEL_OPTIONS.some((option) => option.value === savedModel)) {
+    if (savedModel) {
       setModel(savedModel);
     }
     const savedEffort = window.localStorage.getItem(THINKING_EFFORT_STORAGE_KEY);
-    if (
-      savedEffort === "minimal" ||
-      savedEffort === "low" ||
-      savedEffort === "medium" ||
-      savedEffort === "high"
-    ) {
+    if (savedEffort) {
       setThinkingEffort(savedEffort);
     }
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadModelCatalog() {
+      try {
+        const res = await fetch(`${gatewayUrl}/api/models?includeHidden=true`);
+        if (!res.ok) {
+          throw new Error(`model list http ${res.status}`);
+        }
+        const payload = (await res.json()) as ModelsResponse;
+        if (!cancelled) {
+          setModelCatalog(Array.isArray(payload.data) ? payload.data : []);
+          setModelCatalogError(null);
+        }
+      } catch (catalogError) {
+        if (!cancelled) {
+          setModelCatalog([]);
+          setModelCatalogError(
+            catalogError instanceof Error ? catalogError.message : "model list unavailable",
+          );
+        }
+      }
+    }
+
+    void loadModelCatalog();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (modelOptions.length === 0) {
+      return;
+    }
+    if (modelOptions.some((option) => option.value === model)) {
+      return;
+    }
+
+    const preferredDefault =
+      modelOptions.find((option) => option.isDefault)?.value ?? modelOptions[0]?.value;
+    if (preferredDefault) {
+      setModel(preferredDefault);
+    }
+  }, [model, modelOptions]);
+
+  useEffect(() => {
+    if (thinkingEffortOptions.length === 0) {
+      return;
+    }
+    if (thinkingEffortOptions.includes(thinkingEffort)) {
+      return;
+    }
+
+    const preferredDefault = selectedModelCatalog?.defaultReasoningEffort;
+    if (preferredDefault && thinkingEffortOptions.includes(preferredDefault)) {
+      setThinkingEffort(preferredDefault);
+      return;
+    }
+
+    setThinkingEffort(thinkingEffortOptions[0]);
+  }, [selectedModelCatalog, thinkingEffort, thinkingEffortOptions]);
 
   useEffect(() => {
     window.localStorage.setItem(PERMISSION_MODE_STORAGE_KEY, permissionMode);
@@ -869,7 +997,7 @@ export default function ThreadPage({ params }: Props) {
       const options: {
         cwd?: string;
         model: string;
-        effort: ThinkingEffort;
+        effort: string;
         permissionMode: TurnPermissionMode;
       } = {
         model,
@@ -1045,6 +1173,9 @@ export default function ThreadPage({ params }: Props) {
             {submitError ? <p className="cdx-error">{submitError}</p> : null}
             {approvalError ? <p className="cdx-error">{approvalError}</p> : null}
             {controlError ? <p className="cdx-error">{controlError}</p> : null}
+            {modelCatalogError ? (
+              <p className="cdx-helper">Model catalog unavailable ({modelCatalogError}); using fallback list.</p>
+            ) : null}
           </section>
 
           <section
@@ -1199,7 +1330,7 @@ export default function ThreadPage({ params }: Props) {
                       setModel(event.target.value);
                     }}
                   >
-                    {MODEL_OPTIONS.map((option) => (
+                    {modelOptions.map((option) => (
                       <option key={option.value} value={option.value}>
                         {option.label}
                       </option>
@@ -1212,21 +1343,14 @@ export default function ThreadPage({ params }: Props) {
                     id="thinking-effort"
                     value={thinkingEffort}
                     onChange={(event) => {
-                      const next = event.target.value;
-                      if (
-                        next === "minimal" ||
-                        next === "low" ||
-                        next === "medium" ||
-                        next === "high"
-                      ) {
-                        setThinkingEffort(next);
-                      }
+                      setThinkingEffort(event.target.value);
                     }}
                   >
-                    <option value="minimal">Minimal</option>
-                    <option value="low">Low</option>
-                    <option value="medium">Medium</option>
-                    <option value="high">High</option>
+                    {thinkingEffortOptions.map((effort) => (
+                      <option key={effort} value={effort}>
+                        {formatEffortLabel(effort)}
+                      </option>
+                    ))}
                   </select>
                 </label>
                 <label className="cdx-composer-select" htmlFor="permission-mode">
