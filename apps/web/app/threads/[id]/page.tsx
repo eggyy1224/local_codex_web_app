@@ -1672,6 +1672,15 @@ export default function ThreadPage({ params }: Props) {
               <div className="cdx-inline-actions">
                 <button
                   type="button"
+                  data-testid="control-stop"
+                  className="cdx-toolbar-btn cdx-toolbar-btn--danger"
+                  disabled={controlBusy !== null}
+                  onClick={() => void sendControl("stop")}
+                >
+                  {controlBusy === "stop" ? "Stopping..." : "Stop"}
+                </button>
+                <button
+                  type="button"
                   data-testid="control-retry"
                   className="cdx-toolbar-btn cdx-toolbar-btn--positive"
                   disabled={controlBusy !== null}
