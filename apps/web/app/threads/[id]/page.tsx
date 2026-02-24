@@ -19,6 +19,7 @@ import { groupThreadsByProject, pickDefaultProjectKey, projectLabelFromKey } fro
 
 type ConnectionState = "connecting" | "connected" | "reconnecting" | "lagging";
 type TurnStatus = "inProgress" | "completed" | "failed" | "interrupted" | "unknown";
+type ThinkingEffort = "minimal" | "low" | "medium" | "high";
 
 type Props = {
   params: Promise<{ id: string }>;
@@ -29,8 +30,16 @@ type PendingApprovalCard = ApprovalView;
 const gatewayUrl = process.env.NEXT_PUBLIC_GATEWAY_URL ?? "http://127.0.0.1:8787";
 const SIDEBAR_SCROLL_STORAGE_KEY = "lcwa.sidebar.scroll.v1";
 const PERMISSION_MODE_STORAGE_KEY = "lcwa.permission.mode.v1";
+const MODEL_STORAGE_KEY = "lcwa.model.v1";
+const THINKING_EFFORT_STORAGE_KEY = "lcwa.thinking.effort.v1";
 const TIMELINE_STICKY_THRESHOLD_PX = 56;
 const ACTIVE_THREAD_SCROLL_SNAP_THRESHOLD_PX = 24;
+
+const MODEL_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: "gpt-5.3-codex", label: "GPT-5.3-Codex" },
+  { value: "gpt-5-codex", label: "GPT-5-Codex" },
+  { value: "gpt-5.3-codex-spark", label: "GPT-5.3-Codex-Spark" },
+];
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== "object") {
@@ -358,6 +367,8 @@ export default function ThreadPage({ params }: Props) {
   const [connectionState, setConnectionState] = useState<ConnectionState>("connecting");
   const [lastEventAtMs, setLastEventAtMs] = useState<number>(Date.now());
   const [prompt, setPrompt] = useState("");
+  const [model, setModel] = useState<string>(MODEL_OPTIONS[0]?.value ?? "gpt-5.3-codex");
+  const [thinkingEffort, setThinkingEffort] = useState<ThinkingEffort>("high");
   const [permissionMode, setPermissionMode] = useState<TurnPermissionMode>("local");
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -383,11 +394,32 @@ export default function ThreadPage({ params }: Props) {
     if (saved === "local" || saved === "full-access") {
       setPermissionMode(saved);
     }
+    const savedModel = window.localStorage.getItem(MODEL_STORAGE_KEY);
+    if (savedModel && MODEL_OPTIONS.some((option) => option.value === savedModel)) {
+      setModel(savedModel);
+    }
+    const savedEffort = window.localStorage.getItem(THINKING_EFFORT_STORAGE_KEY);
+    if (
+      savedEffort === "minimal" ||
+      savedEffort === "low" ||
+      savedEffort === "medium" ||
+      savedEffort === "high"
+    ) {
+      setThinkingEffort(savedEffort);
+    }
   }, []);
 
   useEffect(() => {
     window.localStorage.setItem(PERMISSION_MODE_STORAGE_KEY, permissionMode);
   }, [permissionMode]);
+
+  useEffect(() => {
+    window.localStorage.setItem(MODEL_STORAGE_KEY, model);
+  }, [model]);
+
+  useEffect(() => {
+    window.localStorage.setItem(THINKING_EFFORT_STORAGE_KEY, thinkingEffort);
+  }, [thinkingEffort]);
 
   useEffect(() => {
     if (!threadId) {
@@ -836,8 +868,12 @@ export default function ThreadPage({ params }: Props) {
     try {
       const options: {
         cwd?: string;
+        model: string;
+        effort: ThinkingEffort;
         permissionMode: TurnPermissionMode;
       } = {
+        model,
+        effort: thinkingEffort,
         permissionMode,
       };
       if (activeProjectKey !== "unknown") {
@@ -1154,7 +1190,46 @@ export default function ThreadPage({ params }: Props) {
                 </button>
               </div>
               <div className="cdx-composer-right">
-                <label className="cdx-permission-select" htmlFor="permission-mode">
+                <label className="cdx-composer-select" htmlFor="model">
+                  <span>Model</span>
+                  <select
+                    id="model"
+                    value={model}
+                    onChange={(event) => {
+                      setModel(event.target.value);
+                    }}
+                  >
+                    {MODEL_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="cdx-composer-select" htmlFor="thinking-effort">
+                  <span>Thinking</span>
+                  <select
+                    id="thinking-effort"
+                    value={thinkingEffort}
+                    onChange={(event) => {
+                      const next = event.target.value;
+                      if (
+                        next === "minimal" ||
+                        next === "low" ||
+                        next === "medium" ||
+                        next === "high"
+                      ) {
+                        setThinkingEffort(next);
+                      }
+                    }}
+                  >
+                    <option value="minimal">Minimal</option>
+                    <option value="low">Low</option>
+                    <option value="medium">Medium</option>
+                    <option value="high">High</option>
+                  </select>
+                </label>
+                <label className="cdx-composer-select" htmlFor="permission-mode">
                   <span>Permission</span>
                   <select
                     id="permission-mode"
@@ -1170,9 +1245,6 @@ export default function ThreadPage({ params }: Props) {
                     <option value="full-access">Full access (never)</option>
                   </select>
                 </label>
-                <button type="button" className="cdx-toolbar-btn" disabled>
-                  GPT-5.3-Codex-Spark
-                </button>
                 <button
                   type="button"
                   data-testid="turn-submit"

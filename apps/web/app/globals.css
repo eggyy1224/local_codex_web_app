@@ -674,7 +674,7 @@ textarea {
   gap: 8px;
 }
 
-.cdx-permission-select {
+.cdx-composer-select {
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -682,7 +682,7 @@ textarea {
   color: var(--muted);
 }
 
-.cdx-permission-select select {
+.cdx-composer-select select {
   height: 30px;
   border-radius: 999px;
   border: 1px solid var(--border-soft);
@@ -691,7 +691,7 @@ textarea {
   padding: 0 12px;
 }
 
-.cdx-permission-select select:focus {
+.cdx-composer-select select:focus {
   outline: none;
   border-color: rgba(129, 187, 255, 0.52);
 }
