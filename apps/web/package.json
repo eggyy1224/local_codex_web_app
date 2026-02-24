@@ -1,0 +1,18 @@
+{
+  "name": "@apps/web",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "lint": "tsc --noEmit",
+    "typecheck": "tsc --noEmit",
+    "test:unit": "vitest run test/unit.test.ts",
+    "test:integration": "vitest run test/integration.test.ts",
+    "test:e2e": "vitest run test/e2e.test.ts",
+    "test:coverage": "vitest run --coverage"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.8",
+    "@vitest/coverage-v8": "^2.1.8",
+    "vitest": "^2.1.8"
+  }
+}

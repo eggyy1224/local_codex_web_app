@@ -1,0 +1,19 @@
+{
+  "name": "local-codex-web-app",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "pnpm@9.0.0",
+  "scripts": {
+    "lint": "pnpm -r lint",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm run test:unit && pnpm run test:integration",
+    "test:unit": "pnpm -r test:unit",
+    "test:integration": "pnpm -r test:integration",
+    "test:e2e": "pnpm --filter @apps/web test:e2e",
+    "test:coverage": "pnpm -r test:coverage",
+    "check": "pnpm lint && pnpm typecheck && pnpm test:coverage && pnpm test:e2e"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3"
+  }
+}

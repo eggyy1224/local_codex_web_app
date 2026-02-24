@@ -1,0 +1,21 @@
+{
+  "name": "@apps/gateway",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "lint": "tsc --noEmit",
+    "typecheck": "tsc --noEmit",
+    "test:unit": "vitest run test/unit.test.ts",
+    "test:integration": "vitest run test/integration.test.ts",
+    "test:coverage": "vitest run --coverage",
+    "test": "pnpm test:unit && pnpm test:integration"
+  },
+  "dependencies": {
+    "fastify": "^4.28.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.8",
+    "@vitest/coverage-v8": "^2.1.8",
+    "vitest": "^2.1.8"
+  }
+}
