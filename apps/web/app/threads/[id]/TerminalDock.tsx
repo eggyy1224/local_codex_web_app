@@ -9,7 +9,6 @@ import type {
   ThreadContextResponse,
   ThreadContextSource,
 } from "@lcwa/shared-types";
-import "@xterm/xterm/css/xterm.css";
 
 type Props = {
   gatewayUrl: string;
