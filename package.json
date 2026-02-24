@@ -1,0 +1,17 @@
+{
+  "name": "local-codex-web-app",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@10.6.2",
+  "scripts": {
+    "dev": "pnpm -r --parallel dev",
+    "dev:gateway": "pnpm --filter @lcwa/gateway dev",
+    "dev:web": "pnpm --filter @lcwa/web dev",
+    "build": "pnpm -r build",
+    "lint": "pnpm -r lint",
+    "typecheck": "pnpm -r typecheck"
+  },
+  "devDependencies": {
+    "@types/node": "^24.3.0"
+  }
+}
