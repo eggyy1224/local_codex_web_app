@@ -66,6 +66,7 @@ type RawThread = {
 
 type RawReasoningEffort = {
   effort?: unknown;
+  reasoningEffort?: unknown;
   description?: unknown;
 };
 
@@ -76,6 +77,7 @@ type RawModel = {
   hidden?: unknown;
   defaultReasoningEffort?: unknown;
   reasoningEffort?: unknown;
+  supportedReasoningEfforts?: unknown;
   upgrade?: unknown;
   inputModalities?: unknown;
   supportsPersonality?: unknown;
@@ -417,15 +419,26 @@ function toModelOption(raw: RawModel): ModelOption | null {
   }
 
   const model = typeof raw.model === "string" ? raw.model : id;
-  const reasoningEffort = Array.isArray(raw.reasoningEffort)
+  const effortListRaw = Array.isArray(raw.reasoningEffort)
     ? raw.reasoningEffort
+    : Array.isArray(raw.supportedReasoningEfforts)
+      ? raw.supportedReasoningEfforts
+      : null;
+  const reasoningEffort = effortListRaw
+    ? effortListRaw
         .map((option) => {
           const item = option as RawReasoningEffort;
-          if (typeof item?.effort !== "string") {
+          const effort =
+            typeof item?.effort === "string"
+              ? item.effort
+              : typeof item?.reasoningEffort === "string"
+                ? item.reasoningEffort
+                : null;
+          if (!effort) {
             return null;
           }
           return {
-            effort: item.effort,
+            effort,
             ...(typeof item.description === "string" ? { description: item.description } : {}),
           };
         })
