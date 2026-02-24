@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
 import readline from "node:readline";
+import type { GatewayAppServerPort } from "./appServerPort.js";
 
 type JsonRpcRequest = {
   id: string | number;
@@ -28,7 +29,7 @@ function idKey(id: string | number): string {
   return `${typeof id}:${id}`;
 }
 
-export class AppServerClient extends EventEmitter {
+export class AppServerClient extends EventEmitter implements GatewayAppServerPort {
   private proc: ReturnType<typeof spawn> | null = null;
   private initialized = false;
   private connected = false;
