@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { HealthResponse, ModelOption, ModelsResponse, ThreadListResponse } from "@lcwa/shared-types";
 import { groupThreadsByProject, pickDefaultProjectKey, projectLabelFromKey } from "./lib/projects";
+import { formatEffortLabel } from "./lib/thread-logic";
 
 type UiState = {
   loading: boolean;
@@ -29,14 +30,6 @@ const quickPrompts = [
   "Create a one-page $pdf that summarizes this app.",
   "Create a plan to migrate this UI to a reusable shell.",
 ];
-
-function formatEffortLabel(effort: string): string {
-  return effort
-    .split(/[-_]/g)
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ");
-}
 
 export default function HomePage() {
   const router = useRouter();
