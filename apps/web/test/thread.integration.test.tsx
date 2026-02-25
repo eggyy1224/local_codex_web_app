@@ -458,6 +458,7 @@ describe("Thread page integration", () => {
 
     fireEvent.click(await screen.findByTestId("mobile-topbar-control-toggle"));
     await screen.findByTestId("mobile-control-sheet");
+    fireEvent.click(screen.getByTestId("mobile-control-tab-approvals"));
 
     const allowButtons = screen.getAllByTestId("approval-allow");
     const denyButtons = screen.getAllByTestId("approval-deny");
