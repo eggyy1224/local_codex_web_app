@@ -175,7 +175,7 @@ describe("Thread page integration", () => {
     expect(screen.getByTestId("timeline")).toBeInTheDocument();
   });
 
-  it("mobile thread page hides sidebar by default and uses overlay switcher", async () => {
+  it("mobile thread page uses chat-first shell with overlay switcher and control sheet", async () => {
     setMobileViewport(true);
     vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
 
@@ -242,15 +242,248 @@ describe("Thread page integration", () => {
 
     render(<ThreadPage params={Promise.resolve({ id: "thread-1" })} />);
 
-    await screen.findByTestId("mobile-thread-context");
+    await screen.findByTestId("mobile-chat-topbar");
     expect(screen.queryByText("THREADS")).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByTestId("mobile-thread-switcher-toggle"));
+    expect(screen.getByTestId("mobile-topbar-control-toggle")).toBeInTheDocument();
+    expect(screen.getByTestId("mobile-composer-control-toggle")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByLabelText("Open threads"));
     await screen.findByTestId("mobile-thread-switcher-overlay");
 
     fireEvent.click(screen.getByText("Other Thread"));
     await waitFor(() => {
       expect(pushMock).toHaveBeenCalledWith("/threads/thread-2");
+    });
+  });
+
+  it("uses untitled title fallback for empty mobile thread title", async () => {
+    setMobileViewport(true);
+    vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+
+    server.use(
+      http.get("http://127.0.0.1:8787/api/threads/:id", ({ params }) =>
+        HttpResponse.json({
+          thread: {
+            id: String(params.id),
+            title: "",
+            preview: "Preview",
+            status: "idle",
+            createdAt: null,
+            updatedAt: null,
+          },
+          turns: [],
+          nextCursor: null,
+        }),
+      ),
+      http.get("http://127.0.0.1:8787/api/threads/:id/approvals/pending", () =>
+        HttpResponse.json({ data: [] }),
+      ),
+      http.get("http://127.0.0.1:8787/api/threads", () =>
+        HttpResponse.json({ data: [{ id: "thread-1", projectKey: "/tmp/project", title: "", status: "idle", preview: "Preview", lastActiveAt: "2026-01-01T00:00:00.000Z", archived: false, waitingApprovalCount: 0, errorCount: 0, }], nextCursor: null }),
+      ),
+      http.get("http://127.0.0.1:8787/api/threads/:id/timeline", () => HttpResponse.json({ data: [] })),
+      http.get("http://127.0.0.1:8787/api/threads/:id/context", () =>
+        HttpResponse.json({
+          threadId: "thread-1",
+          cwd: "/tmp/project",
+          resolvedCwd: "/tmp/project",
+          isFallback: false,
+          source: "projection",
+        }),
+      ),
+      http.get("http://127.0.0.1:8787/api/models", () => HttpResponse.json({ data: [] })),
+    );
+
+    render(<ThreadPage params={Promise.resolve({ id: "thread-1" })} />);
+
+    const title = await screen.findByTestId("thread-title");
+    expect(title).toHaveTextContent("(untitled thread)");
+  });
+
+  it("keeps mobile control sheet open when opened during initial thread bootstrap", async () => {
+    setMobileViewport(true);
+    vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+
+    let resolveThreadId: ((value: { id: string }) => void) | null = null;
+    const params = new Promise<{ id: string }>((resolve) => {
+      resolveThreadId = resolve;
+    });
+
+    server.use(
+      http.get("http://127.0.0.1:8787/api/threads/:id", ({ params }) =>
+        HttpResponse.json({
+          thread: {
+            id: String(params.id),
+            title: "Bootstrap Thread",
+            preview: "Preview",
+            status: "idle",
+            createdAt: null,
+            updatedAt: null,
+          },
+          turns: [],
+          nextCursor: null,
+        }),
+      ),
+      http.get("http://127.0.0.1:8787/api/threads/:id/approvals/pending", () =>
+        HttpResponse.json({ data: [] }),
+      ),
+      http.get("http://127.0.0.1:8787/api/threads", () =>
+        HttpResponse.json({
+          data: [
+            {
+              id: "thread-1",
+              projectKey: "/tmp/project",
+              title: "Bootstrap Thread",
+              preview: "Preview",
+              status: "idle",
+              lastActiveAt: "2026-01-01T00:00:00.000Z",
+              archived: false,
+              waitingApprovalCount: 0,
+              errorCount: 0,
+            },
+          ],
+          nextCursor: null,
+        }),
+      ),
+      http.get("http://127.0.0.1:8787/api/threads/:id/timeline", () =>
+        HttpResponse.json({ data: [] }),
+      ),
+      http.get("http://127.0.0.1:8787/api/threads/:id/context", () =>
+        HttpResponse.json({
+          threadId: "thread-1",
+          cwd: "/tmp/project",
+          resolvedCwd: "/tmp/project",
+          isFallback: false,
+          source: "projection",
+        }),
+      ),
+      http.get("http://127.0.0.1:8787/api/models", () => HttpResponse.json({ data: [] })),
+    );
+
+    render(<ThreadPage params={params} />);
+
+    const controlToggle = await screen.findByTestId("mobile-topbar-control-toggle");
+    fireEvent.click(controlToggle);
+    await screen.findByTestId("mobile-control-sheet");
+
+    if (!resolveThreadId) {
+      throw new Error("thread params resolver is not set");
+    }
+    resolveThreadId({ id: "thread-1" });
+
+    await screen.findByText("Bootstrap Thread");
+    await waitFor(() => {
+      expect(screen.getByTestId("mobile-control-sheet")).toBeInTheDocument();
+    });
+  });
+
+  it("disables all mobile approval actions during in-flight decision", async () => {
+    setMobileViewport(true);
+    vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+
+    let approvalCalls = 0;
+    server.use(
+      http.get("http://127.0.0.1:8787/api/threads/:id", ({ params }) =>
+        HttpResponse.json({
+          thread: {
+            id: String(params.id),
+            title: "Main Thread",
+            preview: "Preview",
+            status: "idle",
+            createdAt: null,
+            updatedAt: null,
+          },
+          turns: [],
+          nextCursor: null,
+        }),
+      ),
+      http.get("http://127.0.0.1:8787/api/threads/:id/approvals/pending", () =>
+        HttpResponse.json({
+          data: [
+            {
+              approvalId: "ap-1",
+              threadId: "thread-1",
+              turnId: "turn-1",
+              itemId: null,
+              type: "commandExecution",
+              status: "pending",
+              reason: "Run command A",
+              commandPreview: "npm test",
+              fileChangePreview: null,
+              createdAt: "2026-01-01T00:00:00.000Z",
+              resolvedAt: null,
+            },
+            {
+              approvalId: "ap-2",
+              threadId: "thread-1",
+              turnId: "turn-2",
+              itemId: null,
+              type: "fileChange",
+              status: "pending",
+              reason: "Apply patch",
+              commandPreview: null,
+              fileChangePreview: "src/main.ts",
+              createdAt: "2026-01-01T00:00:01.000Z",
+              resolvedAt: null,
+            },
+          ],
+        }),
+      ),
+      http.get("http://127.0.0.1:8787/api/threads", () =>
+        HttpResponse.json({ data: [], nextCursor: null }),
+      ),
+      http.get("http://127.0.0.1:8787/api/threads/:id/timeline", () => HttpResponse.json({ data: [] })),
+      http.get("http://127.0.0.1:8787/api/threads/:id/context", () =>
+        HttpResponse.json({
+          threadId: "thread-1",
+          cwd: "/tmp/project",
+          resolvedCwd: "/tmp/project",
+          isFallback: false,
+          source: "projection",
+        }),
+      ),
+      http.get("http://127.0.0.1:8787/api/models", () => HttpResponse.json({ data: [] })),
+      http.post("http://127.0.0.1:8787/api/threads/:id/approvals/:approvalId", async () => {
+        approvalCalls += 1;
+        await new Promise<void>((resolve) => {
+          window.setTimeout(resolve, 75);
+        });
+        return HttpResponse.json({ ok: true });
+      }),
+      http.post("http://127.0.0.1:8787/api/threads/:id/control", () => HttpResponse.json({ ok: true })),
+    );
+
+    render(<ThreadPage params={Promise.resolve({ id: "thread-1" })} />);
+
+    fireEvent.click(await screen.findByTestId("mobile-topbar-control-toggle"));
+    await screen.findByTestId("mobile-control-sheet");
+
+    const allowButtons = screen.getAllByTestId("approval-allow");
+    const denyButtons = screen.getAllByTestId("approval-deny");
+    const cancelButtons = screen.getAllByTestId("approval-cancel");
+
+    expect(allowButtons).toHaveLength(2);
+    expect(denyButtons).toHaveLength(2);
+    expect(cancelButtons).toHaveLength(2);
+
+    fireEvent.click(allowButtons[0]);
+
+    await waitFor(() => {
+      const allow = screen.getAllByTestId("approval-allow");
+      const deny = screen.getAllByTestId("approval-deny");
+      const cancel = screen.getAllByTestId("approval-cancel");
+      for (const button of [...allow, ...deny, ...cancel]) {
+        expect(button).toBeDisabled();
+      }
+    });
+
+    fireEvent.click(allowButtons[1]);
+    fireEvent.click(denyButtons[1]);
+    fireEvent.click(cancelButtons[1]);
+
+    await waitFor(() => {
+      expect(approvalCalls).toBe(1);
     });
   });
 
