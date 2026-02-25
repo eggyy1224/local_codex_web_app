@@ -3,8 +3,15 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import type { HealthResponse, ModelOption, ModelsResponse, ThreadListResponse } from "@lcwa/shared-types";
+import type {
+  CreateReviewRequest,
+  HealthResponse,
+  ModelOption,
+  ModelsResponse,
+  ThreadListResponse,
+} from "@lcwa/shared-types";
 import { groupThreadsByProject, pickDefaultProjectKey, projectLabelFromKey } from "./lib/projects";
+import { parseSlashCommand } from "./lib/slash-commands";
 import { formatEffortLabel } from "./lib/thread-logic";
 
 type UiState = {
@@ -268,6 +275,60 @@ export default function HomePage() {
     }
   }
 
+  async function submitInitialTurn(
+    threadId: string,
+    text: string,
+    mode?: "plan",
+  ): Promise<void> {
+    if (text.trim().length === 0) {
+      return;
+    }
+    const options: {
+      cwd?: string;
+      model: string;
+      effort: string;
+      collaborationMode?: "plan";
+    } = {
+      model,
+      effort: thinkingEffort,
+    };
+    if (activeProjectKey !== "unknown") {
+      options.cwd = activeProjectKey;
+    }
+    if (mode === "plan") {
+      options.collaborationMode = "plan";
+    }
+
+    const turnRes = await fetch(`${gatewayUrl}/api/threads/${threadId}/turns`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        input: [{ type: "text", text: text.trim() }],
+        options,
+      }),
+    });
+    if (!turnRes.ok) {
+      throw new Error(`turn submit http ${turnRes.status}`);
+    }
+  }
+
+  async function submitInitialReview(threadId: string, instructions: string): Promise<void> {
+    const payload: CreateReviewRequest =
+      instructions.trim().length > 0 ? { instructions: instructions.trim() } : {};
+    const res = await fetch(`${gatewayUrl}/api/threads/${threadId}/review`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      throw new Error(`review http ${res.status}`);
+    }
+  }
+
   async function onSubmitComposer(): Promise<void> {
     if (submitting) {
       return;
@@ -277,33 +338,34 @@ export default function HomePage() {
     setSubmitting(true);
 
     try {
-      const threadId = await createThread(activeProjectKey, model);
-      if (text.length > 0) {
-        const options: {
-          cwd?: string;
-          model: string;
-          effort: string;
-        } = {
-          model,
-          effort: thinkingEffort,
-        };
-        if (activeProjectKey !== "unknown") {
-          options.cwd = activeProjectKey;
+      const parsed = parseSlashCommand(text);
+      if (parsed.type === "known") {
+        if (parsed.command === "plan" || parsed.command === "plan-mode") {
+          const threadId = await createThread(activeProjectKey, model);
+          if (parsed.args.length > 0) {
+            await submitInitialTurn(threadId, parsed.args, "plan");
+          }
+          router.push(`/threads/${threadId}?mode=plan`);
+          return;
         }
 
-        const turnRes = await fetch(`${gatewayUrl}/api/threads/${threadId}/turns`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            input: [{ type: "text", text }],
-            options,
-          }),
-        });
-        if (!turnRes.ok) {
-          throw new Error(`turn submit http ${turnRes.status}`);
+        if (parsed.command === "review") {
+          const threadId = await createThread(activeProjectKey, model);
+          await submitInitialReview(threadId, parsed.args);
+          router.push(`/threads/${threadId}`);
+          return;
         }
+
+        if (parsed.command === "status") {
+          const threadId = await createThread(activeProjectKey, model);
+          router.push(`/threads/${threadId}?status=1`);
+          return;
+        }
+      }
+
+      const threadId = await createThread(activeProjectKey, model);
+      if (text.length > 0) {
+        await submitInitialTurn(threadId, text);
       }
       router.push(`/threads/${threadId}`);
     } catch (error) {

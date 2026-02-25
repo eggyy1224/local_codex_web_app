@@ -1,6 +1,6 @@
 import React from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { http, HttpResponse } from "msw";
 import { server } from "./msw/server";
 
@@ -21,6 +21,10 @@ vi.mock("next/link", () => ({
 import HomePage from "../app/page";
 
 describe("Home page integration", () => {
+  beforeEach(() => {
+    pushMock.mockReset();
+  });
+
   it("loads health + threads + model catalog", async () => {
     server.use(
       http.get("http://127.0.0.1:8787/health", () =>
@@ -100,5 +104,113 @@ describe("Home page integration", () => {
       expect(pushMock).toHaveBeenCalledWith("/threads/thread-new");
     });
     expect(turnCalls).toHaveLength(1);
+  });
+
+  it("supports /plan slash command with initial plan turn", async () => {
+    const turnCalls: Array<unknown> = [];
+
+    server.use(
+      http.get("http://127.0.0.1:8787/health", () =>
+        HttpResponse.json({ status: "ok", appServerConnected: true, timestamp: new Date().toISOString() }),
+      ),
+      http.get("http://127.0.0.1:8787/api/threads", () => HttpResponse.json({ data: [], nextCursor: null })),
+      http.get("http://127.0.0.1:8787/api/models", () =>
+        HttpResponse.json({ data: [{ id: "gpt-5-codex", model: "gpt-5-codex", isDefault: true }] }),
+      ),
+      http.post("http://127.0.0.1:8787/api/threads", () => HttpResponse.json({ threadId: "thread-plan" })),
+      http.post("http://127.0.0.1:8787/api/threads/:id/turns", async ({ request }) => {
+        turnCalls.push(await request.json());
+        return HttpResponse.json({ turnId: "turn-1" });
+      }),
+    );
+
+    render(<HomePage />);
+
+    const textarea = await screen.findByPlaceholderText("Ask Codex anything, @ to add files, / for commands");
+    fireEvent.change(textarea, { target: { value: "/plan draft roadmap" } });
+    fireEvent.keyDown(textarea, { key: "Enter" });
+
+    await waitFor(() => {
+      expect(pushMock).toHaveBeenCalledWith("/threads/thread-plan?mode=plan");
+    });
+    expect(turnCalls).toHaveLength(1);
+    expect(turnCalls[0]).toMatchObject({
+      input: [{ type: "text", text: "draft roadmap" }],
+      options: { collaborationMode: "plan" },
+    });
+  });
+
+  it("supports /review and /status slash commands", async () => {
+    let reviewCalls = 0;
+    let turnCalls = 0;
+
+    server.use(
+      http.get("http://127.0.0.1:8787/health", () =>
+        HttpResponse.json({ status: "ok", appServerConnected: true, timestamp: new Date().toISOString() }),
+      ),
+      http.get("http://127.0.0.1:8787/api/threads", () => HttpResponse.json({ data: [], nextCursor: null })),
+      http.get("http://127.0.0.1:8787/api/models", () =>
+        HttpResponse.json({ data: [{ id: "gpt-5-codex", model: "gpt-5-codex", isDefault: true }] }),
+      ),
+      http.post("http://127.0.0.1:8787/api/threads", () => HttpResponse.json({ threadId: "thread-cmd" })),
+      http.post("http://127.0.0.1:8787/api/threads/:id/review", async ({ request }) => {
+        reviewCalls += 1;
+        expect(await request.json()).toEqual({ instructions: "focus tests" });
+        return HttpResponse.json({ turnId: "turn-r", reviewThreadId: "thread-cmd" });
+      }),
+      http.post("http://127.0.0.1:8787/api/threads/:id/turns", () => {
+        turnCalls += 1;
+        return HttpResponse.json({ turnId: "turn-1" });
+      }),
+    );
+
+    render(<HomePage />);
+    const textarea = await screen.findByPlaceholderText("Ask Codex anything, @ to add files, / for commands");
+
+    fireEvent.change(textarea, { target: { value: "/review focus tests" } });
+    fireEvent.keyDown(textarea, { key: "Enter" });
+    await waitFor(() => {
+      expect(reviewCalls).toBe(1);
+      expect(pushMock).toHaveBeenLastCalledWith("/threads/thread-cmd");
+    });
+    expect(turnCalls).toBe(0);
+
+    fireEvent.change(textarea, { target: { value: "/status" } });
+    fireEvent.keyDown(textarea, { key: "Enter" });
+    await waitFor(() => {
+      expect(pushMock).toHaveBeenLastCalledWith("/threads/thread-cmd?status=1");
+    });
+  });
+
+  it("keeps unknown slash as plain text", async () => {
+    const turnCalls: Array<unknown> = [];
+
+    server.use(
+      http.get("http://127.0.0.1:8787/health", () =>
+        HttpResponse.json({ status: "ok", appServerConnected: true, timestamp: new Date().toISOString() }),
+      ),
+      http.get("http://127.0.0.1:8787/api/threads", () => HttpResponse.json({ data: [], nextCursor: null })),
+      http.get("http://127.0.0.1:8787/api/models", () =>
+        HttpResponse.json({ data: [{ id: "gpt-5-codex", model: "gpt-5-codex", isDefault: true }] }),
+      ),
+      http.post("http://127.0.0.1:8787/api/threads", () => HttpResponse.json({ threadId: "thread-u" })),
+      http.post("http://127.0.0.1:8787/api/threads/:id/turns", async ({ request }) => {
+        turnCalls.push(await request.json());
+        return HttpResponse.json({ turnId: "turn-1" });
+      }),
+    );
+
+    render(<HomePage />);
+    const textarea = await screen.findByPlaceholderText("Ask Codex anything, @ to add files, / for commands");
+    fireEvent.change(textarea, { target: { value: "/foo bar" } });
+    fireEvent.keyDown(textarea, { key: "Enter" });
+
+    await waitFor(() => {
+      expect(pushMock).toHaveBeenCalledWith("/threads/thread-u");
+      expect(turnCalls).toHaveLength(1);
+    });
+    expect(turnCalls[0]).toMatchObject({
+      input: [{ type: "text", text: "/foo bar" }],
+    });
   });
 });
