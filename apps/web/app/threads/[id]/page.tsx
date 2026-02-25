@@ -8,6 +8,7 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
@@ -44,7 +45,11 @@ import {
   parseSlashCommand,
   type KnownSlashCommand,
 } from "../../lib/slash-commands";
-import MobileThreadHeaderContext from "./MobileThreadHeaderContext";
+import MobileChatTopBar from "./MobileChatTopBar";
+import MobileComposerDock from "./MobileComposerDock";
+import MobileControlSheet from "./MobileControlSheet";
+import MobileMessageDetailsSheet from "./MobileMessageDetailsSheet";
+import MobileMessageStream from "./MobileMessageStream";
 import MobileThreadSwitcherOverlay, {
   type MobileThreadSwitcherItem,
 } from "./MobileThreadSwitcherOverlay";
@@ -58,6 +63,8 @@ type Props = {
 
 type PendingApprovalCard = ApprovalView;
 type CollaborationModeKind = "plan" | "default";
+type ControlSheetSection = "controls" | "settings" | "approvals";
+type ControlSheetSnap = "half" | "full";
 type ThreadTokenUsageSummary = {
   threadId: string;
   turnId: string | null;
@@ -70,6 +77,16 @@ type ThreadTokenUsageSummary = {
 type StatusBanner = {
   generatedAt: string;
   lines: string[];
+};
+type MobileMessageDetails = {
+  turnId: string;
+  startedAt: string;
+  completedAt: string;
+  status: string;
+  streaming: boolean;
+  toolCalls: number;
+  toolResults: number;
+  hasThinking: boolean;
 };
 
 const gatewayUrl = process.env.NEXT_PUBLIC_GATEWAY_URL ?? "http://127.0.0.1:8787";
@@ -225,6 +242,8 @@ export default function ThreadPage({ params }: Props) {
   const activeThreadCardRef = useRef<HTMLElement | null>(null);
   const modeInitializedRef = useRef(false);
   const statusQueryHandledRef = useRef(false);
+  const initialThreadReadyRef = useRef(false);
+  const previousThreadIdRef = useRef("");
   const [threadId, setThreadId] = useState<string>("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -252,6 +271,13 @@ export default function ThreadPage({ params }: Props) {
   const [threadListLoading, setThreadListLoading] = useState(true);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [isThreadSwitcherOpen, setIsThreadSwitcherOpen] = useState(false);
+  const [isControlSheetOpen, setIsControlSheetOpen] = useState(false);
+  const [controlSheetSection, setControlSheetSection] = useState<ControlSheetSection>("controls");
+  const [controlSheetSnap, setControlSheetSnap] = useState<ControlSheetSnap>("half");
+  const [isDraggingSheet, setIsDraggingSheet] = useState(false);
+  const [sheetDragOffsetY, setSheetDragOffsetY] = useState(0);
+  const [isMessageDetailsOpen, setIsMessageDetailsOpen] = useState(false);
+  const [activeMessageId, setActiveMessageId] = useState<string | null>(null);
   const [threadContext, setThreadContext] = useState<ThreadContextResponse | null>(null);
   const [terminalOpen, setTerminalOpen] = useState(false);
   const [terminalWidth, setTerminalWidth] = useState(420);
@@ -371,10 +397,30 @@ export default function ThreadPage({ params }: Props) {
   }, [params]);
 
   useEffect(() => {
+    if (!threadId) {
+      return;
+    }
+
+    if (!initialThreadReadyRef.current) {
+      initialThreadReadyRef.current = true;
+      previousThreadIdRef.current = threadId;
+      return;
+    }
+
+    if (threadId === previousThreadIdRef.current) {
+      return;
+    }
+
+    previousThreadIdRef.current = threadId;
     modeInitializedRef.current = false;
     statusQueryHandledRef.current = false;
     setLatestTokenUsage(null);
     setStatusBanner(null);
+    setIsControlSheetOpen(false);
+    setIsDraggingSheet(false);
+    setSheetDragOffsetY(0);
+    setIsMessageDetailsOpen(false);
+    setActiveMessageId(null);
   }, [threadId]);
 
   useEffect(() => {
@@ -412,6 +458,7 @@ export default function ThreadPage({ params }: Props) {
     if (isMobileViewport) {
       setTerminalOpen(false);
       setIsThreadSwitcherOpen(false);
+      setIsMessageDetailsOpen(false);
       return;
     }
     const savedWidth = window.localStorage.getItem(TERMINAL_WIDTH_STORAGE_KEY);
@@ -426,6 +473,8 @@ export default function ThreadPage({ params }: Props) {
   useEffect(() => {
     if (!isMobileViewport) {
       setIsThreadSwitcherOpen(false);
+      setIsControlSheetOpen(false);
+      setIsMessageDetailsOpen(false);
     }
   }, [isMobileViewport]);
 
@@ -848,6 +897,23 @@ export default function ThreadPage({ params }: Props) {
       )[0] ?? null,
     [pendingApprovals],
   );
+  const pendingApprovalList = useMemo(
+    () =>
+      Object.values(pendingApprovals)
+        .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+        .map((item) => ({
+          approvalId: item.approvalId,
+          type: item.type,
+          reason: item.reason,
+          commandPreview: item.commandPreview,
+          fileChangePreview: item.fileChangePreview,
+        })),
+    [pendingApprovals],
+  );
+  const selectedModelLabel = useMemo(
+    () => modelOptions.find((option) => option.value === model)?.label ?? model,
+    [model, modelOptions],
+  );
 
   const syncTimelineStickyState = useCallback(() => {
     const timeline = timelineRef.current;
@@ -1063,6 +1129,19 @@ export default function ThreadPage({ params }: Props) {
       if (target instanceof HTMLElement && target.tagName === "SELECT") {
         return;
       }
+      if (isMessageDetailsOpen) {
+        event.preventDefault();
+        setIsMessageDetailsOpen(false);
+        setActiveMessageId(null);
+        return;
+      }
+      if (isControlSheetOpen) {
+        event.preventDefault();
+        setSheetDragOffsetY(0);
+        setIsDraggingSheet(false);
+        setIsControlSheetOpen(false);
+        return;
+      }
       if (isThreadSwitcherOpen) {
         event.preventDefault();
         setIsThreadSwitcherOpen(false);
@@ -1076,7 +1155,12 @@ export default function ThreadPage({ params }: Props) {
     return () => {
       window.removeEventListener("keydown", onKeyDown);
     };
-  }, [isThreadSwitcherOpen, sendControl]);
+  }, [
+    isControlSheetOpen,
+    isMessageDetailsOpen,
+    isThreadSwitcherOpen,
+    sendControl,
+  ]);
 
   const handleSidebarToggle = useCallback(() => {
     if (isMobileViewport) {
@@ -1265,6 +1349,33 @@ export default function ThreadPage({ params }: Props) {
     setActiveSlashIndex(0);
   }, []);
 
+  const openControlSheet = useCallback(
+    (section: ControlSheetSection = "controls", snap: ControlSheetSnap = "half") => {
+      setControlSheetSection(section);
+      setControlSheetSnap(snap);
+      setSheetDragOffsetY(0);
+      setIsDraggingSheet(false);
+      setIsControlSheetOpen(true);
+    },
+    [],
+  );
+
+  const closeControlSheet = useCallback(() => {
+    setSheetDragOffsetY(0);
+    setIsDraggingSheet(false);
+    setIsControlSheetOpen(false);
+  }, []);
+
+  const openMessageDetails = useCallback((turnId: string) => {
+    setActiveMessageId(turnId);
+    setIsMessageDetailsOpen(true);
+  }, []);
+
+  const closeMessageDetails = useCallback(() => {
+    setIsMessageDetailsOpen(false);
+    setActiveMessageId(null);
+  }, []);
+
   const handleSlashCommand = useCallback(
     async (rawText: string): Promise<boolean> => {
       const parsed = parseSlashCommand(rawText);
@@ -1323,6 +1434,94 @@ export default function ThreadPage({ params }: Props) {
     }
   }
 
+  const handlePromptKeyDown = useCallback((event: ReactKeyboardEvent<HTMLTextAreaElement>) => {
+    if (
+      event.key === "Tab" &&
+      event.shiftKey &&
+      !event.defaultPrevented &&
+      !event.nativeEvent.isComposing &&
+      !event.metaKey &&
+      !event.ctrlKey &&
+      !event.altKey
+    ) {
+      event.preventDefault();
+      toggleCollaborationMode();
+      return;
+    }
+    if (slashMenuOpen && event.key === "ArrowDown") {
+      event.preventDefault();
+      setActiveSlashIndex((prev) => (prev + 1) % slashSuggestions.length);
+      return;
+    }
+    if (slashMenuOpen && event.key === "ArrowUp") {
+      event.preventDefault();
+      setActiveSlashIndex(
+        (prev) => (prev - 1 + slashSuggestions.length) % slashSuggestions.length,
+      );
+      return;
+    }
+    if (
+      slashMenuOpen &&
+      event.key === "Enter" &&
+      !event.shiftKey &&
+      !event.defaultPrevented &&
+      !event.nativeEvent.isComposing &&
+      !event.metaKey &&
+      !event.ctrlKey &&
+      !event.altKey
+    ) {
+      event.preventDefault();
+      const selected = slashSuggestions[activeSlashIndex] ?? slashSuggestions[0];
+      if (selected) {
+        applyPromptSlash(selected.command);
+      }
+      return;
+    }
+    if (
+      slashMenuOpen &&
+      event.key === "Tab" &&
+      !event.shiftKey &&
+      !event.defaultPrevented &&
+      !event.nativeEvent.isComposing &&
+      !event.metaKey &&
+      !event.ctrlKey &&
+      !event.altKey
+    ) {
+      event.preventDefault();
+      const selected = slashSuggestions[activeSlashIndex] ?? slashSuggestions[0];
+      if (selected) {
+        applyPromptSlash(selected.command);
+      }
+      return;
+    }
+    if (slashMenuOpen && event.key === "Escape") {
+      event.preventDefault();
+      setSlashMenuDismissed(true);
+      return;
+    }
+    if (event.key !== "Enter" || event.shiftKey) {
+      return;
+    }
+    if (
+      event.defaultPrevented ||
+      event.nativeEvent.isComposing ||
+      event.metaKey ||
+      event.ctrlKey ||
+      event.altKey
+    ) {
+      return;
+    }
+    event.preventDefault();
+    void sendTurn();
+  }, [
+    activeSlashIndex,
+    applyPromptSlash,
+    sendTurn,
+    slashMenuOpen,
+    slashSuggestions,
+    toggleCollaborationMode,
+  ]);
+
   useEffect(() => {
     if (!threadId || statusQueryHandledRef.current) {
       return;
@@ -1352,12 +1551,138 @@ export default function ThreadPage({ params }: Props) {
   const terminalEnabled = !isMobileViewport && terminalOpen;
   const sidebarVisible = !isMobileViewport && sidebarOpen && !isCompactViewport;
   const activeProjectLabel = projectLabelFromKey(activeProjectKey);
-  const activeThreadTitle = detail?.thread.title ?? activeThread?.title ?? threadId;
+  const activeThreadTitle =
+    detail?.thread.title?.trim() || activeThread?.title?.trim() || "(untitled thread)";
   const workspaceStyle = terminalEnabled
     ? ({
         "--cdx-terminal-width": `${terminalWidth}px`,
       } as CSSProperties)
     : undefined;
+  const activeMessageDetails = useMemo<MobileMessageDetails | null>(() => {
+    if (!activeMessageId) {
+      return null;
+    }
+    const turn = allConversationTurns.find((item) => item.turnId === activeMessageId);
+    if (!turn) {
+      return null;
+    }
+    return {
+      turnId: turn.turnId,
+      startedAt: formatTimestamp(turn.startedAt),
+      completedAt: formatTimestamp(turn.completedAt),
+      status: statusLabel(turn.status),
+      streaming: turn.isStreaming,
+      toolCalls: turn.toolCalls.length,
+      toolResults: turn.toolResults.length,
+      hasThinking: Boolean(turn.thinkingText),
+    };
+  }, [activeMessageId, allConversationTurns]);
+
+  if (isMobileViewport) {
+    return (
+      <div className="cdx-mobile-thread-page">
+        <MobileChatTopBar
+          threadTitle={activeThreadTitle}
+          modelLabel={selectedModelLabel}
+          pendingApprovalCount={pendingApprovalList.length}
+          onOpenThreads={() => setIsThreadSwitcherOpen(true)}
+          onOpenControls={() =>
+            openControlSheet(pendingApprovalList.length > 0 ? "approvals" : "controls", "half")
+          }
+        />
+
+        <main className="cdx-mobile-thread-main">
+          {statusBanner ? (
+            <div className="cdx-mobile-status-banner" data-testid="status-banner">
+              <span>{statusBanner.lines[0]}</span>
+              <span>{statusBanner.lines[1]}</span>
+              <span>{statusBanner.lines[2]}</span>
+            </div>
+          ) : null}
+          {error ? <p className="cdx-error">{error}</p> : null}
+          {submitError ? <p className="cdx-error">{submitError}</p> : null}
+          {approvalError ? <p className="cdx-error">{approvalError}</p> : null}
+          {controlError ? <p className="cdx-error">{controlError}</p> : null}
+          {modelCatalogError ? (
+            <p className="cdx-helper">Model catalog unavailable ({modelCatalogError}); using fallback list.</p>
+          ) : null}
+
+          <MobileMessageStream
+            turns={visibleConversationTurns}
+            hiddenCount={hiddenTimelineCount}
+            showAllTurns={showAllTurns}
+            onToggleShowAll={setShowAllTurns}
+            timelineRef={timelineRef}
+            onTimelineScroll={handleTimelineScroll}
+            formatTimestamp={formatTimestamp}
+            reviewSlashCommandByTurnId={reviewSlashCommandByTurnId}
+            onCopyMessage={(text) => void copyMessage(text)}
+            onOpenMessageDetails={openMessageDetails}
+          />
+        </main>
+
+        <MobileComposerDock
+          prompt={prompt}
+          submitting={submitting}
+          canSend={prompt.trim().length > 0}
+          collaborationMode={collaborationMode}
+          slashMenuOpen={slashMenuOpen}
+          slashSuggestions={slashSuggestions}
+          activeSlashIndex={activeSlashIndex}
+          onPromptChange={(value) => {
+            setPrompt(value);
+            setSlashMenuDismissed(false);
+          }}
+          onPromptKeyDown={handlePromptKeyDown}
+          onApplySlash={applyPromptSlash}
+          onSend={() => void sendTurn()}
+          onOpenControls={() => openControlSheet("settings", "half")}
+          onSwipeOpenControls={() => openControlSheet("controls", "full")}
+        />
+
+        <MobileControlSheet
+          open={isControlSheetOpen}
+          section={controlSheetSection}
+          snap={controlSheetSnap}
+          isDragging={isDraggingSheet}
+          dragOffsetY={sheetDragOffsetY}
+          approvalBusy={approvalBusy}
+          controlBusy={controlBusy}
+          pendingApprovals={pendingApprovalList}
+          model={model}
+          modelOptions={modelOptions.map((option) => ({ value: option.value, label: option.label }))}
+          thinkingEffort={thinkingEffort}
+          thinkingEffortOptions={thinkingEffortOptions}
+          permissionMode={permissionMode}
+          onSectionChange={setControlSheetSection}
+          onSnapChange={setControlSheetSnap}
+          onClose={closeControlSheet}
+          onDraggingChange={setIsDraggingSheet}
+          onDragOffsetChange={setSheetDragOffsetY}
+          onControl={(action) => void sendControl(action)}
+          onDecision={(approvalId, decision) => void decideApproval(approvalId, decision)}
+          onModelChange={setModel}
+          onThinkingEffortChange={setThinkingEffort}
+          onPermissionModeChange={setPermissionMode}
+          formatEffortLabel={formatEffortLabel}
+        />
+
+        <MobileMessageDetailsSheet
+          open={isMessageDetailsOpen}
+          details={activeMessageDetails}
+          onClose={closeMessageDetails}
+        />
+
+        <MobileThreadSwitcherOverlay
+          open={isThreadSwitcherOpen}
+          items={mobileThreadSwitcherItems}
+          loading={threadListLoading}
+          onClose={() => setIsThreadSwitcherOpen(false)}
+          onSelect={selectThreadFromMobileSwitcher}
+        />
+      </div>
+    );
+  }
 
   return (
     <div className={`cdx-app ${sidebarVisible ? "" : "cdx-app--sidebar-collapsed"}`}>
@@ -1481,60 +1806,44 @@ export default function ThreadPage({ params }: Props) {
 
         <main className={`cdx-main ${isCompactViewport ? "cdx-main--compact" : ""}`}>
           <section className="cdx-hero cdx-hero--thread">
-            {isMobileViewport ? (
-              <MobileThreadHeaderContext
-                projectLabel={activeProjectLabel}
-                threadTitle={activeThreadTitle}
-                onOpenSwitcher={() => setIsThreadSwitcherOpen(true)}
-              />
-            ) : (
-              <div className="cdx-hero-row">
-                <h1 data-testid="thread-title">Let&apos;s build</h1>
-                <button type="button" className="cdx-project-chip">
-                  {activeProjectLabel}
-                </button>
-              </div>
-            )}
-            {!isMobileViewport ? (
-              <p className="cdx-helper cdx-thread-seq">
-                {detail?.thread.title ?? threadId} · seq <span data-testid="event-cursor">{lastSeq}</span>
-              </p>
-            ) : null}
-            <div className={`cdx-status-row ${isMobileViewport ? "cdx-status-row--mobile" : ""}`}>
+            <div className="cdx-hero-row">
+              <h1 data-testid="thread-title">Let&apos;s build</h1>
+              <button type="button" className="cdx-project-chip">
+                {activeProjectLabel}
+              </button>
+            </div>
+            <p className="cdx-helper cdx-thread-seq">
+              {detail?.thread.title ?? threadId} · seq <span data-testid="event-cursor">{lastSeq}</span>
+            </p>
+            <div className="cdx-status-row">
               <span className={`cdx-status ${statusClass(connectionState === "connected" ? "completed" : "unknown")}`}>
                 {connectionText}
               </span>
-              {!isMobileViewport ? (
-                <span
-                  data-testid="collaboration-mode"
-                  className={`cdx-status ${
-                    collaborationMode === "plan" ? "is-pending" : "is-online"
-                  }`}
-                >
-                  mode: {collaborationMode}
-                </span>
-              ) : null}
+              <span
+                data-testid="collaboration-mode"
+                className={`cdx-status ${
+                  collaborationMode === "plan" ? "is-pending" : "is-online"
+                }`}
+              >
+                mode: {collaborationMode}
+              </span>
               <span className="cdx-status is-pending">
                 Pending approval: {Object.keys(pendingApprovals).length}
               </span>
-              {!isMobileViewport ? (
-                <span
-                  className={`cdx-status ${
-                    threadContext?.isFallback ? "is-offline" : "is-online"
-                  }`}
-                >
-                  {threadContext?.isFallback
-                    ? "cwd unknown"
-                    : `cwd: ${threadContext?.resolvedCwd ?? "-"}`}
-                </span>
-              ) : null}
-              {!isMobileViewport ? (
-                <Link href="/">
-                  <button type="button" className="cdx-toolbar-btn">
-                    Home
-                  </button>
-                </Link>
-              ) : null}
+              <span
+                className={`cdx-status ${
+                  threadContext?.isFallback ? "is-offline" : "is-online"
+                }`}
+              >
+                {threadContext?.isFallback
+                  ? "cwd unknown"
+                  : `cwd: ${threadContext?.resolvedCwd ?? "-"}`}
+              </span>
+              <Link href="/">
+                <button type="button" className="cdx-toolbar-btn">
+                  Home
+                </button>
+              </Link>
             </div>
             {loading ? <p className="cdx-helper">Loading thread...</p> : null}
             {error ? <p className="cdx-error">{error}</p> : null}
@@ -1735,86 +2044,7 @@ export default function ThreadPage({ params }: Props) {
                 setPrompt(event.target.value);
                 setSlashMenuDismissed(false);
               }}
-              onKeyDown={(event) => {
-                if (
-                  event.key === "Tab" &&
-                  event.shiftKey &&
-                  !event.defaultPrevented &&
-                  !event.nativeEvent.isComposing &&
-                  !event.metaKey &&
-                  !event.ctrlKey &&
-                  !event.altKey
-                ) {
-                  event.preventDefault();
-                  toggleCollaborationMode();
-                  return;
-                }
-                if (slashMenuOpen && event.key === "ArrowDown") {
-                  event.preventDefault();
-                  setActiveSlashIndex((prev) => (prev + 1) % slashSuggestions.length);
-                  return;
-                }
-                if (slashMenuOpen && event.key === "ArrowUp") {
-                  event.preventDefault();
-                  setActiveSlashIndex(
-                    (prev) => (prev - 1 + slashSuggestions.length) % slashSuggestions.length,
-                  );
-                  return;
-                }
-                if (
-                  slashMenuOpen &&
-                  event.key === "Enter" &&
-                  !event.shiftKey &&
-                  !event.defaultPrevented &&
-                  !event.nativeEvent.isComposing &&
-                  !event.metaKey &&
-                  !event.ctrlKey &&
-                  !event.altKey
-                ) {
-                  event.preventDefault();
-                  const selected = slashSuggestions[activeSlashIndex] ?? slashSuggestions[0];
-                  if (selected) {
-                    applyPromptSlash(selected.command);
-                  }
-                  return;
-                }
-                if (
-                  slashMenuOpen &&
-                  event.key === "Tab" &&
-                  !event.shiftKey &&
-                  !event.defaultPrevented &&
-                  !event.nativeEvent.isComposing &&
-                  !event.metaKey &&
-                  !event.ctrlKey &&
-                  !event.altKey
-                ) {
-                  event.preventDefault();
-                  const selected = slashSuggestions[activeSlashIndex] ?? slashSuggestions[0];
-                  if (selected) {
-                    applyPromptSlash(selected.command);
-                  }
-                  return;
-                }
-                if (slashMenuOpen && event.key === "Escape") {
-                  event.preventDefault();
-                  setSlashMenuDismissed(true);
-                  return;
-                }
-                if (event.key !== "Enter" || event.shiftKey) {
-                  return;
-                }
-                if (
-                  event.defaultPrevented ||
-                  event.nativeEvent.isComposing ||
-                  event.metaKey ||
-                  event.ctrlKey ||
-                  event.altKey
-                ) {
-                  return;
-                }
-                event.preventDefault();
-                void sendTurn();
-              }}
+              onKeyDown={handlePromptKeyDown}
               placeholder="Ask Codex anything, @ to add files, / for commands"
               rows={3}
             />
@@ -1958,15 +2188,6 @@ export default function ThreadPage({ params }: Props) {
         ) : null}
       </div>
 
-      {isMobileViewport ? (
-        <MobileThreadSwitcherOverlay
-          open={isThreadSwitcherOpen}
-          items={mobileThreadSwitcherItems}
-          loading={threadListLoading}
-          onClose={() => setIsThreadSwitcherOpen(false)}
-          onSelect={selectThreadFromMobileSwitcher}
-        />
-      ) : null}
     </div>
   );
 }
