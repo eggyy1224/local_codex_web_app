@@ -38,7 +38,12 @@ import {
   timelineItemFromGatewayEvent,
   truncateText,
 } from "../../lib/thread-logic";
-import { parseSlashCommand } from "../../lib/slash-commands";
+import {
+  applySlashSuggestion,
+  getSlashSuggestions,
+  parseSlashCommand,
+  type KnownSlashCommand,
+} from "../../lib/slash-commands";
 import TerminalDock from "./TerminalDock";
 
 type ConnectionState = "connecting" | "connected" | "reconnecting" | "lagging";
@@ -250,6 +255,22 @@ export default function ThreadPage({ params }: Props) {
   const [showAllTurns, setShowAllTurns] = useState(false);
   const [latestTokenUsage, setLatestTokenUsage] = useState<ThreadTokenUsageSummary | null>(null);
   const [statusBanner, setStatusBanner] = useState<StatusBanner | null>(null);
+  const [activeSlashIndex, setActiveSlashIndex] = useState(0);
+  const [slashMenuDismissed, setSlashMenuDismissed] = useState(false);
+  const slashSuggestions = useMemo(
+    () => (slashMenuDismissed ? [] : getSlashSuggestions(prompt)),
+    [prompt, slashMenuDismissed],
+  );
+  const slashMenuOpen = slashSuggestions.length > 0;
+
+  useEffect(() => {
+    if (!slashMenuOpen) {
+      setActiveSlashIndex(0);
+      return;
+    }
+    setActiveSlashIndex((prev) => Math.min(prev, slashSuggestions.length - 1));
+  }, [slashMenuOpen, slashSuggestions.length]);
+
   const modelOptions = useMemo(() => {
     if (modelCatalog.length === 0) {
       return FALLBACK_MODEL_OPTIONS.map((option, index) => ({
@@ -1177,6 +1198,12 @@ export default function ThreadPage({ params }: Props) {
     }
   }, [latestTokenUsage, threadId]);
 
+  const applyPromptSlash = useCallback((command: KnownSlashCommand) => {
+    setPrompt((previous) => applySlashSuggestion(previous, command));
+    setSlashMenuDismissed(false);
+    setActiveSlashIndex(0);
+  }, []);
+
   const handleSlashCommand = useCallback(
     async (rawText: string): Promise<boolean> => {
       const parsed = parseSlashCommand(rawText);
@@ -1607,7 +1634,10 @@ export default function ThreadPage({ params }: Props) {
               id="turn-input"
               data-testid="turn-input"
               value={prompt}
-              onChange={(event) => setPrompt(event.target.value)}
+              onChange={(event) => {
+                setPrompt(event.target.value);
+                setSlashMenuDismissed(false);
+              }}
               onKeyDown={(event) => {
                 if (
                   event.key === "Tab" &&
@@ -1620,6 +1650,57 @@ export default function ThreadPage({ params }: Props) {
                 ) {
                   event.preventDefault();
                   toggleCollaborationMode();
+                  return;
+                }
+                if (slashMenuOpen && event.key === "ArrowDown") {
+                  event.preventDefault();
+                  setActiveSlashIndex((prev) => (prev + 1) % slashSuggestions.length);
+                  return;
+                }
+                if (slashMenuOpen && event.key === "ArrowUp") {
+                  event.preventDefault();
+                  setActiveSlashIndex(
+                    (prev) => (prev - 1 + slashSuggestions.length) % slashSuggestions.length,
+                  );
+                  return;
+                }
+                if (
+                  slashMenuOpen &&
+                  event.key === "Enter" &&
+                  !event.shiftKey &&
+                  !event.defaultPrevented &&
+                  !event.nativeEvent.isComposing &&
+                  !event.metaKey &&
+                  !event.ctrlKey &&
+                  !event.altKey
+                ) {
+                  event.preventDefault();
+                  const selected = slashSuggestions[activeSlashIndex] ?? slashSuggestions[0];
+                  if (selected) {
+                    applyPromptSlash(selected.command);
+                  }
+                  return;
+                }
+                if (
+                  slashMenuOpen &&
+                  event.key === "Tab" &&
+                  !event.shiftKey &&
+                  !event.defaultPrevented &&
+                  !event.nativeEvent.isComposing &&
+                  !event.metaKey &&
+                  !event.ctrlKey &&
+                  !event.altKey
+                ) {
+                  event.preventDefault();
+                  const selected = slashSuggestions[activeSlashIndex] ?? slashSuggestions[0];
+                  if (selected) {
+                    applyPromptSlash(selected.command);
+                  }
+                  return;
+                }
+                if (slashMenuOpen && event.key === "Escape") {
+                  event.preventDefault();
+                  setSlashMenuDismissed(true);
                   return;
                 }
                 if (event.key !== "Enter" || event.shiftKey) {
@@ -1640,6 +1721,29 @@ export default function ThreadPage({ params }: Props) {
               placeholder="Ask Codex anything, @ to add files, / for commands"
               rows={3}
             />
+            {slashMenuOpen ? (
+              <div className="cdx-slash-menu" role="listbox" aria-label="Slash command suggestions" data-testid="thread-slash-menu">
+                {slashSuggestions.map((item, index) => {
+                  const active = index === activeSlashIndex;
+                  return (
+                    <button
+                      key={item.command}
+                      type="button"
+                      role="option"
+                      aria-selected={active}
+                      className={`cdx-slash-item ${active ? "is-active" : ""}`}
+                      onMouseDown={(event) => {
+                        event.preventDefault();
+                        applyPromptSlash(item.command);
+                      }}
+                    >
+                      <span className="cdx-slash-item-command">{item.title}</span>
+                      <span className="cdx-slash-item-desc">{item.description}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            ) : null}
             <p className="cdx-helper">
               Mode: {collaborationMode} · Shift+Tab toggle · /plan /review /status
             </p>

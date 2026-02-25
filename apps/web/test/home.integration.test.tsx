@@ -188,6 +188,46 @@ describe("Home page integration", () => {
     });
   });
 
+  it("autocompletes /r to /review and separates apply from submit", async () => {
+    let reviewCalls = 0;
+
+    server.use(
+      http.get("http://127.0.0.1:8787/health", () =>
+        HttpResponse.json({ status: "ok", appServerConnected: true, timestamp: new Date().toISOString() }),
+      ),
+      http.get("http://127.0.0.1:8787/api/threads", () => HttpResponse.json({ data: [], nextCursor: null })),
+      http.get("http://127.0.0.1:8787/api/models", () =>
+        HttpResponse.json({ data: [{ id: "gpt-5-codex", model: "gpt-5-codex", isDefault: true }] }),
+      ),
+      http.post("http://127.0.0.1:8787/api/threads", () => HttpResponse.json({ threadId: "thread-r" })),
+      http.post("http://127.0.0.1:8787/api/threads/:id/review", async ({ request }) => {
+        reviewCalls += 1;
+        expect(await request.json()).toEqual({});
+        return HttpResponse.json({ turnId: "turn-r", reviewThreadId: "thread-r" });
+      }),
+    );
+
+    render(<HomePage />);
+    const textarea = await screen.findByPlaceholderText("Ask Codex anything, @ to add files, / for commands");
+
+    fireEvent.change(textarea, { target: { value: "/r" } });
+    expect(screen.getByTestId("home-slash-menu")).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: /\/review/i })).toBeInTheDocument();
+
+    fireEvent.keyDown(textarea, { key: "Enter" });
+    await waitFor(() => {
+      expect(textarea).toHaveValue("/review ");
+    });
+    expect(reviewCalls).toBe(0);
+    expect(pushMock).not.toHaveBeenCalled();
+
+    fireEvent.keyDown(textarea, { key: "Enter" });
+    await waitFor(() => {
+      expect(reviewCalls).toBe(1);
+      expect(pushMock).toHaveBeenLastCalledWith("/threads/thread-r");
+    });
+  });
+
   it("keeps unknown slash as plain text", async () => {
     const turnCalls: Array<unknown> = [];
 

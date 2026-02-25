@@ -473,6 +473,65 @@ describe("Thread page integration", () => {
     });
   });
 
+  it("autocompletes /r to /review and separates apply from submit", async () => {
+    vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+    let reviewCalls = 0;
+
+    server.use(
+      http.get("http://127.0.0.1:8787/api/threads/:id", ({ params }) =>
+        HttpResponse.json({
+          thread: {
+            id: String(params.id),
+            title: "Main Thread",
+            preview: "Preview",
+            status: "idle",
+            createdAt: null,
+            updatedAt: null,
+          },
+          turns: [],
+          nextCursor: null,
+        }),
+      ),
+      http.get("http://127.0.0.1:8787/api/threads/:id/approvals/pending", () => HttpResponse.json({ data: [] })),
+      http.get("http://127.0.0.1:8787/api/threads", () => HttpResponse.json({ data: [], nextCursor: null })),
+      http.get("http://127.0.0.1:8787/api/threads/:id/timeline", () => HttpResponse.json({ data: [] })),
+      http.get("http://127.0.0.1:8787/api/threads/:id/context", () =>
+        HttpResponse.json({
+          threadId: "thread-1",
+          cwd: "/tmp/project",
+          resolvedCwd: "/tmp/project",
+          isFallback: false,
+          source: "projection",
+        }),
+      ),
+      http.get("http://127.0.0.1:8787/api/models", () => HttpResponse.json({ data: [] })),
+      http.post("http://127.0.0.1:8787/api/threads/:id/review", async ({ request }) => {
+        reviewCalls += 1;
+        expect(await request.json()).toEqual({});
+        return HttpResponse.json({ turnId: "turn-review-1", reviewThreadId: "thread-1" });
+      }),
+      http.post("http://127.0.0.1:8787/api/threads/:id/control", () => HttpResponse.json({ ok: true })),
+    );
+
+    render(<ThreadPage params={Promise.resolve({ id: "thread-1" })} />);
+    const textarea = await screen.findByTestId("turn-input");
+
+    fireEvent.change(textarea, { target: { value: "/r" } });
+    expect(screen.getByTestId("thread-slash-menu")).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: /\/review/i })).toBeInTheDocument();
+
+    fireEvent.keyDown(textarea, { key: "Enter" });
+    await waitFor(() => {
+      expect(textarea).toHaveValue("/review ");
+    });
+    expect(reviewCalls).toBe(0);
+
+    fireEvent.keyDown(textarea, { key: "Enter" });
+    await waitFor(() => {
+      expect(reviewCalls).toBe(1);
+    });
+  });
+
   it("treats unknown slash as plain text input", async () => {
     vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
     const turnCalls: Array<unknown> = [];

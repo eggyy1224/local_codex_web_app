@@ -778,6 +778,56 @@ textarea {
   border-color: rgba(129, 187, 255, 0.52);
 }
 
+.cdx-slash-menu {
+  border: 1px solid var(--border-soft);
+  border-radius: 12px;
+  background: rgba(25, 25, 25, 0.92);
+  display: grid;
+  gap: 2px;
+  padding: 4px;
+  max-height: 220px;
+  overflow: auto;
+}
+
+.cdx-slash-item {
+  width: 100%;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: transparent;
+  color: inherit;
+  padding: 8px 10px;
+  text-align: left;
+  display: grid;
+  grid-template-columns: minmax(0, auto) minmax(0, 1fr);
+  align-items: center;
+  column-gap: 10px;
+}
+
+.cdx-slash-item:hover {
+  cursor: pointer;
+  border-color: var(--border-soft);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.cdx-slash-item.is-active {
+  border-color: rgba(129, 187, 255, 0.5);
+  background: rgba(70, 112, 163, 0.36);
+}
+
+.cdx-slash-item-command {
+  font-size: 13px;
+  color: rgba(235, 245, 255, 0.94);
+  white-space: nowrap;
+}
+
+.cdx-slash-item-desc {
+  font-size: 12px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .cdx-composer-row {
   display: flex;
   justify-content: space-between;
@@ -981,5 +1031,16 @@ textarea {
 
   .cdx-explore-grid {
     grid-template-columns: 1fr;
+  }
+
+  .cdx-slash-item {
+    padding: 10px 12px;
+    grid-template-columns: 1fr;
+    row-gap: 2px;
+  }
+
+  .cdx-slash-item-desc {
+    white-space: normal;
+    text-overflow: unset;
   }
 }

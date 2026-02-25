@@ -11,7 +11,12 @@ import type {
   ThreadListResponse,
 } from "@lcwa/shared-types";
 import { groupThreadsByProject, pickDefaultProjectKey, projectLabelFromKey } from "./lib/projects";
-import { parseSlashCommand } from "./lib/slash-commands";
+import {
+  applySlashSuggestion,
+  getSlashSuggestions,
+  parseSlashCommand,
+  type KnownSlashCommand,
+} from "./lib/slash-commands";
 import { formatEffortLabel } from "./lib/thread-logic";
 
 type UiState = {
@@ -53,6 +58,8 @@ export default function HomePage() {
   const [modelCatalogError, setModelCatalogError] = useState<string | null>(null);
   const [model, setModel] = useState<string>(FALLBACK_MODEL_OPTIONS[0]?.value ?? "gpt-5.3-codex");
   const [thinkingEffort, setThinkingEffort] = useState<string>("high");
+  const [activeSlashIndex, setActiveSlashIndex] = useState(0);
+  const [slashMenuDismissed, setSlashMenuDismissed] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -162,6 +169,19 @@ export default function HomePage() {
     : online
       ? "Gateway connected"
       : "Gateway unavailable";
+  const slashSuggestions = useMemo(
+    () => (slashMenuDismissed ? [] : getSlashSuggestions(composerText)),
+    [composerText, slashMenuDismissed],
+  );
+  const slashMenuOpen = slashSuggestions.length > 0;
+
+  useEffect(() => {
+    if (!slashMenuOpen) {
+      setActiveSlashIndex(0);
+      return;
+    }
+    setActiveSlashIndex((prev) => Math.min(prev, slashSuggestions.length - 1));
+  }, [slashMenuOpen, slashSuggestions.length]);
 
   useEffect(() => {
     const savedModel = window.localStorage.getItem(MODEL_STORAGE_KEY);
@@ -378,6 +398,12 @@ export default function HomePage() {
     }
   }
 
+  function applyComposerSlash(command: KnownSlashCommand): void {
+    setComposerText((previous) => applySlashSuggestion(previous, command));
+    setSlashMenuDismissed(false);
+    setActiveSlashIndex(0);
+  }
+
   return (
     <div className={`cdx-app ${sidebarOpen ? "" : "cdx-app--sidebar-collapsed"}`}>
       <header className="cdx-topbar">
@@ -482,7 +508,10 @@ export default function HomePage() {
                   key={prompt}
                   type="button"
                   className="cdx-explore-card"
-                  onClick={() => setComposerText(prompt)}
+                  onClick={() => {
+                    setComposerText(prompt);
+                    setSlashMenuDismissed(false);
+                  }}
                 >
                   {prompt}
                 </button>
@@ -494,8 +523,60 @@ export default function HomePage() {
           <section className="cdx-composer">
             <textarea
               value={composerText}
-              onChange={(event) => setComposerText(event.target.value)}
+              onChange={(event) => {
+                setComposerText(event.target.value);
+                setSlashMenuDismissed(false);
+              }}
               onKeyDown={(event) => {
+                if (slashMenuOpen && event.key === "ArrowDown") {
+                  event.preventDefault();
+                  setActiveSlashIndex((prev) => (prev + 1) % slashSuggestions.length);
+                  return;
+                }
+                if (slashMenuOpen && event.key === "ArrowUp") {
+                  event.preventDefault();
+                  setActiveSlashIndex(
+                    (prev) => (prev - 1 + slashSuggestions.length) % slashSuggestions.length,
+                  );
+                  return;
+                }
+                if (
+                  slashMenuOpen &&
+                  event.key === "Enter" &&
+                  !event.shiftKey &&
+                  !event.metaKey &&
+                  !event.ctrlKey &&
+                  !event.altKey &&
+                  !event.nativeEvent.isComposing
+                ) {
+                  event.preventDefault();
+                  const selected = slashSuggestions[activeSlashIndex] ?? slashSuggestions[0];
+                  if (selected) {
+                    applyComposerSlash(selected.command);
+                  }
+                  return;
+                }
+                if (
+                  slashMenuOpen &&
+                  event.key === "Tab" &&
+                  !event.shiftKey &&
+                  !event.metaKey &&
+                  !event.ctrlKey &&
+                  !event.altKey &&
+                  !event.nativeEvent.isComposing
+                ) {
+                  event.preventDefault();
+                  const selected = slashSuggestions[activeSlashIndex] ?? slashSuggestions[0];
+                  if (selected) {
+                    applyComposerSlash(selected.command);
+                  }
+                  return;
+                }
+                if (slashMenuOpen && event.key === "Escape") {
+                  event.preventDefault();
+                  setSlashMenuDismissed(true);
+                  return;
+                }
                 if (event.key !== "Enter" || event.shiftKey) {
                   return;
                 }
@@ -514,6 +595,29 @@ export default function HomePage() {
               placeholder="Ask Codex anything, @ to add files, / for commands"
               rows={3}
             />
+            {slashMenuOpen ? (
+              <div className="cdx-slash-menu" role="listbox" aria-label="Slash command suggestions" data-testid="home-slash-menu">
+                {slashSuggestions.map((item, index) => {
+                  const active = index === activeSlashIndex;
+                  return (
+                    <button
+                      key={item.command}
+                      type="button"
+                      role="option"
+                      aria-selected={active}
+                      className={`cdx-slash-item ${active ? "is-active" : ""}`}
+                      onMouseDown={(event) => {
+                        event.preventDefault();
+                        applyComposerSlash(item.command);
+                      }}
+                    >
+                      <span className="cdx-slash-item-command">{item.title}</span>
+                      <span className="cdx-slash-item-desc">{item.description}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            ) : null}
             <div className="cdx-composer-row">
               <button type="button" className="cdx-toolbar-btn" disabled>
                 Add files and more
