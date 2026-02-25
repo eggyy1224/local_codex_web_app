@@ -38,6 +38,69 @@ describe("thread logic helpers", () => {
     });
   });
 
+  it("maps plan/review/token usage events to timeline items", () => {
+    const planDelta: GatewayEvent = {
+      seq: 20,
+      serverTs: "2026-01-01T00:00:00.000Z",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      kind: "item",
+      name: "item/plan/delta",
+      payload: { delta: "Step 1" },
+    };
+    const reviewItem: GatewayEvent = {
+      seq: 21,
+      serverTs: "2026-01-01T00:00:01.000Z",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      kind: "item",
+      name: "item/completed",
+      payload: {
+        item: {
+          type: "enteredReviewMode",
+          id: "item-1",
+          review: "start review",
+          turnId: "turn-1",
+        },
+      },
+    };
+    const tokenUsage: GatewayEvent = {
+      seq: 22,
+      serverTs: "2026-01-01T00:00:02.000Z",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      kind: "thread",
+      name: "thread/tokenUsage/updated",
+      payload: {
+        turnId: "turn-1",
+        tokenUsage: {
+          total: {
+            totalTokens: 100,
+            inputTokens: 70,
+            outputTokens: 30,
+          },
+          modelContextWindow: 128000,
+        },
+      },
+    };
+
+    expect(timelineItemFromGatewayEvent(planDelta)).toMatchObject({
+      type: "reasoning",
+      title: "Plan",
+      text: "Step 1",
+    });
+    expect(timelineItemFromGatewayEvent(reviewItem)).toMatchObject({
+      type: "status",
+      title: "Entered review mode",
+      text: "start review",
+    });
+    expect(timelineItemFromGatewayEvent(tokenUsage)).toMatchObject({
+      type: "status",
+      title: "Token usage updated",
+      text: "total 100 · input 70 · output 30 · window 128000",
+    });
+  });
+
   it("aggregates conversation turns with delta merge and dedupe", () => {
     const items: ThreadTimelineItem[] = [
       {

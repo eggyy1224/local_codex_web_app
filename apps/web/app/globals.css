@@ -383,6 +383,18 @@ textarea {
   flex-wrap: wrap;
 }
 
+.cdx-status-banner {
+  width: min(1120px, calc(100% - 24px));
+  margin: 8px auto 0;
+  border: 1px solid var(--border-soft);
+  border-radius: 12px;
+  background: rgba(30, 30, 30, 0.82);
+  padding: 8px 10px;
+  font-size: 12px;
+  display: grid;
+  gap: 4px;
+}
+
 .cdx-status {
   display: inline-flex;
   align-items: center;

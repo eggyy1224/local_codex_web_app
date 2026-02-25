@@ -60,6 +60,26 @@ function normalizeText(value: string | null | undefined): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
+function formatTokenUsageStatus(payload: Record<string, unknown> | null): string | null {
+  const tokenUsage = asRecord(payload?.tokenUsage);
+  const total = asRecord(tokenUsage?.total);
+  const modelContextWindow = tokenUsage?.modelContextWindow;
+  const totalTokens = typeof total?.totalTokens === "number" ? total.totalTokens : null;
+  const inputTokens = typeof total?.inputTokens === "number" ? total.inputTokens : null;
+  const outputTokens = typeof total?.outputTokens === "number" ? total.outputTokens : null;
+  const contextWindow = typeof modelContextWindow === "number" ? modelContextWindow : null;
+  const parts = [
+    totalTokens !== null ? `total ${totalTokens}` : null,
+    inputTokens !== null ? `input ${inputTokens}` : null,
+    outputTokens !== null ? `output ${outputTokens}` : null,
+    contextWindow !== null ? `window ${contextWindow}` : null,
+  ].filter((part): part is string => Boolean(part));
+  if (parts.length === 0) {
+    return null;
+  }
+  return parts.join(" · ");
+}
+
 function extractUserMessageText(item: Record<string, unknown>): string | null {
   const content = item.content;
   if (!Array.isArray(content)) {
@@ -214,6 +234,21 @@ export function timelineItemFromGatewayEvent(event: GatewayEvent): ThreadTimelin
     };
   }
 
+  if (event.name === "thread/tokenUsage/updated") {
+    const itemTurnId = readString(payload, "turnId") ?? readString(payload, "turn_id") ?? event.turnId;
+    return {
+      id: `${eventId}-token-usage`,
+      ts: event.serverTs,
+      turnId: itemTurnId,
+      type: "status",
+      title: "Token usage updated",
+      text: formatTokenUsageStatus(payload),
+      rawType: event.name,
+      toolName: null,
+      callId: null,
+    };
+  }
+
   if (event.name.includes("requestApproval")) {
     const reason = readString(payload, "reason");
     const command = readString(payload, "command");
@@ -246,6 +281,26 @@ export function timelineItemFromGatewayEvent(event: GatewayEvent): ThreadTimelin
       turnId: itemTurnId,
       type: "assistantMessage",
       title: "Assistant",
+      text,
+      rawType: event.name,
+      toolName: null,
+      callId,
+    };
+  }
+
+  if (event.name === "item/plan/delta") {
+    const text = normalizeText(readString(payload, "delta") ?? readString(payload, "text"));
+    if (!text) {
+      return null;
+    }
+    const itemTurnId = readString(payload, "turn_id") ?? readString(payload, "turnId") ?? event.turnId;
+    const callId = readString(payload, "itemId") ?? readString(payload, "item_id");
+    return {
+      id: `${eventId}-plan-delta`,
+      ts: event.serverTs,
+      turnId: itemTurnId,
+      type: "reasoning",
+      title: "Plan",
       text,
       rawType: event.name,
       toolName: null,
@@ -360,6 +415,38 @@ export function timelineItemFromGatewayEvent(event: GatewayEvent): ThreadTimelin
             callId,
           }
         : null;
+    }
+
+    if (itemType === "plan") {
+      const text = normalizeText(readString(item, "text"));
+      return text
+        ? {
+            id: `${eventId}-plan`,
+            ts: event.serverTs,
+            turnId: itemTurnId,
+            type: "reasoning",
+            title: "Plan",
+            text,
+            rawType: itemType,
+            toolName: null,
+            callId,
+          }
+        : null;
+    }
+
+    if (itemType === "enteredReviewMode" || itemType === "exitedReviewMode") {
+      const reviewText = normalizeText(readString(item, "review"));
+      return {
+        id: `${eventId}-${itemType}`,
+        ts: event.serverTs,
+        turnId: itemTurnId,
+        type: "status",
+        title: itemType === "enteredReviewMode" ? "Entered review mode" : "Exited review mode",
+        text: reviewText,
+        rawType: itemType,
+        toolName: null,
+        callId,
+      };
     }
 
     if (itemType === "function_call" || itemType === "custom_tool_call" || itemType === "web_search_call") {

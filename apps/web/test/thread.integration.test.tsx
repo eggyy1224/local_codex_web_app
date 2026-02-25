@@ -1,10 +1,13 @@
 import React from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { http, HttpResponse } from "msw";
 import { server } from "./msw/server";
 
 const pushMock = vi.fn();
+const replaceMock = vi.fn();
+let pathnameValue = "/threads/thread-1";
+let searchParamsValue = new URLSearchParams();
 
 class MockEventSource {
   static instances: MockEventSource[] = [];
@@ -35,7 +38,9 @@ class MockEventSource {
 }
 
 vi.mock("next/navigation", () => ({
-  useRouter: () => ({ push: pushMock }),
+  useRouter: () => ({ push: pushMock, replace: replaceMock }),
+  usePathname: () => pathnameValue,
+  useSearchParams: () => searchParamsValue,
 }));
 
 vi.mock("next/link", () => ({
@@ -53,6 +58,14 @@ vi.mock("../app/threads/[id]/TerminalDock", () => ({
 import ThreadPage from "../app/threads/[id]/page";
 
 describe("Thread page integration", () => {
+  beforeEach(() => {
+    pushMock.mockReset();
+    replaceMock.mockReset();
+    pathnameValue = "/threads/thread-1";
+    searchParamsValue = new URLSearchParams();
+    MockEventSource.instances.length = 0;
+  });
+
   it("loads thread detail + approvals + timeline + list + context", async () => {
     vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
 
@@ -314,5 +327,248 @@ describe("Thread page integration", () => {
 
     es.onerror?.(new Event("error"));
     await screen.findByText("Reconnecting");
+  });
+
+  it("supports /plan slash command and Shift+Tab mode toggle", async () => {
+    vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+    const turnCalls: Array<unknown> = [];
+
+    server.use(
+      http.get("http://127.0.0.1:8787/api/threads/:id", ({ params }) =>
+        HttpResponse.json({
+          thread: {
+            id: String(params.id),
+            title: "Main Thread",
+            preview: "Preview",
+            status: "idle",
+            createdAt: null,
+            updatedAt: null,
+          },
+          turns: [],
+          nextCursor: null,
+        }),
+      ),
+      http.get("http://127.0.0.1:8787/api/threads/:id/approvals/pending", () => HttpResponse.json({ data: [] })),
+      http.get("http://127.0.0.1:8787/api/threads", () => HttpResponse.json({ data: [], nextCursor: null })),
+      http.get("http://127.0.0.1:8787/api/threads/:id/timeline", () => HttpResponse.json({ data: [] })),
+      http.get("http://127.0.0.1:8787/api/threads/:id/context", () =>
+        HttpResponse.json({
+          threadId: "thread-1",
+          cwd: "/tmp/project",
+          resolvedCwd: "/tmp/project",
+          isFallback: false,
+          source: "projection",
+        }),
+      ),
+      http.get("http://127.0.0.1:8787/api/models", () => HttpResponse.json({ data: [] })),
+      http.post("http://127.0.0.1:8787/api/threads/:id/turns", async ({ request }) => {
+        turnCalls.push(await request.json());
+        return HttpResponse.json({ turnId: "turn-plan-1" });
+      }),
+      http.post("http://127.0.0.1:8787/api/threads/:id/control", () => HttpResponse.json({ ok: true })),
+    );
+
+    render(<ThreadPage params={Promise.resolve({ id: "thread-1" })} />);
+
+    await screen.findByText("mode: default");
+    const textarea = await screen.findByTestId("turn-input");
+    fireEvent.change(textarea, { target: { value: "/plan draft plan now" } });
+    fireEvent.keyDown(textarea, { key: "Enter" });
+
+    await waitFor(() => {
+      expect(turnCalls).toHaveLength(1);
+      expect(screen.getByTestId("collaboration-mode")).toHaveTextContent("mode: plan");
+    });
+    expect(turnCalls[0]).toMatchObject({
+      input: [{ type: "text", text: "draft plan now" }],
+      options: { collaborationMode: "plan" },
+    });
+
+    fireEvent.keyDown(textarea, { key: "Tab", shiftKey: true });
+    await waitFor(() => {
+      expect(screen.getByTestId("collaboration-mode")).toHaveTextContent("mode: default");
+    });
+  });
+
+  it("supports /review and /status slash commands", async () => {
+    vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+    let reviewCalls = 0;
+    let rateLimitCalls = 0;
+
+    server.use(
+      http.get("http://127.0.0.1:8787/api/threads/:id", ({ params }) =>
+        HttpResponse.json({
+          thread: {
+            id: String(params.id),
+            title: "Main Thread",
+            preview: "Preview",
+            status: "idle",
+            createdAt: null,
+            updatedAt: null,
+          },
+          turns: [],
+          nextCursor: null,
+        }),
+      ),
+      http.get("http://127.0.0.1:8787/api/threads/:id/approvals/pending", () => HttpResponse.json({ data: [] })),
+      http.get("http://127.0.0.1:8787/api/threads", () => HttpResponse.json({ data: [], nextCursor: null })),
+      http.get("http://127.0.0.1:8787/api/threads/:id/timeline", () => HttpResponse.json({ data: [] })),
+      http.get("http://127.0.0.1:8787/api/threads/:id/context", () =>
+        HttpResponse.json({
+          threadId: "thread-1",
+          cwd: "/tmp/project",
+          resolvedCwd: "/tmp/project",
+          isFallback: false,
+          source: "projection",
+        }),
+      ),
+      http.get("http://127.0.0.1:8787/api/models", () => HttpResponse.json({ data: [] })),
+      http.post("http://127.0.0.1:8787/api/threads/:id/review", async ({ request }) => {
+        reviewCalls += 1;
+        const payload = await request.json();
+        expect(payload).toEqual({ instructions: "focus risky diff" });
+        return HttpResponse.json({ turnId: "turn-review-1", reviewThreadId: "thread-1" });
+      }),
+      http.get("http://127.0.0.1:8787/api/account/rate-limits", () => {
+        rateLimitCalls += 1;
+        return HttpResponse.json({
+          rateLimits: {
+            limitId: "codex",
+            limitName: null,
+            primary: {
+              usedPercent: 10,
+              windowDurationMins: 15,
+              resetsAt: 1_730_947_200,
+            },
+            secondary: null,
+          },
+          rateLimitsByLimitId: {},
+        });
+      }),
+      http.post("http://127.0.0.1:8787/api/threads/:id/control", () => HttpResponse.json({ ok: true })),
+    );
+
+    render(<ThreadPage params={Promise.resolve({ id: "thread-1" })} />);
+    const textarea = await screen.findByTestId("turn-input");
+
+    fireEvent.change(textarea, { target: { value: "/review focus risky diff" } });
+    fireEvent.keyDown(textarea, { key: "Enter" });
+    await waitFor(() => {
+      expect(reviewCalls).toBe(1);
+    });
+
+    fireEvent.change(textarea, { target: { value: "/status" } });
+    fireEvent.keyDown(textarea, { key: "Enter" });
+    await waitFor(() => {
+      expect(rateLimitCalls).toBe(1);
+      expect(screen.getByTestId("status-banner")).toBeInTheDocument();
+      expect(screen.getByText(/thread: thread-1/)).toBeInTheDocument();
+    });
+  });
+
+  it("treats unknown slash as plain text input", async () => {
+    vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+    const turnCalls: Array<unknown> = [];
+
+    server.use(
+      http.get("http://127.0.0.1:8787/api/threads/:id", ({ params }) =>
+        HttpResponse.json({
+          thread: {
+            id: String(params.id),
+            title: "Main Thread",
+            preview: "Preview",
+            status: "idle",
+            createdAt: null,
+            updatedAt: null,
+          },
+          turns: [],
+          nextCursor: null,
+        }),
+      ),
+      http.get("http://127.0.0.1:8787/api/threads/:id/approvals/pending", () => HttpResponse.json({ data: [] })),
+      http.get("http://127.0.0.1:8787/api/threads", () => HttpResponse.json({ data: [], nextCursor: null })),
+      http.get("http://127.0.0.1:8787/api/threads/:id/timeline", () => HttpResponse.json({ data: [] })),
+      http.get("http://127.0.0.1:8787/api/threads/:id/context", () =>
+        HttpResponse.json({
+          threadId: "thread-1",
+          cwd: "/tmp/project",
+          resolvedCwd: "/tmp/project",
+          isFallback: false,
+          source: "projection",
+        }),
+      ),
+      http.get("http://127.0.0.1:8787/api/models", () => HttpResponse.json({ data: [] })),
+      http.post("http://127.0.0.1:8787/api/threads/:id/turns", async ({ request }) => {
+        turnCalls.push(await request.json());
+        return HttpResponse.json({ turnId: "turn-1" });
+      }),
+      http.post("http://127.0.0.1:8787/api/threads/:id/control", () => HttpResponse.json({ ok: true })),
+    );
+
+    render(<ThreadPage params={Promise.resolve({ id: "thread-1" })} />);
+    const textarea = await screen.findByTestId("turn-input");
+    fireEvent.change(textarea, { target: { value: "/foo bar" } });
+    fireEvent.keyDown(textarea, { key: "Enter" });
+
+    await waitFor(() => {
+      expect(turnCalls).toHaveLength(1);
+    });
+    expect(turnCalls[0]).toMatchObject({
+      input: [{ type: "text", text: "/foo bar" }],
+    });
+  });
+
+  it("applies mode/status query params on entry", async () => {
+    vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+    searchParamsValue = new URLSearchParams("mode=plan&status=1");
+    let rateLimitCalls = 0;
+
+    server.use(
+      http.get("http://127.0.0.1:8787/api/threads/:id", ({ params }) =>
+        HttpResponse.json({
+          thread: {
+            id: String(params.id),
+            title: "Main Thread",
+            preview: "Preview",
+            status: "idle",
+            createdAt: null,
+            updatedAt: null,
+          },
+          turns: [],
+          nextCursor: null,
+        }),
+      ),
+      http.get("http://127.0.0.1:8787/api/threads/:id/approvals/pending", () => HttpResponse.json({ data: [] })),
+      http.get("http://127.0.0.1:8787/api/threads", () => HttpResponse.json({ data: [], nextCursor: null })),
+      http.get("http://127.0.0.1:8787/api/threads/:id/timeline", () => HttpResponse.json({ data: [] })),
+      http.get("http://127.0.0.1:8787/api/threads/:id/context", () =>
+        HttpResponse.json({
+          threadId: "thread-1",
+          cwd: "/tmp/project",
+          resolvedCwd: "/tmp/project",
+          isFallback: false,
+          source: "projection",
+        }),
+      ),
+      http.get("http://127.0.0.1:8787/api/models", () => HttpResponse.json({ data: [] })),
+      http.get("http://127.0.0.1:8787/api/account/rate-limits", () => {
+        rateLimitCalls += 1;
+        return HttpResponse.json({
+          rateLimits: null,
+          rateLimitsByLimitId: null,
+          error: "unavailable",
+        });
+      }),
+      http.post("http://127.0.0.1:8787/api/threads/:id/control", () => HttpResponse.json({ ok: true })),
+    );
+
+    render(<ThreadPage params={Promise.resolve({ id: "thread-1" })} />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("collaboration-mode")).toHaveTextContent("mode: plan");
+      expect(screen.getByTestId("status-banner")).toBeInTheDocument();
+      expect(rateLimitCalls).toBe(1);
+    });
+    expect(replaceMock).toHaveBeenCalled();
   });
 });

@@ -10,10 +10,13 @@ import {
   type CSSProperties,
   type PointerEvent as ReactPointerEvent,
 } from "react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type {
+  AccountRateLimitsResponse,
   ApprovalDecisionRequest,
   ApprovalView,
+  CreateReviewRequest,
+  CreateReviewResponse,
   GatewayEvent,
   ModelOption,
   ModelsResponse,
@@ -35,6 +38,7 @@ import {
   timelineItemFromGatewayEvent,
   truncateText,
 } from "../../lib/thread-logic";
+import { parseSlashCommand } from "../../lib/slash-commands";
 import TerminalDock from "./TerminalDock";
 
 type ConnectionState = "connecting" | "connected" | "reconnecting" | "lagging";
@@ -44,12 +48,27 @@ type Props = {
 };
 
 type PendingApprovalCard = ApprovalView;
+type CollaborationModeKind = "plan" | "default";
+type ThreadTokenUsageSummary = {
+  threadId: string;
+  turnId: string | null;
+  totalTokens: number;
+  inputTokens: number;
+  outputTokens: number;
+  modelContextWindow: number | null;
+  updatedAt: string;
+};
+type StatusBanner = {
+  generatedAt: string;
+  lines: string[];
+};
 
 const gatewayUrl = process.env.NEXT_PUBLIC_GATEWAY_URL ?? "http://127.0.0.1:8787";
 const SIDEBAR_SCROLL_STORAGE_KEY = "lcwa.sidebar.scroll.v1";
 const PERMISSION_MODE_STORAGE_KEY = "lcwa.permission.mode.v1";
 const MODEL_STORAGE_KEY = "lcwa.model.v1";
 const THINKING_EFFORT_STORAGE_KEY = "lcwa.thinking.effort.v1";
+const THREAD_MODE_STORAGE_KEY_PREFIX = "lcwa.thread.mode.v1";
 const TIMELINE_STICKY_THRESHOLD_PX = 56;
 const ACTIVE_THREAD_SCROLL_SNAP_THRESHOLD_PX = 24;
 const TERMINAL_WIDTH_STORAGE_KEY = "lcwa.terminal.width.v1";
@@ -133,13 +152,70 @@ function approvalFromEvent(event: GatewayEvent): PendingApprovalCard | null {
   };
 }
 
+function isCollaborationModeKind(value: string | null): value is CollaborationModeKind {
+  return value === "plan" || value === "default";
+}
+
+function threadModeStorageKey(threadId: string): string {
+  return `${THREAD_MODE_STORAGE_KEY_PREFIX}.${threadId}`;
+}
+
+function tokenUsageFromEvent(event: GatewayEvent): ThreadTokenUsageSummary | null {
+  if (event.name !== "thread/tokenUsage/updated") {
+    return null;
+  }
+  const payload = asRecord(event.payload);
+  const tokenUsage = asRecord(payload?.tokenUsage);
+  const total = asRecord(tokenUsage?.total);
+  const totalTokens = total?.totalTokens;
+  const inputTokens = total?.inputTokens;
+  const outputTokens = total?.outputTokens;
+  if (
+    typeof totalTokens !== "number" ||
+    typeof inputTokens !== "number" ||
+    typeof outputTokens !== "number"
+  ) {
+    return null;
+  }
+  const turnId = readString(payload, "turnId") ?? readString(payload, "turn_id");
+  const modelContextWindow =
+    typeof tokenUsage?.modelContextWindow === "number" ? tokenUsage.modelContextWindow : null;
+  return {
+    threadId: event.threadId,
+    turnId,
+    totalTokens,
+    inputTokens,
+    outputTokens,
+    modelContextWindow,
+    updatedAt: event.serverTs,
+  };
+}
+
+function formatRateLimitStatus(response: AccountRateLimitsResponse): string {
+  if (response.error || !response.rateLimits) {
+    return "rate limits: unavailable";
+  }
+  const primary = response.rateLimits.primary;
+  if (!primary) {
+    return "rate limits: unavailable";
+  }
+  const limitName = response.rateLimits.limitName ?? response.rateLimits.limitId ?? "default";
+  const resetAt = new Date(primary.resetsAt * 1000);
+  const resetLabel = Number.isNaN(resetAt.getTime()) ? String(primary.resetsAt) : resetAt.toLocaleTimeString();
+  return `rate limits: ${limitName} ${primary.usedPercent}% (reset ${resetLabel})`;
+}
+
 export default function ThreadPage({ params }: Props) {
   const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const timelineRef = useRef<HTMLElement | null>(null);
   const timelineStickyRef = useRef(true);
   const timelineInitializedRef = useRef(false);
   const sidebarRef = useRef<HTMLElement | null>(null);
   const activeThreadCardRef = useRef<HTMLElement | null>(null);
+  const modeInitializedRef = useRef(false);
+  const statusQueryHandledRef = useRef(false);
   const [threadId, setThreadId] = useState<string>("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -153,6 +229,7 @@ export default function ThreadPage({ params }: Props) {
   const [modelCatalogError, setModelCatalogError] = useState<string | null>(null);
   const [model, setModel] = useState<string>(FALLBACK_MODEL_OPTIONS[0]?.value ?? "gpt-5.3-codex");
   const [thinkingEffort, setThinkingEffort] = useState<string>("high");
+  const [collaborationMode, setCollaborationMode] = useState<CollaborationModeKind>("default");
   const [permissionMode, setPermissionMode] = useState<TurnPermissionMode>("local");
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -171,6 +248,8 @@ export default function ThreadPage({ params }: Props) {
   const [isMobileViewport, setIsMobileViewport] = useState(false);
   const [isCompactViewport, setIsCompactViewport] = useState(false);
   const [showAllTurns, setShowAllTurns] = useState(false);
+  const [latestTokenUsage, setLatestTokenUsage] = useState<ThreadTokenUsageSummary | null>(null);
+  const [statusBanner, setStatusBanner] = useState<StatusBanner | null>(null);
   const modelOptions = useMemo(() => {
     if (modelCatalog.length === 0) {
       return FALLBACK_MODEL_OPTIONS.map((option, index) => ({
@@ -231,9 +310,65 @@ export default function ThreadPage({ params }: Props) {
     return FALLBACK_THINKING_EFFORT_OPTIONS;
   }, [selectedModelCatalog]);
 
+  const replaceWithoutQueryParams = useCallback(
+    (keys: string[]) => {
+      const current = new URLSearchParams(searchParams.toString());
+      let changed = false;
+      for (const key of keys) {
+        if (current.has(key)) {
+          current.delete(key);
+          changed = true;
+        }
+      }
+      if (!changed) {
+        return;
+      }
+      const query = current.toString();
+      router.replace(query.length > 0 ? `${pathname}?${query}` : pathname);
+    },
+    [pathname, router, searchParams],
+  );
+
+  const applyCollaborationMode = useCallback(
+    (nextMode: CollaborationModeKind) => {
+      setCollaborationMode(nextMode);
+      if (threadId) {
+        window.localStorage.setItem(threadModeStorageKey(threadId), nextMode);
+      }
+      return nextMode;
+    },
+    [threadId],
+  );
+
   useEffect(() => {
     params.then((value) => setThreadId(value.id));
   }, [params]);
+
+  useEffect(() => {
+    modeInitializedRef.current = false;
+    statusQueryHandledRef.current = false;
+    setLatestTokenUsage(null);
+    setStatusBanner(null);
+  }, [threadId]);
+
+  useEffect(() => {
+    if (!threadId || modeInitializedRef.current) {
+      return;
+    }
+
+    const modeFromQuery = searchParams.get("mode");
+    const nextModeFromQuery = isCollaborationModeKind(modeFromQuery) ? modeFromQuery : null;
+    const savedMode = window.localStorage.getItem(threadModeStorageKey(threadId));
+    const nextModeFromStorage = isCollaborationModeKind(savedMode) ? savedMode : null;
+    const nextMode = nextModeFromQuery ?? nextModeFromStorage ?? "default";
+
+    applyCollaborationMode(nextMode);
+    modeInitializedRef.current = true;
+
+    if (nextModeFromQuery) {
+      replaceWithoutQueryParams(["mode"]);
+    }
+  }, [applyCollaborationMode, replaceWithoutQueryParams, searchParams, threadId]);
 
   useEffect(() => {
     const mediaQuery = window.matchMedia("(max-width: 1024px)");
@@ -513,6 +648,10 @@ export default function ThreadPage({ params }: Props) {
         setLastEventAtMs(Date.now());
         reconnectAttempt = 0;
         setConnectionState("connected");
+        const tokenUsage = tokenUsageFromEvent(payload);
+        if (tokenUsage) {
+          setLatestTokenUsage(tokenUsage);
+        }
 
         if (payload.name === "approval/decision") {
           const decisionPayload = asRecord(payload.payload);
@@ -902,53 +1041,214 @@ export default function ThreadPage({ params }: Props) {
     };
   }, [isMobileViewport]);
 
+  const toggleCollaborationMode = useCallback((): CollaborationModeKind => {
+    const nextMode: CollaborationModeKind = collaborationMode === "plan" ? "default" : "plan";
+    applyCollaborationMode(nextMode);
+    return nextMode;
+  }, [applyCollaborationMode, collaborationMode]);
+
+  const submitTurnText = useCallback(
+    async (
+      rawText: string,
+      modeOverride?: CollaborationModeKind,
+    ): Promise<boolean> => {
+      const text = rawText.trim();
+      if (!text || !threadId || submitting) {
+        return false;
+      }
+
+      setSubmitting(true);
+      setSubmitError(null);
+
+      try {
+        const modeForTurn = modeOverride ?? collaborationMode;
+        const options: {
+          cwd?: string;
+          model: string;
+          effort: string;
+          permissionMode: TurnPermissionMode;
+          collaborationMode?: "plan";
+        } = {
+          model,
+          effort: thinkingEffort,
+          permissionMode,
+        };
+        if (activeProjectKey !== "unknown") {
+          options.cwd = activeProjectKey;
+        }
+        if (modeForTurn === "plan") {
+          options.collaborationMode = "plan";
+        }
+
+        const res = await fetch(`${gatewayUrl}/api/threads/${threadId}/turns`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            input: [{ type: "text", text }],
+            options,
+          }),
+        });
+
+        if (!res.ok) {
+          const payload = (await res.json().catch(() => null)) as { message?: string } | null;
+          throw new Error(payload?.message ?? `turn submit http ${res.status}`);
+        }
+
+        await res.json();
+        return true;
+      } catch (submitErr) {
+        setSubmitError(submitErr instanceof Error ? submitErr.message : "submit failed");
+        return false;
+      } finally {
+        setSubmitting(false);
+      }
+    },
+    [activeProjectKey, collaborationMode, model, permissionMode, thinkingEffort, submitting, threadId],
+  );
+
+  const startReview = useCallback(
+    async (instructions?: string): Promise<boolean> => {
+      if (!threadId || submitting) {
+        return false;
+      }
+      setSubmitting(true);
+      setSubmitError(null);
+      try {
+        const payload: CreateReviewRequest =
+          instructions && instructions.trim().length > 0
+            ? { instructions: instructions.trim() }
+            : {};
+        const res = await fetch(`${gatewayUrl}/api/threads/${threadId}/review`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(payload),
+        });
+        if (!res.ok) {
+          const body = (await res.json().catch(() => null)) as { message?: string } | null;
+          throw new Error(body?.message ?? `review http ${res.status}`);
+        }
+        await res.json() as CreateReviewResponse;
+        return true;
+      } catch (reviewErr) {
+        setSubmitError(reviewErr instanceof Error ? reviewErr.message : "review failed");
+        return false;
+      } finally {
+        setSubmitting(false);
+      }
+    },
+    [submitting, threadId],
+  );
+
+  const runStatusCommand = useCallback(async (): Promise<boolean> => {
+    if (!threadId) {
+      return false;
+    }
+    setSubmitError(null);
+    try {
+      const rateLimitRes = await fetch(`${gatewayUrl}/api/account/rate-limits`);
+      if (!rateLimitRes.ok) {
+        throw new Error(`rate-limits http ${rateLimitRes.status}`);
+      }
+      const rateLimitPayload = (await rateLimitRes.json()) as AccountRateLimitsResponse;
+      const usageLine = latestTokenUsage
+        ? `context: total ${latestTokenUsage.totalTokens}, input ${latestTokenUsage.inputTokens}, output ${latestTokenUsage.outputTokens}${
+            latestTokenUsage.modelContextWindow !== null
+              ? `, window ${latestTokenUsage.modelContextWindow}`
+              : ""
+          }`
+        : "context: n/a";
+      const banner: StatusBanner = {
+        generatedAt: new Date().toISOString(),
+        lines: [
+          `thread: ${threadId}`,
+          usageLine,
+          formatRateLimitStatus(rateLimitPayload),
+        ],
+      };
+      setStatusBanner(banner);
+      return true;
+    } catch (statusErr) {
+      setSubmitError(statusErr instanceof Error ? statusErr.message : "status failed");
+      return false;
+    }
+  }, [latestTokenUsage, threadId]);
+
+  const handleSlashCommand = useCallback(
+    async (rawText: string): Promise<boolean> => {
+      const parsed = parseSlashCommand(rawText);
+      if (parsed.type !== "known") {
+        return false;
+      }
+
+      if (parsed.command === "plan" || parsed.command === "plan-mode") {
+        const nextMode = toggleCollaborationMode();
+        if (parsed.args.length > 0) {
+          const sent = await submitTurnText(parsed.args, nextMode);
+          if (sent) {
+            setPrompt("");
+          }
+          return true;
+        }
+        setPrompt("");
+        return true;
+      }
+
+      if (parsed.command === "review") {
+        const ok = await startReview(parsed.args);
+        if (ok) {
+          setPrompt("");
+        }
+        return true;
+      }
+
+      if (parsed.command === "status") {
+        const ok = await runStatusCommand();
+        if (ok) {
+          setPrompt("");
+        }
+        return true;
+      }
+
+      return false;
+    },
+    [runStatusCommand, startReview, submitTurnText, toggleCollaborationMode],
+  );
+
   async function sendTurn(): Promise<void> {
     const text = prompt.trim();
     if (!text || !threadId || submitting) {
       return;
     }
 
-    setSubmitting(true);
-    setSubmitError(null);
+    const handled = await handleSlashCommand(text);
+    if (handled) {
+      return;
+    }
 
-    try {
-      const options: {
-        cwd?: string;
-        model: string;
-        effort: string;
-        permissionMode: TurnPermissionMode;
-      } = {
-        model,
-        effort: thinkingEffort,
-        permissionMode,
-      };
-      if (activeProjectKey !== "unknown") {
-        options.cwd = activeProjectKey;
-      }
-
-      const res = await fetch(`${gatewayUrl}/api/threads/${threadId}/turns`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          input: [{ type: "text", text }],
-          options,
-        }),
-      });
-
-      if (!res.ok) {
-        throw new Error(`turn submit http ${res.status}`);
-      }
-
-      await res.json();
+    const sent = await submitTurnText(text);
+    if (sent) {
       setPrompt("");
-    } catch (submitErr) {
-      setSubmitError(submitErr instanceof Error ? submitErr.message : "submit failed");
-    } finally {
-      setSubmitting(false);
     }
   }
+
+  useEffect(() => {
+    if (!threadId || statusQueryHandledRef.current) {
+      return;
+    }
+    if (searchParams.get("status") !== "1") {
+      return;
+    }
+
+    statusQueryHandledRef.current = true;
+    void (async () => {
+      await runStatusCommand();
+      replaceWithoutQueryParams(["status"]);
+    })();
+  }, [replaceWithoutQueryParams, runStatusCommand, searchParams, threadId]);
 
   async function copyMessage(text: string): Promise<void> {
     if (!text) {
@@ -1014,6 +1314,14 @@ export default function ThreadPage({ params }: Props) {
           </button>
         </div>
       </header>
+
+      {statusBanner ? (
+        <div className="cdx-status-banner" data-testid="status-banner">
+          <span>{statusBanner.lines[0]}</span>
+          <span>{statusBanner.lines[1]}</span>
+          <span>{statusBanner.lines[2]}</span>
+        </div>
+      ) : null}
 
       <div
         className={`cdx-workspace cdx-workspace--thread ${
@@ -1082,6 +1390,14 @@ export default function ThreadPage({ params }: Props) {
             <div className="cdx-status-row">
               <span className={`cdx-status ${statusClass(connectionState === "connected" ? "completed" : "unknown")}`}>
                 {connectionText}
+              </span>
+              <span
+                data-testid="collaboration-mode"
+                className={`cdx-status ${
+                  collaborationMode === "plan" ? "is-pending" : "is-online"
+                }`}
+              >
+                mode: {collaborationMode}
               </span>
               <span className="cdx-status is-pending">
                 Pending approval: {Object.keys(pendingApprovals).length}
@@ -1293,6 +1609,19 @@ export default function ThreadPage({ params }: Props) {
               value={prompt}
               onChange={(event) => setPrompt(event.target.value)}
               onKeyDown={(event) => {
+                if (
+                  event.key === "Tab" &&
+                  event.shiftKey &&
+                  !event.defaultPrevented &&
+                  !event.nativeEvent.isComposing &&
+                  !event.metaKey &&
+                  !event.ctrlKey &&
+                  !event.altKey
+                ) {
+                  event.preventDefault();
+                  toggleCollaborationMode();
+                  return;
+                }
                 if (event.key !== "Enter" || event.shiftKey) {
                   return;
                 }
@@ -1311,6 +1640,9 @@ export default function ThreadPage({ params }: Props) {
               placeholder="Ask Codex anything, @ to add files, / for commands"
               rows={3}
             />
+            <p className="cdx-helper">
+              Mode: {collaborationMode} · Shift+Tab toggle · /plan /review /status
+            </p>
             <div className="cdx-composer-row">
               <div className="cdx-inline-actions">
                 <button
