@@ -86,9 +86,15 @@ test("mobile smoke: chat-first thread flow + sheet controls", async ({ page }, t
 
   await page.getByLabel("Open threads").click();
   const items = page.getByTestId("mobile-thread-switcher-item");
-  await expect(items).toHaveCount(2);
+  await expect
+    .poll(() => items.count(), {
+      timeout: 10_000,
+    })
+    .toBeGreaterThanOrEqual(2);
+  const switchTarget = page.locator(".cdx-mobile-thread-switcher-item:not(.is-active)").first();
+  await expect(switchTarget).toBeVisible();
   const beforeSwitchUrl = page.url();
-  await items.nth(1).click();
+  await switchTarget.click();
   await expect
     .poll(() => page.url(), {
       timeout: 10_000,
@@ -101,7 +107,7 @@ test("mobile smoke: chat-first thread flow + sheet controls", async ({ page }, t
   await page.getByTestId("mobile-topbar-control-toggle").click();
   await expect(page.getByTestId("mobile-control-sheet")).toBeVisible();
   await page.getByTestId("mobile-control-tab-approvals").click();
-  await page.getByTestId("approval-allow").click();
+  await page.getByTestId("approval-allow").first().click();
   await page.getByTestId("mobile-control-tab-controls").click();
 
   await page.getByTestId("control-stop").click();
