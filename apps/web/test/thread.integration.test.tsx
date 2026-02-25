@@ -37,6 +37,22 @@ class MockEventSource {
   }
 }
 
+function setMobileViewport(matches: boolean): void {
+  Object.defineProperty(window, "matchMedia", {
+    writable: true,
+    value: (query: string) => ({
+      matches,
+      media: query,
+      onchange: null,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      addListener: () => {},
+      removeListener: () => {},
+      dispatchEvent: () => false,
+    }),
+  });
+}
+
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: pushMock, replace: replaceMock }),
   usePathname: () => pathnameValue,
@@ -64,6 +80,7 @@ describe("Thread page integration", () => {
     pathnameValue = "/threads/thread-1";
     searchParamsValue = new URLSearchParams();
     MockEventSource.instances.length = 0;
+    setMobileViewport(false);
   });
 
   it("loads thread detail + approvals + timeline + list + context", async () => {
@@ -156,6 +173,85 @@ describe("Thread page integration", () => {
     expect(await screen.findByTestId("approval-drawer")).toBeInTheDocument();
     expect(screen.getByText("Need approval")).toBeInTheDocument();
     expect(screen.getByTestId("timeline")).toBeInTheDocument();
+  });
+
+  it("mobile thread page hides sidebar by default and uses overlay switcher", async () => {
+    setMobileViewport(true);
+    vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+
+    server.use(
+      http.get("http://127.0.0.1:8787/api/threads/:id", ({ params }) =>
+        HttpResponse.json({
+          thread: {
+            id: String(params.id),
+            title: "Mobile Thread",
+            preview: "Preview",
+            status: "idle",
+            createdAt: null,
+            updatedAt: null,
+          },
+          turns: [],
+          nextCursor: null,
+        }),
+      ),
+      http.get("http://127.0.0.1:8787/api/threads/:id/approvals/pending", () =>
+        HttpResponse.json({ data: [] }),
+      ),
+      http.get("http://127.0.0.1:8787/api/threads", () =>
+        HttpResponse.json({
+          data: [
+            {
+              id: "thread-1",
+              projectKey: "/tmp/project-a",
+              title: "Mobile Thread",
+              preview: "Preview A",
+              status: "idle",
+              lastActiveAt: "2026-01-02T00:00:00.000Z",
+              archived: false,
+              waitingApprovalCount: 0,
+              errorCount: 0,
+            },
+            {
+              id: "thread-2",
+              projectKey: "/tmp/project-b",
+              title: "Other Thread",
+              preview: "Preview B",
+              status: "idle",
+              lastActiveAt: "2026-01-01T00:00:00.000Z",
+              archived: false,
+              waitingApprovalCount: 0,
+              errorCount: 0,
+            },
+          ],
+          nextCursor: null,
+        }),
+      ),
+      http.get("http://127.0.0.1:8787/api/threads/:id/timeline", () => HttpResponse.json({ data: [] })),
+      http.get("http://127.0.0.1:8787/api/threads/:id/context", () =>
+        HttpResponse.json({
+          threadId: "thread-1",
+          cwd: "/tmp/project-a",
+          resolvedCwd: "/tmp/project-a",
+          isFallback: false,
+          source: "projection",
+        }),
+      ),
+      http.get("http://127.0.0.1:8787/api/models", () => HttpResponse.json({ data: [] })),
+      http.post("http://127.0.0.1:8787/api/threads/:id/control", () => HttpResponse.json({ ok: true })),
+    );
+
+    render(<ThreadPage params={Promise.resolve({ id: "thread-1" })} />);
+
+    await screen.findByTestId("mobile-thread-context");
+    expect(screen.queryByText("THREADS")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("mobile-thread-switcher-toggle"));
+    await screen.findByTestId("mobile-thread-switcher-overlay");
+
+    fireEvent.click(screen.getByText("Other Thread"));
+    await waitFor(() => {
+      expect(pushMock).toHaveBeenCalledWith("/threads/thread-2");
+    });
   });
 
   it("handles approval and control flows", async () => {

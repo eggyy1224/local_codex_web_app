@@ -27,6 +27,27 @@ test("mobile smoke: thread flow + approval drawer + control buttons", async ({ p
 
   await page.getByRole("button", { name: "New thread" }).first().click();
   await expect(page).toHaveURL(/\/threads\//);
+  await expect(page.getByTestId("mobile-thread-context")).toBeVisible();
+  await expect(page.getByText("THREADS")).toHaveCount(0);
+
+  await page.getByTestId("mobile-thread-switcher-toggle").click();
+  await expect(page.getByTestId("mobile-thread-switcher-overlay")).toBeVisible();
+  await page.getByTestId("mobile-thread-switcher-close").click();
+  await expect(page.getByTestId("mobile-thread-switcher-overlay")).toHaveCount(0);
+
+  await page.getByRole("button", { name: "New thread" }).first().click();
+  await expect(page).toHaveURL(/\/threads\//);
+
+  await page.getByTestId("mobile-thread-switcher-toggle").click();
+  const items = page.getByTestId("mobile-thread-switcher-item");
+  await expect(items).toHaveCount(2);
+  const beforeSwitchUrl = page.url();
+  await items.nth(1).click();
+  await expect
+    .poll(() => page.url(), {
+      timeout: 10_000,
+    })
+    .not.toBe(beforeSwitchUrl);
 
   await page.getByTestId("turn-input").fill("mobile flow");
   await page.getByTestId("turn-submit").click();

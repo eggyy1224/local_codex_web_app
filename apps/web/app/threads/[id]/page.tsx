@@ -44,6 +44,10 @@ import {
   parseSlashCommand,
   type KnownSlashCommand,
 } from "../../lib/slash-commands";
+import MobileThreadHeaderContext from "./MobileThreadHeaderContext";
+import MobileThreadSwitcherOverlay, {
+  type MobileThreadSwitcherItem,
+} from "./MobileThreadSwitcherOverlay";
 import TerminalDock from "./TerminalDock";
 
 type ConnectionState = "connecting" | "connected" | "reconnecting" | "lagging";
@@ -247,6 +251,7 @@ export default function ThreadPage({ params }: Props) {
   const [threadList, setThreadList] = useState<ThreadListItem[]>([]);
   const [threadListLoading, setThreadListLoading] = useState(true);
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [isThreadSwitcherOpen, setIsThreadSwitcherOpen] = useState(false);
   const [threadContext, setThreadContext] = useState<ThreadContextResponse | null>(null);
   const [terminalOpen, setTerminalOpen] = useState(false);
   const [terminalWidth, setTerminalWidth] = useState(420);
@@ -406,6 +411,7 @@ export default function ThreadPage({ params }: Props) {
   useEffect(() => {
     if (isMobileViewport) {
       setTerminalOpen(false);
+      setIsThreadSwitcherOpen(false);
       return;
     }
     const savedWidth = window.localStorage.getItem(TERMINAL_WIDTH_STORAGE_KEY);
@@ -414,6 +420,12 @@ export default function ThreadPage({ params }: Props) {
       if (Number.isFinite(parsed)) {
         setTerminalWidth(clampTerminalWidth(parsed));
       }
+    }
+  }, [isMobileViewport]);
+
+  useEffect(() => {
+    if (!isMobileViewport) {
+      setIsThreadSwitcherOpen(false);
     }
   }, [isMobileViewport]);
 
@@ -809,6 +821,19 @@ export default function ThreadPage({ params }: Props) {
 
   const activeThread = threadList.find((thread) => thread.id === threadId);
   const groupedThreads = useMemo(() => groupThreadsByProject(threadList), [threadList]);
+  const mobileThreadSwitcherItems = useMemo<MobileThreadSwitcherItem[]>(
+    () =>
+      [...threadList]
+        .sort((a, b) => b.lastActiveAt.localeCompare(a.lastActiveAt))
+        .map((thread) => ({
+          id: thread.id,
+          title: thread.title || "(untitled thread)",
+          projectLabel: projectLabelFromKey(thread.projectKey || "unknown"),
+          lastActiveAt: thread.lastActiveAt,
+          isActive: thread.id === threadId,
+        })),
+    [threadId, threadList],
+  );
   const activeProjectKey = useMemo(() => {
     if (activeThread?.projectKey) {
       return activeThread.projectKey;
@@ -1038,6 +1063,11 @@ export default function ThreadPage({ params }: Props) {
       if (target instanceof HTMLElement && target.tagName === "SELECT") {
         return;
       }
+      if (isThreadSwitcherOpen) {
+        event.preventDefault();
+        setIsThreadSwitcherOpen(false);
+        return;
+      }
       event.preventDefault();
       void sendControl("stop");
     };
@@ -1046,7 +1076,26 @@ export default function ThreadPage({ params }: Props) {
     return () => {
       window.removeEventListener("keydown", onKeyDown);
     };
-  }, [sendControl]);
+  }, [isThreadSwitcherOpen, sendControl]);
+
+  const handleSidebarToggle = useCallback(() => {
+    if (isMobileViewport) {
+      setIsThreadSwitcherOpen((value) => !value);
+      return;
+    }
+    setSidebarOpen((value) => !value);
+  }, [isMobileViewport]);
+
+  const selectThreadFromMobileSwitcher = useCallback(
+    (nextThreadId: string) => {
+      setIsThreadSwitcherOpen(false);
+      if (nextThreadId === threadId) {
+        return;
+      }
+      router.push(`/threads/${nextThreadId}`);
+    },
+    [router, threadId],
+  );
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -1301,7 +1350,9 @@ export default function ThreadPage({ params }: Props) {
   }
 
   const terminalEnabled = !isMobileViewport && terminalOpen;
-  const sidebarVisible = sidebarOpen && !isCompactViewport;
+  const sidebarVisible = !isMobileViewport && sidebarOpen && !isCompactViewport;
+  const activeProjectLabel = projectLabelFromKey(activeProjectKey);
+  const activeThreadTitle = detail?.thread.title ?? activeThread?.title ?? threadId;
   const workspaceStyle = terminalEnabled
     ? ({
         "--cdx-terminal-width": `${terminalWidth}px`,
@@ -1315,8 +1366,16 @@ export default function ThreadPage({ params }: Props) {
           <button
             type="button"
             className="cdx-toolbar-btn cdx-toolbar-btn--icon"
-            title={sidebarOpen ? "Hide sidebar" : "Show sidebar"}
-            onClick={() => setSidebarOpen((v) => !v)}
+            title={
+              isMobileViewport
+                ? isThreadSwitcherOpen
+                  ? "Hide thread switcher"
+                  : "Show thread switcher"
+                : sidebarOpen
+                  ? "Hide sidebar"
+                  : "Show sidebar"
+            }
+            onClick={handleSidebarToggle}
           >
             ≡
           </button>
@@ -1416,12 +1475,20 @@ export default function ThreadPage({ params }: Props) {
 
         <main className={`cdx-main ${isCompactViewport ? "cdx-main--compact" : ""}`}>
           <section className="cdx-hero cdx-hero--thread">
-            <div className="cdx-hero-row">
-              <h1 data-testid="thread-title">Let&apos;s build</h1>
-              <button type="button" className="cdx-project-chip">
-                {projectLabelFromKey(activeProjectKey)}
-              </button>
-            </div>
+            {isMobileViewport ? (
+              <MobileThreadHeaderContext
+                projectLabel={activeProjectLabel}
+                threadTitle={activeThreadTitle}
+                onOpenSwitcher={() => setIsThreadSwitcherOpen(true)}
+              />
+            ) : (
+              <div className="cdx-hero-row">
+                <h1 data-testid="thread-title">Let&apos;s build</h1>
+                <button type="button" className="cdx-project-chip">
+                  {activeProjectLabel}
+                </button>
+              </div>
+            )}
             <p className="cdx-helper">
               {detail?.thread.title ?? threadId} · seq{" "}
               <span data-testid="event-cursor">{lastSeq}</span>
@@ -1868,6 +1935,16 @@ export default function ThreadPage({ params }: Props) {
           />
         ) : null}
       </div>
+
+      {isMobileViewport ? (
+        <MobileThreadSwitcherOverlay
+          open={isThreadSwitcherOpen}
+          items={mobileThreadSwitcherItems}
+          loading={threadListLoading}
+          onClose={() => setIsThreadSwitcherOpen(false)}
+          onSelect={selectThreadFromMobileSwitcher}
+        />
+      ) : null}
     </div>
   );
 }
