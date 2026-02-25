@@ -257,6 +257,107 @@ describe("Thread page integration", () => {
     });
   });
 
+  it("keeps mobile topbar interactive after timeline scroll", async () => {
+    setMobileViewport(true);
+    vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+
+    server.use(
+      http.get("http://127.0.0.1:8787/api/threads/:id", ({ params }) =>
+        HttpResponse.json({
+          thread: {
+            id: String(params.id),
+            title: "Scrollable Mobile Thread",
+            preview: "Preview",
+            status: "idle",
+            createdAt: null,
+            updatedAt: null,
+          },
+          turns: [],
+          nextCursor: null,
+        }),
+      ),
+      http.get("http://127.0.0.1:8787/api/threads/:id/approvals/pending", () =>
+        HttpResponse.json({ data: [] }),
+      ),
+      http.get("http://127.0.0.1:8787/api/threads", () =>
+        HttpResponse.json({
+          data: [
+            {
+              id: "thread-1",
+              projectKey: "/tmp/project-a",
+              title: "Scrollable Mobile Thread",
+              preview: "Preview A",
+              status: "idle",
+              lastActiveAt: "2026-01-02T00:00:00.000Z",
+              archived: false,
+              waitingApprovalCount: 0,
+              errorCount: 0,
+            },
+            {
+              id: "thread-2",
+              projectKey: "/tmp/project-b",
+              title: "Other Thread",
+              preview: "Preview B",
+              status: "idle",
+              lastActiveAt: "2026-01-01T00:00:00.000Z",
+              archived: false,
+              waitingApprovalCount: 0,
+              errorCount: 0,
+            },
+          ],
+          nextCursor: null,
+        }),
+      ),
+      http.get("http://127.0.0.1:8787/api/threads/:id/timeline", () =>
+        HttpResponse.json({
+          data: [
+            {
+              id: "timeline-1",
+              ts: "2026-01-01T00:00:00.000Z",
+              turnId: "turn-1",
+              type: "userMessage",
+              title: "You",
+              text: "scroll seed",
+              rawType: "userMessage",
+              toolName: null,
+              callId: null,
+            },
+            {
+              id: "timeline-2",
+              ts: "2026-01-01T00:00:01.000Z",
+              turnId: "turn-1",
+              type: "assistantMessage",
+              title: "Assistant",
+              text: "scroll response",
+              rawType: "agentMessage",
+              toolName: null,
+              callId: null,
+            },
+          ],
+        }),
+      ),
+      http.get("http://127.0.0.1:8787/api/threads/:id/context", () =>
+        HttpResponse.json({
+          threadId: "thread-1",
+          cwd: "/tmp/project-a",
+          resolvedCwd: "/tmp/project-a",
+          isFallback: false,
+          source: "projection",
+        }),
+      ),
+      http.get("http://127.0.0.1:8787/api/models", () => HttpResponse.json({ data: [] })),
+    );
+
+    render(<ThreadPage params={Promise.resolve({ id: "thread-1" })} />);
+
+    await screen.findByTestId("mobile-chat-topbar");
+    const timeline = await screen.findByTestId("timeline");
+    fireEvent.scroll(timeline, { target: { scrollTop: 120 } });
+
+    fireEvent.click(screen.getByLabelText("Open threads"));
+    await screen.findByTestId("mobile-thread-switcher-overlay");
+  });
+
   it("uses untitled title fallback for empty mobile thread title", async () => {
     setMobileViewport(true);
     vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);

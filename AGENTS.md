@@ -107,9 +107,9 @@
 
 1. 開發模式固定為垂直切片：每次只做一條「完成即可使用」的功能。
 2. 每個切片完成前，必須用 CDP MCP 做桌機與手機 viewport 驗證。
-3. 每個切片完成後立刻 commit（每切片 1 commit）。
-4. commit 規範固定使用 Conventional Commits。
-5. push 策略：先本機 commit，不強制每片立即 push。
+3. 每個切片完成後先整理變更與風險，是否 commit 一律由使用者決定。
+4. commit 規範使用 Conventional Commits。
+5. push 策略：不強制每片立即 push，是否 push 與時機一律由使用者決定。
 6. 任何偏離本文件的設計，必須先在 PR/issue 說明原因。
 7. 文件與介面命名盡量一致（thread/turn/event/approval）。
 8. 實作 app-server 相關能力時，必須優先參考官方 OpenAI/Codex 文件（openai-docs skill）。
@@ -123,3 +123,6 @@
 16. 每個切片 commit 前，至少執行該切片最小驗證命令；PR 前必跑 `pnpm check`。
 17. `pnpm check` 為本機 merge gate：`lint + typecheck + test:coverage + test:e2e`，任一失敗即不可合併。
 18. CDP 桌機/手機 viewport 驗證屬人工補強，不能替代自動化測試。
+19. 進行前端/CDP 穩定驗證時，優先使用「臨時服務」而非沿用既有常駐開發服務，避免舊狀態、快取或其他工作階段干擾結果。
+20. 臨時服務建議模式：Gateway 使用 `pnpm --filter @lcwa/gateway test:e2e:server -- --port=<PORT>`；Web 使用 `NEXT_PUBLIC_GATEWAY_URL=http://127.0.0.1:<PORT> pnpm --filter @lcwa/web exec next dev --port <WEB_PORT>`。
+21. 驗證完成後必須關閉臨時服務，並檢查測試埠（例如 `lsof -nP -iTCP:<PORT> -sTCP:LISTEN`）確認沒有殘留 listener。

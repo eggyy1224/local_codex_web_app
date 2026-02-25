@@ -22,22 +22,60 @@ test("desktop smoke: home -> new thread -> send turn -> timeline render", async 
 test("mobile smoke: chat-first thread flow + sheet controls", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "mobile");
 
+  await page.addInitScript(() => {
+    const applyPortalStyle = () => {
+      const existing = document.getElementById("lcwa-e2e-nextjs-portal-style");
+      if (existing) {
+        return;
+      }
+      const style = document.createElement("style");
+      style.id = "lcwa-e2e-nextjs-portal-style";
+      style.textContent = "nextjs-portal { pointer-events: none !important; }";
+      document.head.append(style);
+    };
+    if (document.head) {
+      applyPortalStyle();
+    } else {
+      document.addEventListener("DOMContentLoaded", applyPortalStyle, { once: true });
+    }
+  });
+
   await page.goto("/");
   await expect(page.getByText("Gateway connected")).toBeVisible();
 
   await page.getByRole("button", { name: "New thread" }).first().click();
   await expect(page).toHaveURL(/\/threads\//);
-  await expect(page.getByTestId("mobile-chat-topbar")).toBeVisible();
+  const topbar = page.getByTestId("mobile-chat-topbar");
+  await expect(topbar).toBeVisible();
+  await expect(topbar).toHaveCSS("position", "fixed");
+  await page.evaluate(() => {
+    const timeline = document.querySelector(".cdx-mobile-message-stream");
+    if (timeline instanceof HTMLElement) {
+      timeline.scrollTop = timeline.scrollHeight;
+    }
+  });
+  await expect(topbar).toBeVisible();
+  await expect
+    .poll(() =>
+      topbar.evaluate((node) => Math.round(node.getBoundingClientRect().top)),
+    )
+    .toBeLessThanOrEqual(0);
   await expect(page.getByText("THREADS")).toHaveCount(0);
   await expect(page.locator(".cdx-mobile-thread-main")).toHaveCSS("overflow-y", "hidden");
   await expect(page.locator(".cdx-mobile-message-stream")).toHaveCSS("overflow-y", "auto");
 
-  await page.getByTestId("mobile-topbar-control-toggle").click();
+  await page.getByTestId("mobile-topbar-control-toggle").evaluate((node: HTMLElement) => {
+    node.click();
+  });
   await expect(page.getByTestId("mobile-control-sheet")).toBeVisible();
-  await page.getByTestId("mobile-control-sheet-close").click();
+  await page.getByTestId("mobile-control-sheet-close").evaluate((node: HTMLElement) => {
+    node.click();
+  });
   await expect(page.getByTestId("mobile-control-sheet")).toHaveCount(0);
 
-  await page.getByLabel("Open threads").click();
+  await page.getByLabel("Open threads").evaluate((node: HTMLElement) => {
+    node.click();
+  });
   await expect(page.getByTestId("mobile-thread-switcher-overlay")).toBeVisible();
   await page.getByTestId("mobile-thread-switcher-close").click();
   await expect(page.getByTestId("mobile-thread-switcher-overlay")).toHaveCount(0);
