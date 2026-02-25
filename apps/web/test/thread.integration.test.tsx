@@ -473,6 +473,73 @@ describe("Thread page integration", () => {
     });
   });
 
+  it("shows full /review command text in timeline user message", async () => {
+    vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+
+    server.use(
+      http.get("http://127.0.0.1:8787/api/threads/:id", ({ params }) =>
+        HttpResponse.json({
+          thread: {
+            id: String(params.id),
+            title: "Main Thread",
+            preview: "Preview",
+            status: "idle",
+            createdAt: null,
+            updatedAt: null,
+          },
+          turns: [],
+          nextCursor: null,
+        }),
+      ),
+      http.get("http://127.0.0.1:8787/api/threads/:id/approvals/pending", () => HttpResponse.json({ data: [] })),
+      http.get("http://127.0.0.1:8787/api/threads", () => HttpResponse.json({ data: [], nextCursor: null })),
+      http.get("http://127.0.0.1:8787/api/threads/:id/timeline", () =>
+        HttpResponse.json({
+          data: [
+            {
+              id: "timeline-review-mode",
+              ts: "2026-01-01T00:00:01.000Z",
+              turnId: "turn-review-1",
+              type: "status",
+              title: "Entered review mode",
+              text: "last commit",
+              rawType: "entered_review_mode",
+              toolName: null,
+              callId: null,
+            },
+            {
+              id: "timeline-user",
+              ts: "2026-01-01T00:00:02.000Z",
+              turnId: "turn-review-1",
+              type: "userMessage",
+              title: "User",
+              text: "last commit",
+              rawType: "userMessage",
+              toolName: null,
+              callId: null,
+            },
+          ],
+        }),
+      ),
+      http.get("http://127.0.0.1:8787/api/threads/:id/context", () =>
+        HttpResponse.json({
+          threadId: "thread-1",
+          cwd: "/tmp/project",
+          resolvedCwd: "/tmp/project",
+          isFallback: false,
+          source: "projection",
+        }),
+      ),
+      http.get("http://127.0.0.1:8787/api/models", () => HttpResponse.json({ data: [] })),
+      http.post("http://127.0.0.1:8787/api/threads/:id/control", () => HttpResponse.json({ ok: true })),
+    );
+
+    render(<ThreadPage params={Promise.resolve({ id: "thread-1" })} />);
+
+    await screen.findByText("/review last commit");
+    expect(screen.getByText("slash command")).toBeInTheDocument();
+  });
+
   it("autocompletes /r to /review and separates apply from submit", async () => {
     vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
     let reviewCalls = 0;

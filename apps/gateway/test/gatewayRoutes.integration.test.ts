@@ -280,6 +280,39 @@ describe("gateway integration routes", () => {
     }
   });
 
+  it("GET /api/threads/:id retries resume when thread/read returns not found", async () => {
+    const ctx = await createTestContext();
+    try {
+      let readCall = 0;
+      ctx.stub.handlers.set("thread/read", () => {
+        readCall += 1;
+        if (readCall === 1) {
+          throw new Error("thread not found: thread-1");
+        }
+        return {
+          thread: {
+            id: "thread-1",
+            name: "Loaded after resume",
+            preview: "loaded",
+            status: "idle",
+            turns: [{ id: "turn-1", status: "completed", items: [] }],
+          },
+        };
+      });
+      ctx.stub.handlers.set("thread/resume", () => ({}));
+
+      const res = await ctx.app.inject({ method: "GET", url: "/api/threads/thread-1?includeTurns=true" });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toMatchObject({
+        thread: { id: "thread-1", title: "Loaded after resume" },
+        turns: [{ id: "turn-1" }],
+      });
+      expect(ctx.stub.requests.map((entry) => entry.method)).toContain("thread/resume");
+    } finally {
+      await ctx.close();
+    }
+  });
+
   it("POST /api/threads/:id/turns validates input and retries after resume with permission mapping", async () => {
     const ctx = await createTestContext();
     try {
@@ -575,6 +608,38 @@ describe("gateway integration routes", () => {
         turnId: "turn-review-2",
         reviewThreadId: "thread-1",
       });
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  it("POST /api/threads/:id/review retries after resume on not found", async () => {
+    const ctx = await createTestContext();
+    try {
+      let callCount = 0;
+      ctx.stub.handlers.set("review/start", () => {
+        callCount += 1;
+        if (callCount === 1) {
+          throw new Error("thread not found: thread-1");
+        }
+        return {
+          turn: { id: "turn-review-1" },
+          reviewThreadId: "thread-1",
+        };
+      });
+      ctx.stub.handlers.set("thread/resume", () => ({}));
+
+      const res = await ctx.app.inject({
+        method: "POST",
+        url: "/api/threads/thread-1/review",
+        payload: { instructions: "focus risky changes" },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({
+        turnId: "turn-review-1",
+        reviewThreadId: "thread-1",
+      });
+      expect(ctx.stub.requests.map((entry) => entry.method)).toContain("thread/resume");
     } finally {
       await ctx.close();
     }

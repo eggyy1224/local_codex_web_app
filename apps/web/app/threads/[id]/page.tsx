@@ -790,6 +790,18 @@ export default function ThreadPage({ params }: Props) {
     () => buildConversationTurns(allTimelineItems),
     [allTimelineItems],
   );
+  const reviewSlashCommandByTurnId = useMemo(() => {
+    const commandByTurnId = new Map<string, string>();
+    for (const item of allTimelineItems) {
+      const normalizedRawType = item.rawType.replace(/_/g, "").toLowerCase();
+      if (!item.turnId || normalizedRawType !== "enteredreviewmode") {
+        continue;
+      }
+      const reviewArgs = item.text?.trim() ?? "";
+      commandByTurnId.set(item.turnId, reviewArgs.length > 0 ? `/review ${reviewArgs}` : "/review");
+    }
+    return commandByTurnId;
+  }, [allTimelineItems]);
   const hiddenTimelineCount = Math.max(0, allConversationTurns.length - 120);
   const visibleConversationTurns = showAllTurns
     ? allConversationTurns
@@ -1483,106 +1495,111 @@ export default function ThreadPage({ params }: Props) {
             {visibleConversationTurns.length === 0 ? (
               <p className="cdx-helper">No conversation yet.</p>
             ) : (
-              visibleConversationTurns.map((turn) => (
-                <article
-                  className={`cdx-turn-card cdx-turn-card--conversation ${
-                    turn.isStreaming ? "cdx-turn-card--streaming" : ""
-                  }`}
-                  key={turn.turnId}
-                >
-                  <div className="cdx-turn-head">
-                    <strong>Turn</strong>
-                    <div className="cdx-turn-state">
-                      {turn.isStreaming ? (
-                        <span className="cdx-stream-indicator" aria-live="polite">
-                          <span className="cdx-stream-indicator-dot" aria-hidden="true" />
-                          Responding
-                        </span>
-                      ) : null}
-                      <span className={`cdx-status ${statusClass(turn.status)}`}>
-                        {statusLabel(turn.status)}
-                      </span>
-                    </div>
-                  </div>
-                  <p className="cdx-turn-meta">
-                    {formatTimestamp(turn.startedAt)} · turn {turn.turnId}
-                  </p>
-                  {turn.userText ? (
-                    <section className="cdx-message cdx-message--user">
-                      <div className="cdx-message-meta">
-                        <strong className="cdx-message-role">You</strong>
-                      </div>
-                      <pre className="cdx-turn-body">{truncateText(turn.userText, 9000)}</pre>
-                    </section>
-                  ) : null}
-                  {turn.assistantText ? (
-                    <section
-                      className={`cdx-message cdx-message--assistant ${
-                        turn.isStreaming ? "cdx-message--assistant-streaming" : ""
-                      }`}
-                    >
-                      <div className="cdx-message-meta">
-                        <strong className="cdx-message-role">Codex</strong>
-                        <button
-                          type="button"
-                          className="cdx-toolbar-btn cdx-toolbar-btn--small cdx-event-copy"
-                          onClick={() => void copyMessage(turn.assistantText ?? "")}
-                        >
-                          Copy
-                        </button>
-                      </div>
-                      <pre className="cdx-turn-body">
-                        {truncateText(turn.assistantText, 9000)}
-                        {turn.isStreaming ? <span className="cdx-stream-cursor" aria-hidden="true" /> : null}
-                      </pre>
-                    </section>
-                  ) : (
-                    <p className={`cdx-helper ${turn.isStreaming ? "cdx-helper--streaming" : ""}`}>
-                      {turn.isStreaming ? "Codex is responding..." : "Waiting for response..."}
-                    </p>
-                  )}
-                  {turn.thinkingText || turn.toolCalls.length > 0 || turn.toolResults.length > 0 ? (
-                    <details className="cdx-message-collapsible">
-                      <summary>
-                        Thinking & tools (
-                        {(turn.thinkingText ? 1 : 0) + turn.toolCalls.length + turn.toolResults.length})
-                      </summary>
-                      <div className="cdx-message-stack cdx-message-stack--details">
-                        {turn.thinkingText ? (
-                          <section className="cdx-message cdx-message--detail">
-                            <div className="cdx-message-meta">
-                              <strong className="cdx-message-role">Thinking</strong>
-                            </div>
-                            <pre className="cdx-turn-body">{truncateText(turn.thinkingText, 6000)}</pre>
-                          </section>
+              visibleConversationTurns.map((turn) => {
+                const reviewSlashCommand = reviewSlashCommandByTurnId.get(turn.turnId) ?? null;
+                const userDisplayText = reviewSlashCommand ?? turn.userText;
+                return (
+                  <article
+                    className={`cdx-turn-card cdx-turn-card--conversation ${
+                      turn.isStreaming ? "cdx-turn-card--streaming" : ""
+                    }`}
+                    key={turn.turnId}
+                  >
+                    <div className="cdx-turn-head">
+                      <strong>Turn</strong>
+                      <div className="cdx-turn-state">
+                        {turn.isStreaming ? (
+                          <span className="cdx-stream-indicator" aria-live="polite">
+                            <span className="cdx-stream-indicator-dot" aria-hidden="true" />
+                            Responding
+                          </span>
                         ) : null}
-                        {turn.toolCalls.map((call, index) => (
-                          <section
-                            className="cdx-message cdx-message--tool"
-                            key={`${turn.turnId}-tool-call-${index}-${call.toolName}`}
-                          >
-                            <div className="cdx-message-meta">
-                              <strong className="cdx-message-role">Tool call: {call.toolName}</strong>
-                            </div>
-                            {call.text ? <pre className="cdx-turn-body">{truncateText(call.text, 4500)}</pre> : null}
-                          </section>
-                        ))}
-                        {turn.toolResults.map((result, index) => (
-                          <section
-                            className="cdx-message cdx-message--detail"
-                            key={`${turn.turnId}-tool-result-${index}`}
-                          >
-                            <div className="cdx-message-meta">
-                              <strong className="cdx-message-role">Tool output</strong>
-                            </div>
-                            <pre className="cdx-turn-body">{truncateText(result, 4500)}</pre>
-                          </section>
-                        ))}
+                        <span className={`cdx-status ${statusClass(turn.status)}`}>
+                          {statusLabel(turn.status)}
+                        </span>
                       </div>
-                    </details>
-                  ) : null}
-                </article>
-              ))
+                    </div>
+                    <p className="cdx-turn-meta">
+                      {formatTimestamp(turn.startedAt)} · turn {turn.turnId}
+                    </p>
+                    {userDisplayText ? (
+                      <section className="cdx-message cdx-message--user">
+                        <div className="cdx-message-meta">
+                          <strong className="cdx-message-role">You</strong>
+                          {reviewSlashCommand ? <span className="cdx-status is-pending">slash command</span> : null}
+                        </div>
+                        <pre className="cdx-turn-body">{truncateText(userDisplayText, 9000)}</pre>
+                      </section>
+                    ) : null}
+                    {turn.assistantText ? (
+                      <section
+                        className={`cdx-message cdx-message--assistant ${
+                          turn.isStreaming ? "cdx-message--assistant-streaming" : ""
+                        }`}
+                      >
+                        <div className="cdx-message-meta">
+                          <strong className="cdx-message-role">Codex</strong>
+                          <button
+                            type="button"
+                            className="cdx-toolbar-btn cdx-toolbar-btn--small cdx-event-copy"
+                            onClick={() => void copyMessage(turn.assistantText ?? "")}
+                          >
+                            Copy
+                          </button>
+                        </div>
+                        <pre className="cdx-turn-body">
+                          {truncateText(turn.assistantText, 9000)}
+                          {turn.isStreaming ? <span className="cdx-stream-cursor" aria-hidden="true" /> : null}
+                        </pre>
+                      </section>
+                    ) : (
+                      <p className={`cdx-helper ${turn.isStreaming ? "cdx-helper--streaming" : ""}`}>
+                        {turn.isStreaming ? "Codex is responding..." : "Waiting for response..."}
+                      </p>
+                    )}
+                    {turn.thinkingText || turn.toolCalls.length > 0 || turn.toolResults.length > 0 ? (
+                      <details className="cdx-message-collapsible">
+                        <summary>
+                          Thinking & tools (
+                          {(turn.thinkingText ? 1 : 0) + turn.toolCalls.length + turn.toolResults.length})
+                        </summary>
+                        <div className="cdx-message-stack cdx-message-stack--details">
+                          {turn.thinkingText ? (
+                            <section className="cdx-message cdx-message--detail">
+                              <div className="cdx-message-meta">
+                                <strong className="cdx-message-role">Thinking</strong>
+                              </div>
+                              <pre className="cdx-turn-body">{truncateText(turn.thinkingText, 6000)}</pre>
+                            </section>
+                          ) : null}
+                          {turn.toolCalls.map((call, index) => (
+                            <section
+                              className="cdx-message cdx-message--tool"
+                              key={`${turn.turnId}-tool-call-${index}-${call.toolName}`}
+                            >
+                              <div className="cdx-message-meta">
+                                <strong className="cdx-message-role">Tool call: {call.toolName}</strong>
+                              </div>
+                              {call.text ? <pre className="cdx-turn-body">{truncateText(call.text, 4500)}</pre> : null}
+                            </section>
+                          ))}
+                          {turn.toolResults.map((result, index) => (
+                            <section
+                              className="cdx-message cdx-message--detail"
+                              key={`${turn.turnId}-tool-result-${index}`}
+                            >
+                              <div className="cdx-message-meta">
+                                <strong className="cdx-message-role">Tool output</strong>
+                              </div>
+                              <pre className="cdx-turn-body">{truncateText(result, 4500)}</pre>
+                            </section>
+                          ))}
+                        </div>
+                      </details>
+                    ) : null}
+                  </article>
+                );
+              })
             )}
           </section>
 

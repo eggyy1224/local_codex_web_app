@@ -307,6 +307,10 @@ function readString(value: unknown): string | null {
   return typeof value === "string" ? value : null;
 }
 
+function isResumeNeeded(message: string): boolean {
+  return message.includes("thread not loaded") || message.includes("thread not found");
+}
+
 function dedupeInputItemKey(inputItem: { type: string; name: string; path: string }): string {
   return `${inputItem.type}|${inputItem.name}|${inputItem.path}`;
 }
@@ -1066,7 +1070,7 @@ app.get("/api/threads/:id", async (request): Promise<ThreadDetailResponse> => {
       return fallbackFromProjection();
     }
 
-    if (!message.includes("thread not loaded")) {
+    if (!isResumeNeeded(message)) {
       throw error;
     }
 
@@ -1318,9 +1322,6 @@ app.post("/api/threads/:id/turns", async (request): Promise<CreateTurnResponse> 
       ...permissionModeToTurnStartParams(body.options?.permissionMode),
     })) as { turn?: RawTurn };
 
-  const isResumeNeeded = (message: string): boolean =>
-    message.includes("thread not loaded") || message.includes("thread not found");
-
   let result: { turn?: RawTurn };
   try {
     result = await startTurn();
@@ -1363,14 +1364,33 @@ app.post("/api/threads/:id/review", async (request): Promise<CreateReviewRespons
       : body.target ?? { type: "uncommittedChanges" as const };
   const delivery = body.delivery ?? "inline";
 
-  const result = (await appServer.request("review/start", {
-    threadId: params.id,
-    delivery,
-    target,
-  })) as {
+  const startReview = async (): Promise<{
+    turn?: RawTurn;
+    reviewThreadId?: unknown;
+  }> =>
+    (await appServer.request("review/start", {
+      threadId: params.id,
+      delivery,
+      target,
+    })) as {
+      turn?: RawTurn;
+      reviewThreadId?: unknown;
+    };
+
+  let result: {
     turn?: RawTurn;
     reviewThreadId?: unknown;
   };
+  try {
+    result = await startReview();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!isResumeNeeded(message)) {
+      throw error;
+    }
+    await appServer.request("thread/resume", { threadId: params.id });
+    result = await startReview();
+  }
 
   const turnId = result.turn?.id;
   if (!turnId) {
@@ -1507,7 +1527,7 @@ app.post("/api/threads/:id/control", async (request): Promise<ThreadControlRespo
       result = await startTurn();
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      if (!message.includes("thread not loaded")) {
+      if (!isResumeNeeded(message)) {
         throw error;
       }
       await appServer.request("thread/resume", { threadId: params.id });
@@ -1543,7 +1563,7 @@ app.post("/api/threads/:id/control", async (request): Promise<ThreadControlRespo
     await interruptTurn();
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    if (!message.includes("thread not loaded")) {
+    if (!isResumeNeeded(message)) {
       throw error;
     }
     await appServer.request("thread/resume", { threadId: params.id });
