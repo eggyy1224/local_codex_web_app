@@ -4,9 +4,12 @@ import cors from "@fastify/cors";
 import websocket from "@fastify/websocket";
 import Fastify, { type FastifyInstance } from "fastify";
 import type {
+  AccountRateLimitsResponse,
   ApprovalDecisionRequest,
   ApprovalDecisionResponse,
   ApprovalType,
+  CreateReviewRequest,
+  CreateReviewResponse,
   CreateTurnRequest,
   CreateTurnResponse,
   GatewayEvent,
@@ -26,7 +29,6 @@ import type {
   ThreadStatus,
   ThreadTimelineItem,
   ThreadTimelineResponse,
-  TurnPermissionMode,
   TurnView,
 } from "@lcwa/shared-types";
 import type { GatewayAppServerPort } from "./appServerPort.js";
@@ -71,6 +73,45 @@ type RawThread = {
 type RawModelListResult = {
   data?: RawModel[];
   nextCursor?: string | null;
+};
+
+type RawSkillMetadata = {
+  name?: unknown;
+  path?: unknown;
+  enabled?: unknown;
+};
+
+type RawSkillsListEntry = {
+  cwd?: unknown;
+  skills?: RawSkillMetadata[];
+};
+
+type RawSkillsListResult = {
+  data?: RawSkillsListEntry[];
+};
+
+type RawAppInfo = {
+  id?: unknown;
+  name?: unknown;
+  isAccessible?: unknown;
+  isEnabled?: unknown;
+};
+
+type RawAppListResult = {
+  data?: RawAppInfo[];
+  nextCursor?: string | null;
+};
+
+type RawCollaborationModeMask = {
+  name?: unknown;
+  mode?: unknown;
+  model?: unknown;
+  reasoning_effort?: unknown;
+  developer_instructions?: unknown;
+};
+
+type RawCollaborationModeListResult = {
+  data?: RawCollaborationModeMask[];
 };
 
 export type GatewayAppConfig = {
@@ -255,6 +296,47 @@ function toTurnView(raw: RawTurn): TurnView {
   };
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  return value as Record<string, unknown>;
+}
+
+function readString(value: unknown): string | null {
+  return typeof value === "string" ? value : null;
+}
+
+function dedupeInputItemKey(inputItem: { type: string; name: string; path: string }): string {
+  return `${inputItem.type}|${inputItem.name}|${inputItem.path}`;
+}
+
+function findSlashTokens(input: CreateTurnRequest["input"]): string[] {
+  const tokens: string[] = [];
+  const seen = new Set<string>();
+
+  for (const item of input) {
+    if (item.type !== "text") {
+      continue;
+    }
+    const matches = item.text.match(/\$[A-Za-z0-9._-]+/g);
+    if (!matches) {
+      continue;
+    }
+    for (const match of matches) {
+      const token = match.slice(1);
+      const normalized = token.toLowerCase();
+      if (!normalized || seen.has(normalized)) {
+        continue;
+      }
+      seen.add(normalized);
+      tokens.push(normalized);
+    }
+  }
+
+  return tokens;
+}
+
 async function loadThreadTimelineFromSession(
   threadId: string,
   limit: number,
@@ -278,6 +360,228 @@ async function loadThreadTimelineFromSession(
   }
 
   return parseTimelineItemsFromLines(lines, threadId, limit);
+}
+
+function readCollaborationModeMasks(raw: unknown): RawCollaborationModeMask[] {
+  if (Array.isArray(raw)) {
+    return raw.filter((item): item is RawCollaborationModeMask => Boolean(asRecord(item)));
+  }
+  const record = asRecord(raw);
+  if (!record) {
+    return [];
+  }
+  const data = record.data;
+  if (Array.isArray(data)) {
+    return data.filter((item): item is RawCollaborationModeMask => Boolean(asRecord(item)));
+  }
+  const presets = record.collaborationModes;
+  if (Array.isArray(presets)) {
+    return presets.filter((item): item is RawCollaborationModeMask => Boolean(asRecord(item)));
+  }
+  return [];
+}
+
+function makeReadableModeError(mode: "plan" | "default", message: string): Error {
+  const error = new Error(`collaboration mode "${mode}" unavailable: ${message}`) as Error & {
+    statusCode?: number;
+  };
+  error.statusCode = 400;
+  return error;
+}
+
+async function resolveCollaborationMode(
+  mode: "plan" | "default",
+  fallbackModel?: string,
+): Promise<{
+  mode: "plan" | "default";
+  settings: {
+    model: string;
+    reasoning_effort: string | null;
+    developer_instructions: string | null;
+  };
+}> {
+  let rawResult: unknown;
+  try {
+    rawResult = await appServer.request("collaborationMode/list", {});
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw makeReadableModeError(mode, message);
+  }
+
+  const presets = readCollaborationModeMasks(rawResult);
+  const preset =
+    presets.find((entry) => readString(entry.mode) === mode) ??
+    presets.find((entry) => readString(entry.name)?.toLowerCase() === mode);
+  if (!preset) {
+    throw makeReadableModeError(mode, "preset not found");
+  }
+
+  const model = readString(preset.model) ?? fallbackModel ?? null;
+  if (!model) {
+    throw makeReadableModeError(mode, "preset missing model");
+  }
+
+  const reasoningEffort = readString(preset.reasoning_effort);
+  const developerInstructions =
+    preset.developer_instructions === null
+      ? null
+      : readString(preset.developer_instructions);
+
+  return {
+    mode,
+    settings: {
+      model,
+      reasoning_effort: reasoningEffort,
+      developer_instructions: developerInstructions ?? null,
+    },
+  };
+}
+
+async function listEnabledSkills(cwd?: string): Promise<Map<string, { name: string; path: string }>> {
+  const skillsByToken = new Map<string, { name: string; path: string }>();
+  const params =
+    cwd && cwd !== "unknown"
+      ? {
+          cwds: [cwd],
+        }
+      : {};
+  const result = (await appServer.request("skills/list", params)) as RawSkillsListResult;
+
+  for (const entry of result.data ?? []) {
+    for (const skill of entry.skills ?? []) {
+      const name = readString(skill.name);
+      const path = readString(skill.path);
+      const enabled =
+        typeof skill.enabled === "boolean" ? skill.enabled : true;
+      if (!name || !path || !enabled) {
+        continue;
+      }
+      const token = name.toLowerCase();
+      if (!skillsByToken.has(token)) {
+        skillsByToken.set(token, { name, path });
+      }
+    }
+  }
+
+  return skillsByToken;
+}
+
+async function listAppsForMentions(threadId: string): Promise<Map<string, { id: string; name: string }>> {
+  const appsByToken = new Map<string, { id: string; name: string }>();
+  let cursor: string | null = null;
+
+  for (let i = 0; i < 20; i += 1) {
+    const result = (await appServer.request("app/list", {
+      cursor,
+      limit: 100,
+      threadId,
+      forceRefetch: false,
+    })) as RawAppListResult;
+
+    for (const appEntry of result.data ?? []) {
+      const id = readString(appEntry.id);
+      const name = readString(appEntry.name);
+      const isAccessible = appEntry.isAccessible === true;
+      const isEnabled = appEntry.isEnabled === true;
+      if (!id || !name || !isAccessible || !isEnabled) {
+        continue;
+      }
+      const token = id.toLowerCase();
+      if (!appsByToken.has(token)) {
+        appsByToken.set(token, { id, name });
+      }
+    }
+
+    cursor = result.nextCursor ?? null;
+    if (!cursor) {
+      break;
+    }
+  }
+
+  return appsByToken;
+}
+
+async function appendInjectedSkillAndMentionItems(
+  threadId: string,
+  input: CreateTurnRequest["input"],
+  cwd?: string,
+): Promise<CreateTurnRequest["input"]> {
+  const tokens = findSlashTokens(input);
+  if (tokens.length === 0) {
+    return input;
+  }
+
+  const dedupeKeys = new Set<string>();
+  for (const item of input) {
+    if (item.type === "skill" || item.type === "mention") {
+      dedupeKeys.add(dedupeInputItemKey(item));
+    }
+  }
+
+  const [skillsResult, appsResult] = await Promise.allSettled([
+    listEnabledSkills(cwd),
+    listAppsForMentions(threadId),
+  ]);
+
+  const skillsByToken =
+    skillsResult.status === "fulfilled"
+      ? skillsResult.value
+      : new Map<string, { name: string; path: string }>();
+  const appsByToken =
+    appsResult.status === "fulfilled"
+      ? appsResult.value
+      : new Map<string, { id: string; name: string }>();
+
+  if (skillsResult.status === "rejected") {
+    app.log.warn(
+      { err: skillsResult.reason },
+      "skills/list failed, skipping skill auto-injection",
+    );
+  }
+  if (appsResult.status === "rejected") {
+    app.log.warn(
+      { err: appsResult.reason },
+      "app/list failed, skipping app mention auto-injection",
+    );
+  }
+
+  const additions: CreateTurnRequest["input"] = [];
+  for (const token of tokens) {
+    const skill = skillsByToken.get(token);
+    if (skill) {
+      const next = {
+        type: "skill" as const,
+        name: skill.name,
+        path: skill.path,
+      };
+      const key = dedupeInputItemKey(next);
+      if (!dedupeKeys.has(key)) {
+        dedupeKeys.add(key);
+        additions.push(next);
+      }
+      continue;
+    }
+
+    const appEntry = appsByToken.get(token);
+    if (!appEntry) {
+      continue;
+    }
+    const next = {
+      type: "mention" as const,
+      name: appEntry.name,
+      path: `app://${appEntry.id}`,
+    };
+    const key = dedupeInputItemKey(next);
+    if (!dedupeKeys.has(key)) {
+      dedupeKeys.add(key);
+      additions.push(next);
+    }
+  }
+
+  if (additions.length === 0) {
+    return input;
+  }
+  return [...input, ...additions];
 }
 
 function isAllowedWsOrigin(origin: string | undefined): boolean {
@@ -535,6 +839,28 @@ app.get("/api/models", async (request): Promise<ModelsResponse> => {
   }
 
   return { data: models };
+});
+
+app.get("/api/account/rate-limits", async (): Promise<AccountRateLimitsResponse> => {
+  try {
+    const result = (await appServer.request("account/rateLimits/read")) as {
+      rateLimits?: unknown;
+      rateLimitsByLimitId?: unknown;
+    };
+    return {
+      rateLimits: (result.rateLimits as AccountRateLimitsResponse["rateLimits"]) ?? null,
+      rateLimitsByLimitId:
+        (result.rateLimitsByLimitId as AccountRateLimitsResponse["rateLimitsByLimitId"]) ?? null,
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    app.log.warn({ err: error }, "account/rateLimits/read failed");
+    return {
+      rateLimits: null,
+      rateLimitsByLimitId: null,
+      error: message,
+    };
+  }
 });
 
 app.get("/api/threads", async (request): Promise<ThreadListResponse> => {
@@ -961,18 +1287,34 @@ app.post("/api/threads/:id/turns", async (request): Promise<CreateTurnResponse> 
     throw error;
   }
 
+  const projected = db.getProjectedThread(params.id);
+  const inferredCwd =
+    body.options?.cwd ??
+    (projected?.projectKey && projected.projectKey !== "unknown"
+      ? projected.projectKey
+      : undefined);
+  const input = await appendInjectedSkillAndMentionItems(
+    params.id,
+    body.input,
+    inferredCwd,
+  );
+  const collaborationMode = body.options?.collaborationMode
+    ? await resolveCollaborationMode(body.options.collaborationMode, body.options.model)
+    : undefined;
+
   lastTurnInputByThread.set(params.id, {
-    input: body.input,
+    input,
     options: body.options,
   });
 
   const startTurn = async (): Promise<{ turn?: RawTurn }> =>
     (await appServer.request("turn/start", {
       threadId: params.id,
-      input: body.input,
+      input,
       ...(body.options?.model ? { model: body.options.model } : {}),
       ...(body.options?.effort ? { effort: body.options.effort } : {}),
       ...(body.options?.cwd ? { cwd: body.options.cwd } : {}),
+      ...(collaborationMode ? { collaborationMode } : {}),
       ...permissionModeToTurnStartParams(body.options?.permissionMode),
     })) as { turn?: RawTurn };
 
@@ -1004,6 +1346,41 @@ app.post("/api/threads/:id/turns", async (request): Promise<CreateTurnResponse> 
   }
 
   return { turnId };
+});
+
+app.post("/api/threads/:id/review", async (request): Promise<CreateReviewResponse> => {
+  const params = request.params as { id: string };
+  const body = (request.body ?? {}) as CreateReviewRequest;
+  const instructions =
+    typeof body.instructions === "string" ? body.instructions.trim() : "";
+
+  const target =
+    instructions.length > 0
+      ? {
+          type: "custom" as const,
+          instructions,
+        }
+      : body.target ?? { type: "uncommittedChanges" as const };
+  const delivery = body.delivery ?? "inline";
+
+  const result = (await appServer.request("review/start", {
+    threadId: params.id,
+    delivery,
+    target,
+  })) as {
+    turn?: RawTurn;
+    reviewThreadId?: unknown;
+  };
+
+  const turnId = result.turn?.id;
+  if (!turnId) {
+    throw new Error("review/start response missing turn.id");
+  }
+
+  return {
+    turnId,
+    reviewThreadId: readString(result.reviewThreadId) ?? params.id,
+  };
 });
 
 app.post(
@@ -1107,6 +1484,13 @@ app.post("/api/threads/:id/control", async (request): Promise<ThreadControlRespo
       throw error;
     }
 
+    const collaborationMode = previous.options?.collaborationMode
+      ? await resolveCollaborationMode(
+          previous.options.collaborationMode,
+          previous.options.model,
+        )
+      : undefined;
+
     const startTurn = async (): Promise<{ turn?: RawTurn }> =>
       (await appServer.request("turn/start", {
         threadId: params.id,
@@ -1114,6 +1498,7 @@ app.post("/api/threads/:id/control", async (request): Promise<ThreadControlRespo
         ...(previous.options?.model ? { model: previous.options.model } : {}),
         ...(previous.options?.effort ? { effort: previous.options.effort } : {}),
         ...(previous.options?.cwd ? { cwd: previous.options.cwd } : {}),
+        ...(collaborationMode ? { collaborationMode } : {}),
         ...permissionModeToTurnStartParams(previous.options?.permissionMode),
       })) as { turn?: RawTurn };
 

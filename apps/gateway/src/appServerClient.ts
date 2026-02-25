@@ -131,6 +131,9 @@ export class AppServerClient extends EventEmitter implements GatewayAppServerPor
           title: "Local Codex Web App",
           version: "0.1.0",
         },
+        capabilities: {
+          experimentalApi: true,
+        },
       });
       this.notify("initialized", {});
       this.initialized = true;

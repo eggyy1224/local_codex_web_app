@@ -103,6 +103,16 @@ export type UserInputItem =
   | {
       type: "localImage";
       path: string;
+    }
+  | {
+      type: "skill";
+      name: string;
+      path: string;
+    }
+  | {
+      type: "mention";
+      name: string;
+      path: string;
     };
 
 export type TurnStartOptions = {
@@ -110,6 +120,7 @@ export type TurnStartOptions = {
   effort?: string;
   cwd?: string;
   permissionMode?: TurnPermissionMode;
+  collaborationMode?: "plan" | "default";
 };
 
 export type TurnPermissionMode = "local" | "full-access";
@@ -143,6 +154,58 @@ export type CreateTurnRequest = {
 
 export type CreateTurnResponse = {
   turnId: string;
+};
+
+export type ReviewDelivery = "inline" | "detached";
+
+export type ReviewTarget =
+  | {
+      type: "uncommittedChanges";
+    }
+  | {
+      type: "baseBranch";
+      branch: string;
+    }
+  | {
+      type: "commit";
+      sha: string;
+      title?: string | null;
+    }
+  | {
+      type: "custom";
+      instructions: string;
+    };
+
+export type CreateReviewRequest = {
+  delivery?: ReviewDelivery;
+  target?: ReviewTarget;
+  instructions?: string;
+};
+
+export type CreateReviewResponse = {
+  turnId: string;
+  reviewThreadId: string;
+};
+
+export type RateLimitWindow = {
+  usedPercent: number;
+  windowDurationMins: number;
+  resetsAt: number;
+};
+
+export type RateLimitSnapshot = {
+  limitId: string | null;
+  limitName: string | null;
+  primary: RateLimitWindow | null;
+  secondary: RateLimitWindow | null;
+  credits?: unknown;
+  planType?: string | null;
+};
+
+export type AccountRateLimitsResponse = {
+  rateLimits: RateLimitSnapshot | null;
+  rateLimitsByLimitId: Record<string, RateLimitSnapshot> | null;
+  error?: string;
 };
 
 export type ApprovalType = "commandExecution" | "fileChange" | "userInput";

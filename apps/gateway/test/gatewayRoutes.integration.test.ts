@@ -320,6 +320,315 @@ describe("gateway integration routes", () => {
     }
   });
 
+  it("POST /api/threads/:id/turns auto-injects skill/mention items from $tokens", async () => {
+    const ctx = await createTestContext();
+    try {
+      let capturedStartParams: Record<string, unknown> | null = null;
+      ctx.stub.handlers.set("skills/list", () => ({
+        data: [
+          {
+            cwd: "/tmp/project",
+            skills: [
+              {
+                name: "openai-docs",
+                path: "/Users/me/.codex/skills/openai-docs/SKILL.md",
+                enabled: true,
+              },
+            ],
+            errors: [],
+          },
+        ],
+      }));
+      ctx.stub.handlers.set("app/list", () => ({
+        data: [
+          {
+            id: "demo-app",
+            name: "Demo App",
+            isAccessible: true,
+            isEnabled: true,
+          },
+        ],
+        nextCursor: null,
+      }));
+      ctx.stub.handlers.set("turn/start", (params) => {
+        capturedStartParams = params as Record<string, unknown>;
+        return { turn: { id: "turn-1" } };
+      });
+
+      const res = await ctx.app.inject({
+        method: "POST",
+        url: "/api/threads/thread-1/turns",
+        payload: {
+          input: [
+            {
+              type: "text",
+              text: "$openai-docs help me and $demo-app summarize and $unknown ignore",
+            },
+          ],
+          options: {
+            cwd: "/tmp/project",
+          },
+        },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({ turnId: "turn-1" });
+      expect(capturedStartParams).toBeTruthy();
+      expect(capturedStartParams?.input).toEqual([
+        {
+          type: "text",
+          text: "$openai-docs help me and $demo-app summarize and $unknown ignore",
+        },
+        {
+          type: "skill",
+          name: "openai-docs",
+          path: "/Users/me/.codex/skills/openai-docs/SKILL.md",
+        },
+        {
+          type: "mention",
+          name: "Demo App",
+          path: "app://demo-app",
+        },
+      ]);
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  it("POST /api/threads/:id/turns prefers skill over app when the same $token matches both", async () => {
+    const ctx = await createTestContext();
+    try {
+      let capturedStartParams: Record<string, unknown> | null = null;
+      ctx.stub.handlers.set("skills/list", () => ({
+        data: [
+          {
+            cwd: "/tmp/project",
+            skills: [
+              {
+                name: "same-token",
+                path: "/Users/me/.codex/skills/same-token/SKILL.md",
+                enabled: true,
+              },
+            ],
+            errors: [],
+          },
+        ],
+      }));
+      ctx.stub.handlers.set("app/list", () => ({
+        data: [
+          {
+            id: "same-token",
+            name: "Same Token App",
+            isAccessible: true,
+            isEnabled: true,
+          },
+        ],
+        nextCursor: null,
+      }));
+      ctx.stub.handlers.set("turn/start", (params) => {
+        capturedStartParams = params as Record<string, unknown>;
+        return { turn: { id: "turn-1" } };
+      });
+
+      const res = await ctx.app.inject({
+        method: "POST",
+        url: "/api/threads/thread-1/turns",
+        payload: {
+          input: [{ type: "text", text: "$same-token do work" }],
+          options: {
+            cwd: "/tmp/project",
+          },
+        },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(capturedStartParams?.input).toEqual([
+        { type: "text", text: "$same-token do work" },
+        {
+          type: "skill",
+          name: "same-token",
+          path: "/Users/me/.codex/skills/same-token/SKILL.md",
+        },
+      ]);
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  it("POST /api/threads/:id/turns converts collaborationMode preset via collaborationMode/list", async () => {
+    const ctx = await createTestContext();
+    try {
+      ctx.stub.handlers.set("skills/list", () => ({ data: [] }));
+      ctx.stub.handlers.set("app/list", () => ({ data: [], nextCursor: null }));
+      ctx.stub.handlers.set("collaborationMode/list", () => ({
+        data: [
+          {
+            name: "plan",
+            mode: "plan",
+            model: "gpt-5.3-codex",
+            reasoning_effort: "high",
+            developer_instructions: null,
+          },
+        ],
+      }));
+      ctx.stub.handlers.set("turn/start", (params) => {
+        expect(params).toMatchObject({
+          collaborationMode: {
+            mode: "plan",
+            settings: {
+              model: "gpt-5.3-codex",
+              reasoning_effort: "high",
+              developer_instructions: null,
+            },
+          },
+        });
+        return { turn: { id: "turn-plan-1" } };
+      });
+
+      const res = await ctx.app.inject({
+        method: "POST",
+        url: "/api/threads/thread-1/turns",
+        payload: {
+          input: [{ type: "text", text: "Create a plan" }],
+          options: { collaborationMode: "plan" },
+        },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({ turnId: "turn-plan-1" });
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  it("POST /api/threads/:id/turns returns readable 400 when collaboration preset cannot be resolved", async () => {
+    const ctx = await createTestContext();
+    try {
+      ctx.stub.handlers.set("skills/list", () => ({ data: [] }));
+      ctx.stub.handlers.set("app/list", () => ({ data: [], nextCursor: null }));
+      ctx.stub.handlers.set("collaborationMode/list", () => {
+        throw new Error("experimental api disabled");
+      });
+
+      const res = await ctx.app.inject({
+        method: "POST",
+        url: "/api/threads/thread-1/turns",
+        payload: {
+          input: [{ type: "text", text: "Create a plan" }],
+          options: { collaborationMode: "plan" },
+        },
+      });
+
+      expect(res.statusCode).toBe(400);
+      expect(res.json().message).toContain("collaboration mode \"plan\" unavailable");
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  it("POST /api/threads/:id/review defaults to uncommittedChanges and supports custom instructions", async () => {
+    const ctx = await createTestContext();
+    try {
+      let callCount = 0;
+      ctx.stub.handlers.set("review/start", (params) => {
+        callCount += 1;
+        if (callCount === 1) {
+          expect(params).toMatchObject({
+            threadId: "thread-1",
+            delivery: "inline",
+            target: { type: "uncommittedChanges" },
+          });
+          return {
+            turn: { id: "turn-review-1" },
+            reviewThreadId: "thread-1",
+          };
+        }
+
+        expect(params).toMatchObject({
+          threadId: "thread-1",
+          delivery: "inline",
+          target: { type: "custom", instructions: "focus on risky changes" },
+        });
+        return {
+          turn: { id: "turn-review-2" },
+          reviewThreadId: "thread-1",
+        };
+      });
+
+      const defaultRes = await ctx.app.inject({
+        method: "POST",
+        url: "/api/threads/thread-1/review",
+      });
+      expect(defaultRes.statusCode).toBe(200);
+      expect(defaultRes.json()).toEqual({
+        turnId: "turn-review-1",
+        reviewThreadId: "thread-1",
+      });
+
+      const customRes = await ctx.app.inject({
+        method: "POST",
+        url: "/api/threads/thread-1/review",
+        payload: { instructions: "focus on risky changes" },
+      });
+      expect(customRes.statusCode).toBe(200);
+      expect(customRes.json()).toEqual({
+        turnId: "turn-review-2",
+        reviewThreadId: "thread-1",
+      });
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  it("GET /api/account/rate-limits proxies success and falls back to 200 with error", async () => {
+    const ctx = await createTestContext();
+    try {
+      ctx.stub.handlers.set("account/rateLimits/read", () => ({
+        rateLimits: {
+          limitId: "codex",
+          limitName: null,
+          primary: {
+            usedPercent: 20,
+            windowDurationMins: 15,
+            resetsAt: 1_730_947_200,
+          },
+          secondary: null,
+        },
+        rateLimitsByLimitId: {
+          codex: {
+            limitId: "codex",
+            limitName: null,
+            primary: {
+              usedPercent: 20,
+              windowDurationMins: 15,
+              resetsAt: 1_730_947_200,
+            },
+            secondary: null,
+          },
+        },
+      }));
+
+      const okRes = await ctx.app.inject({ method: "GET", url: "/api/account/rate-limits" });
+      expect(okRes.statusCode).toBe(200);
+      expect(okRes.json()).toMatchObject({
+        rateLimits: { limitId: "codex" },
+      });
+
+      ctx.stub.handlers.set("account/rateLimits/read", () => {
+        throw new Error("rate limits unavailable");
+      });
+      const fallbackRes = await ctx.app.inject({ method: "GET", url: "/api/account/rate-limits" });
+      expect(fallbackRes.statusCode).toBe(200);
+      expect(fallbackRes.json()).toEqual({
+        rateLimits: null,
+        rateLimitsByLimitId: null,
+        error: "rate limits unavailable",
+      });
+    } finally {
+      await ctx.close();
+    }
+  });
+
   it("approval route maps allow/deny/cancel, writes audit/event, and clears pending", async () => {
     const ctx = await createTestContext();
     try {
