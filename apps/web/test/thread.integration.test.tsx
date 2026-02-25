@@ -464,6 +464,13 @@ describe("Thread page integration", () => {
       expect(screen.getByTestId("status-banner")).toBeInTheDocument();
       expect(screen.getByText(/thread: thread-1/)).toBeInTheDocument();
     });
+
+    fireEvent.change(textarea, { target: { value: "status" } });
+    fireEvent.keyDown(textarea, { key: "Enter" });
+    await waitFor(() => {
+      expect(rateLimitCalls).toBe(2);
+      expect(screen.getByTestId("status-banner")).toBeInTheDocument();
+    });
   });
 
   it("treats unknown slash as plain text input", async () => {

@@ -20,13 +20,25 @@ export type ParsedSlashCommand =
 
 export function parseSlashCommand(text: string): ParsedSlashCommand {
   const trimmed = text.trim();
-  if (!trimmed.startsWith("/")) {
+  const normalized = trimmed.replace(/^／/, "/");
+
+  // Compatibility alias: allow plain "status" to trigger /status.
+  if (/^status$/i.test(normalized)) {
+    return {
+      type: "known",
+      command: "status",
+      args: "",
+      text: normalized,
+    };
+  }
+
+  if (!normalized.startsWith("/")) {
     return { type: "none", text: trimmed };
   }
 
-  const match = trimmed.match(/^\/([A-Za-z0-9-]+)(?:\s+(.*))?$/);
+  const match = normalized.match(/^\/([A-Za-z0-9-]+)(?:\s+(.*))?$/);
   if (!match) {
-    return { type: "none", text: trimmed };
+    return { type: "none", text: normalized };
   }
 
   const rawCommand = match[1]?.toLowerCase() ?? "";
@@ -36,7 +48,7 @@ export function parseSlashCommand(text: string): ParsedSlashCommand {
       type: "known",
       command: rawCommand,
       args,
-      text: trimmed,
+      text: normalized,
     };
   }
 
@@ -44,6 +56,6 @@ export function parseSlashCommand(text: string): ParsedSlashCommand {
     type: "unknown",
     command: rawCommand,
     args,
-    text: trimmed,
+    text: normalized,
   };
 }

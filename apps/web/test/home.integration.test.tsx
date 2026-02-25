@@ -180,6 +180,12 @@ describe("Home page integration", () => {
     await waitFor(() => {
       expect(pushMock).toHaveBeenLastCalledWith("/threads/thread-cmd?status=1");
     });
+
+    fireEvent.change(textarea, { target: { value: "status" } });
+    fireEvent.keyDown(textarea, { key: "Enter" });
+    await waitFor(() => {
+      expect(pushMock).toHaveBeenLastCalledWith("/threads/thread-cmd?status=1");
+    });
   });
 
   it("keeps unknown slash as plain text", async () => {
