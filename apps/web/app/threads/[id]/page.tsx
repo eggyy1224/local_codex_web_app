@@ -1361,7 +1361,11 @@ export default function ThreadPage({ params }: Props) {
 
   return (
     <div className={`cdx-app ${sidebarVisible ? "" : "cdx-app--sidebar-collapsed"}`}>
-      <header className={`cdx-topbar ${isCompactViewport ? "cdx-topbar--compact" : ""}`}>
+      <header
+        className={`cdx-topbar ${isCompactViewport ? "cdx-topbar--compact" : ""} ${
+          isMobileViewport ? "cdx-topbar--mobile" : ""
+        }`}
+      >
         <div className="cdx-topbar-group">
           <button
             type="button"
@@ -1388,28 +1392,30 @@ export default function ThreadPage({ params }: Props) {
           </button>
         </div>
         <div className="cdx-topbar-group cdx-topbar-group--right">
-          <div className="cdx-toolbar-segment">
-            <button type="button" className="cdx-toolbar-btn cdx-toolbar-btn--segment-start">
-              Open
-            </button>
-            <button type="button" className="cdx-toolbar-btn cdx-toolbar-btn--segment-end" aria-label="Secondary action">
-              ▾
-            </button>
-          </div>
           {!isMobileViewport ? (
-            <button
-              type="button"
-              className="cdx-toolbar-btn cdx-toolbar-btn--icon"
-              aria-label="Toggle terminal"
-              title="Toggle terminal (Cmd+J)"
-              onClick={() => setTerminalOpen((v) => !v)}
-            >
-              ▦
-            </button>
+            <>
+              <div className="cdx-toolbar-segment">
+                <button type="button" className="cdx-toolbar-btn cdx-toolbar-btn--segment-start">
+                  Open
+                </button>
+                <button type="button" className="cdx-toolbar-btn cdx-toolbar-btn--segment-end" aria-label="Secondary action">
+                  ▾
+                </button>
+              </div>
+              <button
+                type="button"
+                className="cdx-toolbar-btn cdx-toolbar-btn--icon"
+                aria-label="Toggle terminal"
+                title="Toggle terminal (Cmd+J)"
+                onClick={() => setTerminalOpen((v) => !v)}
+              >
+                ▦
+              </button>
+              <button type="button" className="cdx-toolbar-btn" disabled>
+                Pop out
+              </button>
+            </>
           ) : null}
-          <button type="button" className="cdx-toolbar-btn" disabled>
-            Pop out
-          </button>
         </div>
       </header>
 
@@ -1489,39 +1495,46 @@ export default function ThreadPage({ params }: Props) {
                 </button>
               </div>
             )}
-            <p className="cdx-helper">
-              {detail?.thread.title ?? threadId} · seq{" "}
-              <span data-testid="event-cursor">{lastSeq}</span>
-            </p>
-            <div className="cdx-status-row">
+            {!isMobileViewport ? (
+              <p className="cdx-helper cdx-thread-seq">
+                {detail?.thread.title ?? threadId} · seq <span data-testid="event-cursor">{lastSeq}</span>
+              </p>
+            ) : null}
+            <div className={`cdx-status-row ${isMobileViewport ? "cdx-status-row--mobile" : ""}`}>
               <span className={`cdx-status ${statusClass(connectionState === "connected" ? "completed" : "unknown")}`}>
                 {connectionText}
               </span>
-              <span
-                data-testid="collaboration-mode"
-                className={`cdx-status ${
-                  collaborationMode === "plan" ? "is-pending" : "is-online"
-                }`}
-              >
-                mode: {collaborationMode}
-              </span>
+              {!isMobileViewport ? (
+                <span
+                  data-testid="collaboration-mode"
+                  className={`cdx-status ${
+                    collaborationMode === "plan" ? "is-pending" : "is-online"
+                  }`}
+                >
+                  mode: {collaborationMode}
+                </span>
+              ) : null}
               <span className="cdx-status is-pending">
                 Pending approval: {Object.keys(pendingApprovals).length}
               </span>
-              <span
-                className={`cdx-status ${
-                  threadContext?.isFallback ? "is-offline" : "is-online"
-                }`}
-              >
-                {threadContext?.isFallback
-                  ? "cwd unknown"
-                  : `cwd: ${threadContext?.resolvedCwd ?? "-"}`}
-              </span>
-              <Link href="/">
-                <button type="button" className="cdx-toolbar-btn">
-                  Home
-                </button>
-              </Link>
+              {!isMobileViewport ? (
+                <span
+                  className={`cdx-status ${
+                    threadContext?.isFallback ? "is-offline" : "is-online"
+                  }`}
+                >
+                  {threadContext?.isFallback
+                    ? "cwd unknown"
+                    : `cwd: ${threadContext?.resolvedCwd ?? "-"}`}
+                </span>
+              ) : null}
+              {!isMobileViewport ? (
+                <Link href="/">
+                  <button type="button" className="cdx-toolbar-btn">
+                    Home
+                  </button>
+                </Link>
+              ) : null}
             </div>
             {loading ? <p className="cdx-helper">Loading thread...</p> : null}
             {error ? <p className="cdx-error">{error}</p> : null}
@@ -1831,8 +1844,8 @@ export default function ThreadPage({ params }: Props) {
             <p className="cdx-helper">
               Mode: {collaborationMode} · Shift+Tab toggle · /plan /review /status
             </p>
-            <div className="cdx-composer-row">
-              <div className="cdx-inline-actions">
+            <div className={`cdx-composer-row ${isMobileViewport ? "cdx-composer-row--mobile" : ""}`}>
+              <div className={`cdx-inline-actions ${isMobileViewport ? "cdx-inline-actions--mobile" : ""}`}>
                 <button
                   type="button"
                   data-testid="control-stop"
@@ -1861,8 +1874,11 @@ export default function ThreadPage({ params }: Props) {
                   {controlBusy === "cancel" ? "Cancelling..." : "Cancel"}
                 </button>
               </div>
-              <div className="cdx-composer-right">
-                <label className="cdx-composer-select" htmlFor="model">
+              <div className={`cdx-composer-right ${isMobileViewport ? "cdx-composer-right--mobile" : ""}`}>
+                <label
+                  className={`cdx-composer-select ${isMobileViewport ? "cdx-composer-select--mobile" : ""}`}
+                  htmlFor="model"
+                >
                   <span>Model</span>
                   <select
                     id="model"
@@ -1878,7 +1894,10 @@ export default function ThreadPage({ params }: Props) {
                     ))}
                   </select>
                 </label>
-                <label className="cdx-composer-select" htmlFor="thinking-effort">
+                <label
+                  className={`cdx-composer-select ${isMobileViewport ? "cdx-composer-select--mobile" : ""}`}
+                  htmlFor="thinking-effort"
+                >
                   <span>Thinking</span>
                   <select
                     id="thinking-effort"
@@ -1894,7 +1913,10 @@ export default function ThreadPage({ params }: Props) {
                     ))}
                   </select>
                 </label>
-                <label className="cdx-composer-select" htmlFor="permission-mode">
+                <label
+                  className={`cdx-composer-select ${isMobileViewport ? "cdx-composer-select--mobile" : ""}`}
+                  htmlFor="permission-mode"
+                >
                   <span>Permission</span>
                   <select
                     id="permission-mode"
@@ -1913,7 +1935,7 @@ export default function ThreadPage({ params }: Props) {
                 <button
                   type="button"
                   data-testid="turn-submit"
-                  className="cdx-send-btn"
+                  className={`cdx-send-btn ${isMobileViewport ? "cdx-send-btn--mobile" : ""}`}
                   onClick={() => void sendTurn()}
                   disabled={submitting || prompt.trim().length === 0}
                 >
