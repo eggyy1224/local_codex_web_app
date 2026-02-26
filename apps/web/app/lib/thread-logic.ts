@@ -704,13 +704,24 @@ export function buildConversationTurns(items: ThreadTimelineItem[]): Conversatio
         turn.thinkingDelta.length > 0
           ? mergeStreamedText(thinkingBase || null, turn.thinkingDelta)
           : thinkingBase || null;
+      const hasProgressSignals = turn.assistantDelta.length > 0 || turn.thinkingDelta.length > 0;
+      const hasResolvedSignals =
+        Boolean(assistantText) || Boolean(thinkingText) || turn.toolResults.length > 0;
+      const normalizedStatus =
+        turn.status === "unknown"
+          ? hasProgressSignals
+            ? "inProgress"
+            : hasResolvedSignals
+              ? "completed"
+              : "unknown"
+          : turn.status;
 
       return {
         turnId: turn.turnId,
         startedAt: turn.startedAt,
         completedAt: turn.completedAt,
-        status: turn.status,
-        isStreaming: turn.status === "inProgress",
+        status: normalizedStatus as TurnStatus,
+        isStreaming: normalizedStatus === "inProgress",
         userText: bestUserText,
         assistantText,
         thinkingText,

@@ -233,4 +233,40 @@ describe("thread logic helpers", () => {
       toolCalls: [{ toolName: "read_file", text: "{}" }],
     });
   });
+
+  it("infers completed status when assistant text exists without turn status events", () => {
+    const items: ThreadTimelineItem[] = [
+      {
+        id: "1",
+        ts: "2026-01-01T00:00:00.000Z",
+        turnId: "turn-1",
+        type: "userMessage",
+        title: "You",
+        text: "hello",
+        rawType: "userMessage",
+        toolName: null,
+        callId: null,
+      },
+      {
+        id: "2",
+        ts: "2026-01-01T00:00:01.000Z",
+        turnId: "turn-1",
+        type: "assistantMessage",
+        title: "Assistant",
+        text: "world",
+        rawType: "agentMessage",
+        toolName: null,
+        callId: null,
+      },
+    ];
+
+    const turns = buildConversationTurns(items);
+    expect(turns).toHaveLength(1);
+    expect(turns[0]).toMatchObject({
+      turnId: "turn-1",
+      status: "completed",
+      isStreaming: false,
+      assistantText: "world",
+    });
+  });
 });
