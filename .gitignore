@@ -10,3 +10,4 @@ apps/web/test-results/
 .DS_Store
 
 *.tsbuildinfo
+codex/
