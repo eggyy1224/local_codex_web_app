@@ -83,6 +83,33 @@ describe("thread logic helpers", () => {
         },
       },
     };
+    const planUpdated: GatewayEvent = {
+      seq: 23,
+      serverTs: "2026-01-01T00:00:03.000Z",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      kind: "turn",
+      name: "turn/plan/updated",
+      payload: {
+        turnId: "turn-1",
+        explanation: "Working through steps",
+        plan: [
+          { step: "Inspect code", status: "completed" },
+          { step: "Write tests", status: "inProgress" },
+        ],
+      },
+    };
+    const interactionResponded: GatewayEvent = {
+      seq: 24,
+      serverTs: "2026-01-01T00:00:04.000Z",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      kind: "interaction",
+      name: "interaction/responded",
+      payload: {
+        interactionId: "ia-1",
+      },
+    };
 
     expect(timelineItemFromGatewayEvent(planDelta)).toMatchObject({
       type: "reasoning",
@@ -98,6 +125,15 @@ describe("thread logic helpers", () => {
       type: "status",
       title: "Token usage updated",
       text: "total 100 · input 70 · output 30 · window 128000",
+    });
+    expect(timelineItemFromGatewayEvent(planUpdated)).toMatchObject({
+      type: "status",
+      title: "Plan updated",
+      text: "Working through steps\n[completed] Inspect code\n[inProgress] Write tests",
+    });
+    expect(timelineItemFromGatewayEvent(interactionResponded)).toMatchObject({
+      type: "status",
+      title: "Question answered",
     });
   });
 

@@ -80,6 +80,28 @@ function formatTokenUsageStatus(payload: Record<string, unknown> | null): string
   return parts.join(" · ");
 }
 
+function formatPlanUpdateStatus(payload: Record<string, unknown> | null): string | null {
+  const lines: string[] = [];
+  const explanation = readString(payload, "explanation");
+  if (explanation) {
+    lines.push(explanation);
+  }
+  if (Array.isArray(payload?.plan)) {
+    for (const entry of payload.plan) {
+      if (!entry || typeof entry !== "object") {
+        continue;
+      }
+      const step = readString(entry as Record<string, unknown>, "step");
+      const status = readString(entry as Record<string, unknown>, "status");
+      if (!step || !status) {
+        continue;
+      }
+      lines.push(`[${status}] ${step}`);
+    }
+  }
+  return lines.length > 0 ? lines.join("\n") : null;
+}
+
 function extractUserMessageText(item: Record<string, unknown>): string | null {
   const content = item.content;
   if (!Array.isArray(content)) {
@@ -249,6 +271,21 @@ export function timelineItemFromGatewayEvent(event: GatewayEvent): ThreadTimelin
     };
   }
 
+  if (event.name === "turn/plan/updated") {
+    const itemTurnId = readString(payload, "turnId") ?? readString(payload, "turn_id") ?? event.turnId;
+    return {
+      id: `${eventId}-turn-plan-updated`,
+      ts: event.serverTs,
+      turnId: itemTurnId,
+      type: "status",
+      title: "Plan updated",
+      text: formatPlanUpdateStatus(payload),
+      rawType: event.name,
+      toolName: null,
+      callId: null,
+    };
+  }
+
   if (event.name.includes("requestApproval")) {
     const reason = readString(payload, "reason");
     const command = readString(payload, "command");
@@ -262,6 +299,50 @@ export function timelineItemFromGatewayEvent(event: GatewayEvent): ThreadTimelin
       type: "status",
       title: "Approval requested",
       text: normalizeText(lines.join("\n")),
+      rawType: event.name,
+      toolName: null,
+      callId: null,
+    };
+  }
+
+  if (event.name === "item/tool/requestUserInput" || event.name === "tool/requestUserInput") {
+    const questions = Array.isArray(payload?.questions)
+      ? payload.questions
+          .map((entry) => {
+            if (!entry || typeof entry !== "object") {
+              return null;
+            }
+            const record = entry as Record<string, unknown>;
+            const header = readString(record, "header");
+            const question = readString(record, "question");
+            if (header && question) {
+              return `${header}: ${question}`;
+            }
+            return question ?? header;
+          })
+          .filter((entry): entry is string => Boolean(entry))
+      : [];
+    return {
+      id: `${eventId}-interaction-request`,
+      ts: event.serverTs,
+      turnId: event.turnId,
+      type: "status",
+      title: "Question requested",
+      text: normalizeText(questions.join("\n")),
+      rawType: event.name,
+      toolName: null,
+      callId: null,
+    };
+  }
+
+  if (event.name === "interaction/responded") {
+    return {
+      id: `${eventId}-interaction-responded`,
+      ts: event.serverTs,
+      turnId: event.turnId,
+      type: "status",
+      title: "Question answered",
+      text: null,
       rawType: event.name,
       toolName: null,
       callId: null,

@@ -3,11 +3,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type {
   ApprovalDecisionRequest,
+  InteractionRespondRequest,
   ThreadControlRequest,
   TurnPermissionMode,
 } from "@lcwa/shared-types";
 
-type ControlSheetSection = "controls" | "settings" | "approvals";
+type ControlSheetSection = "controls" | "settings" | "questions" | "approvals";
 type ControlSheetSnap = "half" | "full";
 
 type MobileApprovalItem = {
@@ -16,6 +17,20 @@ type MobileApprovalItem = {
   reason: string | null;
   commandPreview: string | null;
   fileChangePreview: string | null;
+};
+
+type MobileInteractionQuestion = {
+  id: string;
+  header: string;
+  question: string;
+  isOther: boolean;
+  isSecret: boolean;
+  options: Array<{ label: string; description: string }> | null;
+};
+
+type MobileInteractionItem = {
+  interactionId: string;
+  questions: MobileInteractionQuestion[];
 };
 
 type ModelOptionView = {
@@ -30,8 +45,10 @@ type MobileControlSheetProps = {
   isDragging: boolean;
   dragOffsetY: number;
   approvalBusy: string | null;
+  interactionBusy: string | null;
   controlBusy: ThreadControlRequest["action"] | null;
   pendingApprovals: MobileApprovalItem[];
+  pendingInteractions: MobileInteractionItem[];
   model: string;
   modelOptions: ModelOptionView[];
   thinkingEffort: string;
@@ -44,6 +61,10 @@ type MobileControlSheetProps = {
   onDragOffsetChange: (offset: number) => void;
   onControl: (action: ThreadControlRequest["action"]) => void;
   onDecision: (approvalId: string, decision: ApprovalDecisionRequest["decision"]) => void;
+  onRespondInteraction: (
+    interactionId: string,
+    answers: InteractionRespondRequest["answers"],
+  ) => void;
   onModelChange: (value: string) => void;
   onThinkingEffortChange: (value: string) => void;
   onPermissionModeChange: (value: TurnPermissionMode) => void;
@@ -64,8 +85,10 @@ export default function MobileControlSheet({
   isDragging,
   dragOffsetY,
   approvalBusy,
+  interactionBusy,
   controlBusy,
   pendingApprovals,
+  pendingInteractions,
   model,
   modelOptions,
   thinkingEffort,
@@ -78,6 +101,7 @@ export default function MobileControlSheet({
   onDragOffsetChange,
   onControl,
   onDecision,
+  onRespondInteraction,
   onModelChange,
   onThinkingEffortChange,
   onPermissionModeChange,
@@ -88,6 +112,9 @@ export default function MobileControlSheet({
   const viewportHeightRef = useRef<number>(844);
   const dialogRef = useRef<HTMLElement | null>(null);
   const [viewportHeight, setViewportHeight] = useState(844);
+  const [questionDrafts, setQuestionDrafts] = useState<
+    Record<string, Record<string, { selected: string[]; other: string; freeform: string }>>
+  >({});
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -208,6 +235,62 @@ export default function MobileControlSheet({
     return null;
   }
 
+  const updateQuestionDraft = (
+    interactionId: string,
+    questionId: string,
+    updater: (prev: { selected: string[]; other: string; freeform: string }) => {
+      selected: string[];
+      other: string;
+      freeform: string;
+    },
+  ) => {
+    setQuestionDrafts((prev) => {
+      const interaction = prev[interactionId] ?? {};
+      const current = interaction[questionId] ?? { selected: [], other: "", freeform: "" };
+      const nextQuestion = updater(current);
+      return {
+        ...prev,
+        [interactionId]: {
+          ...interaction,
+          [questionId]: nextQuestion,
+        },
+      };
+    });
+  };
+
+  const answersForInteraction = (
+    interactionId: string,
+    questions: MobileInteractionQuestion[],
+  ): InteractionRespondRequest["answers"] | null => {
+    const draft = questionDrafts[interactionId] ?? {};
+    const result: InteractionRespondRequest["answers"] = {};
+
+    for (const question of questions) {
+      const questionDraft = draft[question.id] ?? { selected: [], other: "", freeform: "" };
+      const answers: string[] = [];
+      if (question.options && question.options.length > 0) {
+        for (const option of questionDraft.selected) {
+          if (option.trim().length > 0) {
+            answers.push(option.trim());
+          }
+        }
+      } else if (questionDraft.freeform.trim().length > 0) {
+        answers.push(questionDraft.freeform.trim());
+      }
+
+      if (question.isOther && questionDraft.other.trim().length > 0) {
+        answers.push(questionDraft.other.trim());
+      }
+
+      if (answers.length === 0) {
+        return null;
+      }
+      result[question.id] = { answers };
+    }
+
+    return result;
+  };
+
   return (
     <div
       className="cdx-mobile-sheet-backdrop"
@@ -267,6 +350,14 @@ export default function MobileControlSheet({
             onClick={() => onSectionChange("settings")}
           >
             Settings
+          </button>
+          <button
+            type="button"
+            className={`cdx-mobile-sheet-tab ${section === "questions" ? "is-active" : ""}`}
+            data-testid="mobile-control-tab-questions"
+            onClick={() => onSectionChange("questions")}
+          >
+            Questions ({pendingInteractions.length})
           </button>
           <button
             type="button"
@@ -355,6 +446,106 @@ export default function MobileControlSheet({
                   <option value="full-access">Full access (never)</option>
                 </select>
               </label>
+            </div>
+          ) : null}
+
+          {section === "questions" ? (
+            <div className="cdx-mobile-approvals-list">
+              {pendingInteractions.length === 0 ? <p className="cdx-helper">No pending questions.</p> : null}
+              {pendingInteractions.map((interaction) => {
+                const answers = answersForInteraction(interaction.interactionId, interaction.questions);
+                return (
+                  <article key={interaction.interactionId} className="cdx-mobile-approval-item">
+                    <div className="cdx-mobile-approval-head">
+                      <strong>question</strong>
+                      <span className="cdx-status is-pending">pending</span>
+                    </div>
+                    <div className="cdx-mobile-sheet-form">
+                      {interaction.questions.map((question) => {
+                        const current =
+                          questionDrafts[interaction.interactionId]?.[question.id] ?? {
+                            selected: [],
+                            other: "",
+                            freeform: "",
+                          };
+                        return (
+                          <div key={`${interaction.interactionId}-${question.id}`} className="cdx-mobile-sheet-field">
+                            <span>{question.header}</span>
+                            <p className="cdx-helper">{question.question}</p>
+                            {question.options ? (
+                              <div className="cdx-mobile-sheet-block">
+                                {question.options.map((option) => (
+                                  <label key={option.label} className="cdx-helper">
+                                    <input
+                                      type="checkbox"
+                                      checked={current.selected.includes(option.label)}
+                                      onChange={(event) => {
+                                        updateQuestionDraft(
+                                          interaction.interactionId,
+                                          question.id,
+                                          (prev) => ({
+                                            ...prev,
+                                            selected: event.target.checked
+                                              ? [...prev.selected, option.label]
+                                              : prev.selected.filter((entry) => entry !== option.label),
+                                          }),
+                                        );
+                                      }}
+                                    />{" "}
+                                    {option.label} - {option.description}
+                                  </label>
+                                ))}
+                              </div>
+                            ) : (
+                              <input
+                                type={question.isSecret ? "password" : "text"}
+                                value={current.freeform}
+                                onChange={(event) => {
+                                  updateQuestionDraft(interaction.interactionId, question.id, (prev) => ({
+                                    ...prev,
+                                    freeform: event.target.value,
+                                  }));
+                                }}
+                              />
+                            )}
+                            {question.isOther ? (
+                              <input
+                                type={question.isSecret ? "password" : "text"}
+                                value={current.other}
+                                placeholder="Other"
+                                onChange={(event) => {
+                                  updateQuestionDraft(interaction.interactionId, question.id, (prev) => ({
+                                    ...prev,
+                                    other: event.target.value,
+                                  }));
+                                }}
+                              />
+                            ) : null}
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <button
+                      type="button"
+                      className="cdx-toolbar-btn cdx-toolbar-btn--positive"
+                      data-testid="interaction-submit"
+                      disabled={interactionBusy !== null || !answers}
+                      onClick={() => {
+                        const finalAnswers = answersForInteraction(
+                          interaction.interactionId,
+                          interaction.questions,
+                        );
+                        if (!finalAnswers) {
+                          return;
+                        }
+                        onRespondInteraction(interaction.interactionId, finalAnswers);
+                      }}
+                    >
+                      Submit answers
+                    </button>
+                  </article>
+                );
+              })}
             </div>
           ) : null}
 

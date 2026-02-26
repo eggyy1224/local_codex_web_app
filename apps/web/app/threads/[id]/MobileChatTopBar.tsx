@@ -3,7 +3,7 @@
 type MobileChatTopBarProps = {
   threadTitle: string;
   modelLabel: string;
-  pendingApprovalCount: number;
+  pendingActionCount: number;
   onOpenThreads: () => void;
   onOpenControls: () => void;
 };
@@ -11,7 +11,7 @@ type MobileChatTopBarProps = {
 export default function MobileChatTopBar({
   threadTitle,
   modelLabel,
-  pendingApprovalCount,
+  pendingActionCount,
   onOpenThreads,
   onOpenControls,
 }: MobileChatTopBarProps) {
@@ -41,7 +41,7 @@ export default function MobileChatTopBar({
         aria-label="Open controls"
       >
         ⋯
-        {pendingApprovalCount > 0 ? <span className="cdx-mobile-dot" aria-hidden="true" /> : null}
+        {pendingActionCount > 0 ? <span className="cdx-mobile-dot" aria-hidden="true" /> : null}
       </button>
     </header>
   );

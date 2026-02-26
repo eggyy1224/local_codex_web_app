@@ -119,6 +119,79 @@ test("mobile smoke: chat-first thread flow + sheet controls", async ({ page }, t
     .toBeLessThanOrEqual(0);
 });
 
+test("desktop plan flow: answer questions then implement proposed plan", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop");
+
+  await page.goto("/");
+  await expect(page.getByText("Gateway connected")).toBeVisible();
+
+  await page.getByRole("button", { name: "New thread" }).first().click();
+  await expect(page).toHaveURL(/\/threads\//);
+
+  await page.getByTestId("turn-input").fill("plan flow desktop");
+  await page.getByTestId("turn-submit").click();
+
+  await expect(page.getByTestId("approval-drawer")).toBeVisible();
+  await page.getByLabel("Staging - safe environment").check();
+  await page.getByPlaceholder("Other").fill("canary rollout");
+  await page.getByTestId("interaction-submit").click();
+
+  await expect
+    .poll(async () => {
+      const status = await page.locator(".cdx-status-row").innerText();
+      return status.includes("Pending questions: 0");
+    })
+    .toBe(true);
+
+  await expect(page.getByText("Plan ready")).toBeVisible();
+  await page.getByRole("button", { name: "Implement this plan" }).first().click();
+
+  const dialog = page.getByTestId("implement-dialog");
+  await expect(dialog).toBeVisible();
+  await dialog.getByTestId("implement-draft-input").fill("Implement now from e2e");
+  await dialog.getByRole("button", { name: "Implement this plan" }).click();
+  await expect(dialog).toHaveCount(0);
+
+  await expect(page.getByTestId("timeline")).toContainText("Echo: Implement now from e2e");
+});
+
+test("mobile plan flow: answer questions tab then implement from sheet", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "mobile");
+
+  await page.goto("/");
+  await expect(page.getByText("Gateway connected")).toBeVisible();
+
+  await page.getByRole("button", { name: "New thread" }).first().click();
+  await expect(page).toHaveURL(/\/threads\//);
+
+  await page.getByTestId("turn-input").fill("plan flow mobile");
+  await page.getByTestId("turn-submit").click();
+
+  await page.getByTestId("mobile-topbar-control-toggle").click();
+  const sheet = page.getByTestId("mobile-control-sheet");
+  await expect(sheet).toBeVisible();
+  await sheet.getByTestId("mobile-control-tab-questions").click();
+  await sheet.getByLabel("Staging - safe environment").check();
+  await sheet.getByTestId("interaction-submit").evaluate((node: HTMLElement) => {
+    node.click();
+  });
+  await sheet.getByTestId("mobile-control-sheet-close").evaluate((node: HTMLElement) => {
+    node.click();
+  });
+  await expect(sheet).toHaveCount(0);
+
+  await expect(page.getByRole("button", { name: "Implement this plan" }).first()).toBeVisible();
+  await page.getByRole("button", { name: "Implement this plan" }).first().click();
+
+  const implementSheet = page.getByTestId("mobile-implement-sheet");
+  await expect(implementSheet).toBeVisible();
+  await implementSheet.getByTestId("implement-draft-input").fill("Mobile implement now");
+  await implementSheet.getByRole("button", { name: "Implement this plan" }).click();
+  await expect(implementSheet).toHaveCount(0);
+
+  await expect(page.getByTestId("timeline")).toContainText("Echo: Mobile implement now");
+});
+
 test("events UI: connection status and cursor updates", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop");
 
