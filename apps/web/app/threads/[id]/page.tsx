@@ -220,6 +220,7 @@ function interactionFromEvent(event: GatewayEvent): PendingInteractionCard | nul
             })
             .filter((option): option is NonNullable<typeof option> => option !== null)
         : null;
+      const normalizedOptions = options && options.length > 0 ? options : null;
 
       return {
         id,
@@ -227,7 +228,7 @@ function interactionFromEvent(event: GatewayEvent): PendingInteractionCard | nul
         question: body,
         isOther: question.isOther === true,
         isSecret: question.isSecret === true,
-        options,
+        options: normalizedOptions,
       };
     })
     .filter((question): question is NonNullable<typeof question> => question !== null);
@@ -876,7 +877,10 @@ export default function ThreadPage({ params }: Props) {
               return next;
             });
           }
-        } else if (payload.name === "interaction/responded") {
+        } else if (
+          payload.name === "interaction/responded" ||
+          payload.name === "interaction/cancelled"
+        ) {
           const interactionPayload = asRecord(payload.payload);
           const interactionId = readString(interactionPayload, "interactionId");
           if (interactionId) {
@@ -2493,7 +2497,7 @@ export default function ThreadPage({ params }: Props) {
                           <div key={`${activeInteraction.interactionId}-${question.id}`} className="cdx-mobile-sheet-field">
                             <span>{question.header}</span>
                             <p className="cdx-helper">{question.question}</p>
-                            {question.options ? (
+                            {question.options && question.options.length > 0 ? (
                               <div className="cdx-mobile-sheet-block">
                                 {question.options.map((option) => (
                                   <label key={option.label} className="cdx-option-row">

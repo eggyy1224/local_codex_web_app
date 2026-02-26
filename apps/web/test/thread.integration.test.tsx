@@ -1263,6 +1263,174 @@ describe("Thread page integration", () => {
     });
   });
 
+  it("desktop questions fall back to freeform input when options are empty", async () => {
+    vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+    const interactionCalls: Array<unknown> = [];
+
+    server.use(
+      http.get("http://127.0.0.1:8787/api/threads/:id", ({ params }) =>
+        HttpResponse.json({
+          thread: {
+            id: String(params.id),
+            title: "Main Thread",
+            preview: "Preview",
+            status: "idle",
+            createdAt: null,
+            updatedAt: null,
+          },
+          turns: [],
+          nextCursor: null,
+        }),
+      ),
+      http.get("http://127.0.0.1:8787/api/threads/:id/approvals/pending", () => HttpResponse.json({ data: [] })),
+      http.get("http://127.0.0.1:8787/api/threads/:id/interactions/pending", () =>
+        HttpResponse.json({
+          data: [
+            {
+              interactionId: "ix-1",
+              threadId: "thread-1",
+              turnId: "turn-1",
+              itemId: "item-1",
+              type: "userInput",
+              status: "pending",
+              questions: [
+                {
+                  id: "q1",
+                  header: "Deploy target",
+                  question: "Where should this deploy?",
+                  isOther: false,
+                  isSecret: false,
+                  options: [],
+                },
+              ],
+              createdAt: "2026-01-01T00:00:00.000Z",
+              resolvedAt: null,
+            },
+          ],
+        }),
+      ),
+      http.get("http://127.0.0.1:8787/api/threads", () => HttpResponse.json({ data: [], nextCursor: null })),
+      http.get("http://127.0.0.1:8787/api/threads/:id/timeline", () => HttpResponse.json({ data: [] })),
+      http.get("http://127.0.0.1:8787/api/threads/:id/context", () =>
+        HttpResponse.json({
+          threadId: "thread-1",
+          cwd: "/tmp/project",
+          resolvedCwd: "/tmp/project",
+          isFallback: false,
+          source: "projection",
+        }),
+      ),
+      http.get("http://127.0.0.1:8787/api/models", () => HttpResponse.json({ data: [] })),
+      http.post("http://127.0.0.1:8787/api/threads/:id/interactions/:interactionId/respond", async ({ request }) => {
+        interactionCalls.push(await request.json());
+        return HttpResponse.json({ ok: true });
+      }),
+    );
+
+    render(<ThreadPage params={Promise.resolve({ id: "thread-1" })} />);
+
+    const drawer = await screen.findByTestId("approval-drawer");
+    const freeformInput = within(drawer).getByRole("textbox");
+    fireEvent.change(freeformInput, { target: { value: "staging" } });
+    fireEvent.click(within(drawer).getByTestId("interaction-submit"));
+
+    await waitFor(() => {
+      expect(interactionCalls).toHaveLength(1);
+    });
+    expect(interactionCalls[0]).toEqual({
+      answers: {
+        q1: {
+          answers: ["staging"],
+        },
+      },
+    });
+  });
+
+  it("desktop removes pending interaction when SSE emits interaction/cancelled", async () => {
+    vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+
+    server.use(
+      http.get("http://127.0.0.1:8787/api/threads/:id", ({ params }) =>
+        HttpResponse.json({
+          thread: {
+            id: String(params.id),
+            title: "Main Thread",
+            preview: "Preview",
+            status: "idle",
+            createdAt: null,
+            updatedAt: null,
+          },
+          turns: [],
+          nextCursor: null,
+        }),
+      ),
+      http.get("http://127.0.0.1:8787/api/threads/:id/approvals/pending", () => HttpResponse.json({ data: [] })),
+      http.get("http://127.0.0.1:8787/api/threads/:id/interactions/pending", () =>
+        HttpResponse.json({
+          data: [
+            {
+              interactionId: "ix-1",
+              threadId: "thread-1",
+              turnId: "turn-1",
+              itemId: "item-1",
+              type: "userInput",
+              status: "pending",
+              questions: [
+                {
+                  id: "q1",
+                  header: "Deploy target",
+                  question: "Where should this deploy?",
+                  isOther: false,
+                  isSecret: false,
+                  options: [{ label: "Staging", description: "safe env" }],
+                },
+              ],
+              createdAt: "2026-01-01T00:00:00.000Z",
+              resolvedAt: null,
+            },
+          ],
+        }),
+      ),
+      http.get("http://127.0.0.1:8787/api/threads", () => HttpResponse.json({ data: [], nextCursor: null })),
+      http.get("http://127.0.0.1:8787/api/threads/:id/timeline", () => HttpResponse.json({ data: [] })),
+      http.get("http://127.0.0.1:8787/api/threads/:id/context", () =>
+        HttpResponse.json({
+          threadId: "thread-1",
+          cwd: "/tmp/project",
+          resolvedCwd: "/tmp/project",
+          isFallback: false,
+          source: "projection",
+        }),
+      ),
+      http.get("http://127.0.0.1:8787/api/models", () => HttpResponse.json({ data: [] })),
+    );
+
+    render(<ThreadPage params={Promise.resolve({ id: "thread-1" })} />);
+    await screen.findByTestId("approval-drawer");
+
+    const es = MockEventSource.instances.at(-1);
+    if (!es) {
+      throw new Error("missing EventSource instance");
+    }
+
+    es.emit("gateway", {
+      seq: 10,
+      serverTs: "2026-01-01T00:00:02.000Z",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      kind: "interaction",
+      name: "interaction/cancelled",
+      payload: {
+        interactionId: "ix-1",
+        reason: "turn_completed",
+      },
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("approval-drawer")).not.toBeInTheDocument();
+    });
+  });
+
   it("mobile questions tab opens from topbar and submits answers", async () => {
     setMobileViewport(true);
     vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
@@ -1359,6 +1527,112 @@ describe("Thread page integration", () => {
     await waitFor(() => {
       expect(interactionCalls).toHaveLength(1);
       expect(within(sheet).getByText("Questions (0)")).toBeInTheDocument();
+    });
+  });
+
+  it("mobile questions fall back to freeform input when options are empty", async () => {
+    setMobileViewport(true);
+    vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+    const interactionCalls: Array<unknown> = [];
+
+    server.use(
+      http.get("http://127.0.0.1:8787/api/threads/:id", ({ params }) =>
+        HttpResponse.json({
+          thread: {
+            id: String(params.id),
+            title: "Mobile Thread",
+            preview: "Preview",
+            status: "idle",
+            createdAt: null,
+            updatedAt: null,
+          },
+          turns: [],
+          nextCursor: null,
+        }),
+      ),
+      http.get("http://127.0.0.1:8787/api/threads/:id/approvals/pending", () => HttpResponse.json({ data: [] })),
+      http.get("http://127.0.0.1:8787/api/threads/:id/interactions/pending", () =>
+        HttpResponse.json({
+          data: [
+            {
+              interactionId: "ix-1",
+              threadId: "thread-1",
+              turnId: "turn-1",
+              itemId: "item-1",
+              type: "userInput",
+              status: "pending",
+              questions: [
+                {
+                  id: "q1",
+                  header: "Deploy target",
+                  question: "Where should this deploy?",
+                  isOther: false,
+                  isSecret: false,
+                  options: [],
+                },
+              ],
+              createdAt: "2026-01-01T00:00:00.000Z",
+              resolvedAt: null,
+            },
+          ],
+        }),
+      ),
+      http.get("http://127.0.0.1:8787/api/threads", () =>
+        HttpResponse.json({
+          data: [
+            {
+              id: "thread-1",
+              projectKey: "/tmp/project",
+              title: "Mobile Thread",
+              preview: "Preview",
+              status: "idle",
+              lastActiveAt: "2026-01-01T00:00:00.000Z",
+              archived: false,
+              waitingApprovalCount: 0,
+              errorCount: 0,
+            },
+          ],
+          nextCursor: null,
+        }),
+      ),
+      http.get("http://127.0.0.1:8787/api/threads/:id/timeline", () => HttpResponse.json({ data: [] })),
+      http.get("http://127.0.0.1:8787/api/threads/:id/context", () =>
+        HttpResponse.json({
+          threadId: "thread-1",
+          cwd: "/tmp/project",
+          resolvedCwd: "/tmp/project",
+          isFallback: false,
+          source: "projection",
+        }),
+      ),
+      http.get("http://127.0.0.1:8787/api/models", () => HttpResponse.json({ data: [] })),
+      http.post("http://127.0.0.1:8787/api/threads/:id/interactions/:interactionId/respond", async ({ request }) => {
+        interactionCalls.push(await request.json());
+        return HttpResponse.json({ ok: true });
+      }),
+    );
+
+    render(<ThreadPage params={Promise.resolve({ id: "thread-1" })} />);
+
+    await screen.findByTestId("mobile-chat-topbar");
+    fireEvent.click(screen.getByTestId("mobile-topbar-control-toggle"));
+    const sheet = await screen.findByTestId("mobile-control-sheet");
+    fireEvent.click(within(sheet).getByTestId("mobile-control-tab-questions"));
+
+    const freeformInput = within(sheet).getByRole("textbox");
+    fireEvent.change(freeformInput, { target: { value: "staging" } });
+    fireEvent.click(within(sheet).getByTestId("interaction-submit"));
+
+    await waitFor(() => {
+      expect(interactionCalls).toHaveLength(1);
+      expect(within(sheet).getByText("Questions (0)")).toBeInTheDocument();
+    });
+    expect(interactionCalls[0]).toEqual({
+      answers: {
+        q1: {
+          answers: ["staging"],
+        },
+      },
     });
   });
 

@@ -854,6 +854,102 @@ describe("gateway integration routes", () => {
     }
   });
 
+  it("interaction route returns 409 when interaction is already responded", async () => {
+    const ctx = await createTestContext();
+    try {
+      ctx.stub.emit("message", {
+        id: 201,
+        method: "item/tool/requestUserInput",
+        params: {
+          threadId: "thread-1",
+          turnId: "turn-1",
+          questions: [
+            {
+              id: "q1",
+              header: "Deploy",
+              question: "Select target",
+              isOther: false,
+              isSecret: false,
+              options: null,
+            },
+          ],
+        },
+      });
+
+      const firstResponse = await ctx.app.inject({
+        method: "POST",
+        url: "/api/threads/thread-1/interactions/201/respond",
+        payload: {
+          answers: {
+            q1: { answers: ["staging"] },
+          },
+        },
+      });
+      expect(firstResponse.statusCode).toBe(200);
+      expect(ctx.stub.responses).toHaveLength(1);
+
+      const secondResponse = await ctx.app.inject({
+        method: "POST",
+        url: "/api/threads/thread-1/interactions/201/respond",
+        payload: {
+          answers: {
+            q1: { answers: ["prod"] },
+          },
+        },
+      });
+      expect(secondResponse.statusCode).toBe(409);
+      expect(secondResponse.json().message).toContain("interaction is no longer pending");
+      expect(ctx.stub.responses).toHaveLength(1);
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  it("interaction route returns 409 when interaction is pending but no longer active in memory", async () => {
+    const ctx = await createTestContext();
+    try {
+      const createdAt = new Date().toISOString();
+      ctx.db.upsertInteractionRequest({
+        interaction_id: "orphan-1",
+        thread_id: "thread-1",
+        turn_id: "turn-orphan",
+        item_id: null,
+        type: "userInput",
+        status: "pending",
+        request_payload_json: JSON.stringify({
+          questions: [
+            {
+              id: "q1",
+              header: "Deploy",
+              question: "Select target",
+              isOther: false,
+              isSecret: false,
+              options: null,
+            },
+          ],
+        }),
+        response_payload_json: null,
+        created_at: createdAt,
+        resolved_at: null,
+      });
+
+      const response = await ctx.app.inject({
+        method: "POST",
+        url: "/api/threads/thread-1/interactions/orphan-1/respond",
+        payload: {
+          answers: {
+            q1: { answers: ["staging"] },
+          },
+        },
+      });
+      expect(response.statusCode).toBe(409);
+      expect(response.json().message).toContain("interaction is no longer active");
+      expect(ctx.stub.responses).toHaveLength(0);
+    } finally {
+      await ctx.close();
+    }
+  });
+
   it("interaction route also accepts tool/requestUserInput alias", async () => {
     const ctx = await createTestContext();
     try {
@@ -889,6 +985,39 @@ describe("gateway integration routes", () => {
         type: "userInput",
         status: "pending",
       });
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  it("interaction pending response normalizes filtered empty options to null", async () => {
+    const ctx = await createTestContext();
+    try {
+      ctx.stub.emit("message", {
+        id: 300,
+        method: "item/tool/requestUserInput",
+        params: {
+          threadId: "thread-1",
+          turnId: "turn-9",
+          questions: [
+            {
+              id: "q-deploy",
+              header: "Deploy",
+              question: "Select target",
+              isOther: false,
+              isSecret: false,
+              options: [{ label: "Staging" }],
+            },
+          ],
+        },
+      });
+
+      const pendingRes = await ctx.app.inject({
+        method: "GET",
+        url: "/api/threads/thread-1/interactions/pending",
+      });
+      expect(pendingRes.statusCode).toBe(200);
+      expect(pendingRes.json().data[0].questions[0].options).toBeNull();
     } finally {
       await ctx.close();
     }
@@ -943,6 +1072,146 @@ describe("gateway integration routes", () => {
       });
     } finally {
       await ctx.close();
+    }
+  });
+
+  it("turn/completed cancels pending interactions and emits interaction/cancelled event", async () => {
+    const ctx = await createTestContext();
+    try {
+      ctx.stub.emit("message", {
+        id: 401,
+        method: "item/tool/requestUserInput",
+        params: {
+          threadId: "thread-1",
+          turnId: "turn-10",
+          questions: [
+            {
+              id: "q1",
+              header: "Deploy",
+              question: "Select target",
+              isOther: false,
+              isSecret: false,
+              options: [{ label: "staging", description: "safe" }],
+            },
+          ],
+        },
+      });
+
+      ctx.stub.emit("message", {
+        method: "turn/completed",
+        params: {
+          threadId: "thread-1",
+          turnId: "turn-10",
+        },
+      });
+
+      const pendingRes = await ctx.app.inject({
+        method: "GET",
+        url: "/api/threads/thread-1/interactions/pending",
+      });
+      expect(pendingRes.statusCode).toBe(200);
+      expect(pendingRes.json().data).toHaveLength(0);
+
+      const row = ctx.db.getInteractionById("401");
+      expect(row?.status).toBe("cancelled");
+
+      const events = ctx.db.listGatewayEventsSince("thread-1", 0, 50);
+      expect(events).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            kind: "interaction",
+            name: "interaction/cancelled",
+            payload: expect.objectContaining({
+              interactionId: "401",
+              reason: "turn_completed",
+            }),
+          }),
+        ]),
+      );
+
+      const response = await ctx.app.inject({
+        method: "POST",
+        url: "/api/threads/thread-1/interactions/401/respond",
+        payload: {
+          answers: {
+            q1: { answers: ["staging"] },
+          },
+        },
+      });
+      expect(response.statusCode).toBe(409);
+      expect(ctx.stub.responses).toHaveLength(0);
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  it("startup reconciliation cancels stale pending interactions", async () => {
+    const tmpDir = mkdtempSync(path.join(os.tmpdir(), "lcwa-gateway-test-"));
+    const db = createGatewayDb({ dbPath: path.join(tmpDir, "index.db") });
+    const createdAt = new Date().toISOString();
+    db.upsertInteractionRequest({
+      interaction_id: "stale-1",
+      thread_id: "thread-stale",
+      turn_id: "turn-stale",
+      item_id: null,
+      type: "userInput",
+      status: "pending",
+      request_payload_json: JSON.stringify({
+        questions: [
+          {
+            id: "q1",
+            header: "Deploy",
+            question: "Select target",
+            isOther: false,
+            isSecret: false,
+            options: null,
+          },
+        ],
+      }),
+      response_payload_json: null,
+      created_at: createdAt,
+      resolved_at: null,
+    });
+
+    const stub = new StubAppServer();
+    const app = await createGatewayApp(
+      {
+        appServer: stub,
+        db,
+      },
+      {
+        corsAllowlist: ["http://127.0.0.1:3000"],
+        startAppServerOnBoot: false,
+      },
+    );
+
+    try {
+      const pendingRes = await app.inject({
+        method: "GET",
+        url: "/api/threads/thread-stale/interactions/pending",
+      });
+      expect(pendingRes.statusCode).toBe(200);
+      expect(pendingRes.json().data).toHaveLength(0);
+
+      const row = db.getInteractionById("stale-1");
+      expect(row?.status).toBe("cancelled");
+
+      const events = db.listGatewayEventsSince("thread-stale", 0, 50);
+      expect(events).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            kind: "interaction",
+            name: "interaction/cancelled",
+            payload: expect.objectContaining({
+              interactionId: "stale-1",
+              reason: "gateway_restarted",
+            }),
+          }),
+        ]),
+      );
+    } finally {
+      await app.close();
+      rmSync(tmpDir, { recursive: true, force: true });
     }
   });
 

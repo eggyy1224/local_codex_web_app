@@ -87,6 +87,7 @@ export type GatewayDbPort = {
     resolvedAt: string,
   ): void;
   getInteractionById(interactionId: string): InteractionView | null;
+  listPendingInteractions(): InteractionView[];
   listPendingInteractionsByThread(threadId: string): InteractionView[];
   insertAuditLog(entry: AuditLogEntry): void;
 };
@@ -175,6 +176,7 @@ function readQuestions(requestPayload: Record<string, unknown>): UserInputQuesti
             })
             .filter((option): option is NonNullable<typeof option> => option !== null)
         : null;
+      const normalizedOptions = options && options.length > 0 ? options : null;
 
       return {
         id,
@@ -182,7 +184,7 @@ function readQuestions(requestPayload: Record<string, unknown>): UserInputQuesti
         question: body,
         isOther: question.isOther === true,
         isSecret: question.isSecret === true,
-        options,
+        options: normalizedOptions,
       };
     })
     .filter((entry): entry is UserInputQuestionView => entry !== null);
@@ -484,6 +486,23 @@ WHERE thread_id = ? AND status = 'pending'
 ORDER BY created_at ASC
 `);
 
+  const listPendingInteractionsStmt = sqlite.prepare(`
+SELECT
+  interaction_id,
+  thread_id,
+  turn_id,
+  item_id,
+  type,
+  status,
+  request_payload_json,
+  response_payload_json,
+  created_at,
+  resolved_at
+FROM interactions
+WHERE status = 'pending'
+ORDER BY created_at ASC
+`);
+
   return {
     sqlite,
     dataDir,
@@ -640,6 +659,10 @@ ORDER BY created_at ASC
       }
       return toInteractionView(row);
     },
+    listPendingInteractions(): InteractionView[] {
+      const rows = listPendingInteractionsStmt.all() as InteractionProjection[];
+      return rows.map(toInteractionView);
+    },
     listPendingInteractionsByThread(threadId: string): InteractionView[] {
       const rows = listPendingInteractionsByThreadStmt.all(threadId) as InteractionProjection[];
       return rows.map(toInteractionView);
@@ -725,6 +748,10 @@ export function respondInteractionRequest(
 
 export function getInteractionById(interactionId: string): InteractionView | null {
   return gatewayDb.getInteractionById(interactionId);
+}
+
+export function listPendingInteractions(): InteractionView[] {
+  return gatewayDb.listPendingInteractions();
 }
 
 export function listPendingInteractionsByThread(threadId: string): InteractionView[] {

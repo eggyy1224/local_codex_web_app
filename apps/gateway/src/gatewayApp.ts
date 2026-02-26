@@ -237,6 +237,7 @@ export async function createGatewayApp(
     }
   >();
   let collaborationModeListSupported: boolean | null = null;
+  type InteractionCancelReason = "turn_completed" | "gateway_restarted";
 
 function subscribe(threadId: string, fn: (event: GatewayEvent) => void): () => void {
   const set = subscribers.get(threadId) ?? new Set<(event: GatewayEvent) => void>();
@@ -261,6 +262,76 @@ function broadcast(event: GatewayEvent): void {
 
   for (const handler of set) {
     handler(event);
+  }
+}
+
+function cancelInteraction(
+  interactionId: string,
+  reason: InteractionCancelReason,
+  threadId: string,
+  turnId: string | null,
+): void {
+  const resolvedAt = new Date().toISOString();
+  db.respondInteractionRequest(
+    interactionId,
+    "cancelled",
+    JSON.stringify({ reason }),
+    resolvedAt,
+  );
+  pendingInteractions.delete(interactionId);
+  db.insertAuditLog({
+    ts: resolvedAt,
+    actor: "gateway",
+    action: "interaction.cancelled",
+    threadId,
+    turnId,
+    metadata: {
+      interactionId,
+      reason,
+    },
+  });
+
+  const eventBase: Omit<GatewayEvent, "seq"> = {
+    serverTs: resolvedAt,
+    threadId,
+    turnId,
+    kind: "interaction",
+    name: "interaction/cancelled",
+    payload: {
+      interactionId,
+      reason,
+    },
+  };
+  const seq = db.insertGatewayEvent(eventBase);
+  broadcast({ ...eventBase, seq });
+}
+
+function cancelPendingInteractionsForTurn(threadId: string, turnId: string): void {
+  const candidates: Array<{ interactionId: string; turnId: string | null }> = [];
+  for (const [interactionId, pending] of pendingInteractions.entries()) {
+    if (pending.threadId !== threadId || pending.turnId !== turnId) {
+      continue;
+    }
+    candidates.push({
+      interactionId,
+      turnId: pending.turnId,
+    });
+  }
+
+  for (const candidate of candidates) {
+    cancelInteraction(candidate.interactionId, "turn_completed", threadId, candidate.turnId);
+  }
+}
+
+function reconcilePendingInteractionsOnStartup(): void {
+  const stalePending = db.listPendingInteractions();
+  for (const interaction of stalePending) {
+    cancelInteraction(
+      interaction.interactionId,
+      "gateway_restarted",
+      interaction.threadId,
+      interaction.turnId,
+    );
   }
 }
 
@@ -915,6 +986,7 @@ appServer.on("message", (msg: unknown) => {
   }
 
   if (raw.method === "turn/completed" && turnId) {
+    cancelPendingInteractionsForTurn(threadId, turnId);
     const activeTurn = activeTurnByThread.get(threadId);
     if (activeTurn === turnId) {
       activeTurnByThread.delete(threadId);
@@ -933,6 +1005,8 @@ appServer.on("message", (msg: unknown) => {
   const seq = db.insertGatewayEvent(eventBase);
   broadcast({ ...eventBase, seq });
 });
+
+reconcilePendingInteractionsOnStartup();
 
 if (config.startAppServerOnBoot ?? true) {
   try {
@@ -1651,28 +1725,39 @@ app.post(
       throw error;
     }
 
-    const pending = pendingInteractions.get(params.interactionId);
     const interaction = db.getInteractionById(params.interactionId);
-    if (!pending && !interaction) {
+    if (!interaction) {
       const error = new Error("interaction not found") as Error & { statusCode?: number };
       error.statusCode = 404;
       throw error;
     }
-    const ownerThreadId = interaction?.threadId ?? pending?.threadId ?? null;
-    if (ownerThreadId && ownerThreadId !== params.id) {
+    if (interaction.threadId !== params.id) {
+      const error = new Error("interaction not found") as Error & { statusCode?: number };
+      error.statusCode = 404;
+      throw error;
+    }
+    if (interaction.status !== "pending") {
+      const error = new Error("interaction is no longer pending") as Error & {
+        statusCode?: number;
+      };
+      error.statusCode = 409;
+      throw error;
+    }
+    const pending = pendingInteractions.get(params.interactionId);
+    if (!pending) {
+      const error = new Error("interaction is no longer active") as Error & {
+        statusCode?: number;
+      };
+      error.statusCode = 409;
+      throw error;
+    }
+    if (pending.threadId !== params.id) {
       const error = new Error("interaction not found") as Error & { statusCode?: number };
       error.statusCode = 404;
       throw error;
     }
 
-    const fallbackRpcId: string | number = /^\d+$/.test(params.interactionId)
-      ? Number(params.interactionId)
-      : params.interactionId;
-    const rpcId = pending?.rpcId ?? fallbackRpcId;
-    const threadId = ownerThreadId ?? params.id;
-    const turnId = pending?.turnId ?? interaction?.turnId ?? null;
-
-    appServer.respond(rpcId, {
+    appServer.respond(pending.rpcId, {
       answers,
     });
 
@@ -1690,8 +1775,8 @@ app.post(
       ts: resolvedAt,
       actor: "user",
       action: "interaction.responded",
-      threadId,
-      turnId,
+      threadId: interaction.threadId,
+      turnId: interaction.turnId,
       metadata: {
         interactionId: params.interactionId,
       },
@@ -1699,8 +1784,8 @@ app.post(
 
     const eventBase: Omit<GatewayEvent, "seq"> = {
       serverTs: resolvedAt,
-      threadId,
-      turnId,
+      threadId: interaction.threadId,
+      turnId: interaction.turnId,
       kind: "interaction",
       name: "interaction/responded",
       payload: {

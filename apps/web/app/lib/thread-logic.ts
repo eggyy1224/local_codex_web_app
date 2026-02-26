@@ -349,6 +349,21 @@ export function timelineItemFromGatewayEvent(event: GatewayEvent): ThreadTimelin
     };
   }
 
+  if (event.name === "interaction/cancelled") {
+    const reason = readString(payload, "reason");
+    return {
+      id: `${eventId}-interaction-cancelled`,
+      ts: event.serverTs,
+      turnId: event.turnId,
+      type: "status",
+      title: "Question cancelled",
+      text: reason,
+      rawType: event.name,
+      toolName: null,
+      callId: null,
+    };
+  }
+
   if (event.name === "item/agentMessage/delta") {
     const text = normalizeText(readString(payload, "delta") ?? readString(payload, "text"));
     if (!text) {

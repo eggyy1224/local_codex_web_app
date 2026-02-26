@@ -110,6 +110,18 @@ describe("thread logic helpers", () => {
         interactionId: "ia-1",
       },
     };
+    const interactionCancelled: GatewayEvent = {
+      seq: 25,
+      serverTs: "2026-01-01T00:00:05.000Z",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      kind: "interaction",
+      name: "interaction/cancelled",
+      payload: {
+        interactionId: "ia-1",
+        reason: "turn_completed",
+      },
+    };
 
     expect(timelineItemFromGatewayEvent(planDelta)).toMatchObject({
       type: "reasoning",
@@ -134,6 +146,11 @@ describe("thread logic helpers", () => {
     expect(timelineItemFromGatewayEvent(interactionResponded)).toMatchObject({
       type: "status",
       title: "Question answered",
+    });
+    expect(timelineItemFromGatewayEvent(interactionCancelled)).toMatchObject({
+      type: "status",
+      title: "Question cancelled",
+      text: "turn_completed",
     });
   });
 
