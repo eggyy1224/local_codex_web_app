@@ -1,5 +1,5 @@
 import React from "react";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { http, HttpResponse } from "msw";
 import { server } from "./msw/server";
@@ -81,6 +81,14 @@ describe("Thread page integration", () => {
     searchParamsValue = new URLSearchParams();
     MockEventSource.instances.length = 0;
     setMobileViewport(false);
+    server.use(
+      http.get("http://127.0.0.1:8787/api/threads/:id/interactions/pending", () =>
+        HttpResponse.json({ data: [] }),
+      ),
+      http.post("http://127.0.0.1:8787/api/threads/:id/interactions/:interactionId/respond", () =>
+        HttpResponse.json({ ok: true }),
+      ),
+    );
   });
 
   it("loads thread detail + approvals + timeline + list + context", async () => {
@@ -1079,6 +1087,671 @@ describe("Thread page integration", () => {
     });
     expect(turnCalls[0]).toMatchObject({
       input: [{ type: "text", text: "/foo bar" }],
+    });
+  });
+
+  it("desktop questions flow: composer stays enabled and submits interaction answers", async () => {
+    vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+    const interactionCalls: Array<unknown> = [];
+
+    server.use(
+      http.get("http://127.0.0.1:8787/api/threads/:id", ({ params }) =>
+        HttpResponse.json({
+          thread: {
+            id: String(params.id),
+            title: "Main Thread",
+            preview: "Preview",
+            status: "idle",
+            createdAt: null,
+            updatedAt: null,
+          },
+          turns: [],
+          nextCursor: null,
+        }),
+      ),
+      http.get("http://127.0.0.1:8787/api/threads/:id/approvals/pending", () => HttpResponse.json({ data: [] })),
+      http.get("http://127.0.0.1:8787/api/threads/:id/interactions/pending", () =>
+        HttpResponse.json({
+          data: [
+            {
+              interactionId: "ix-1",
+              threadId: "thread-1",
+              turnId: "turn-1",
+              itemId: "item-1",
+              type: "userInput",
+              status: "pending",
+              questions: [
+                {
+                  id: "q1",
+                  header: "Deploy target",
+                  question: "Where should this deploy?",
+                  isOther: true,
+                  isSecret: false,
+                  options: [{ label: "Staging", description: "safe env" }],
+                },
+              ],
+              createdAt: "2026-01-01T00:00:00.000Z",
+              resolvedAt: null,
+            },
+          ],
+        }),
+      ),
+      http.get("http://127.0.0.1:8787/api/threads", () => HttpResponse.json({ data: [], nextCursor: null })),
+      http.get("http://127.0.0.1:8787/api/threads/:id/timeline", () => HttpResponse.json({ data: [] })),
+      http.get("http://127.0.0.1:8787/api/threads/:id/context", () =>
+        HttpResponse.json({
+          threadId: "thread-1",
+          cwd: "/tmp/project",
+          resolvedCwd: "/tmp/project",
+          isFallback: false,
+          source: "projection",
+        }),
+      ),
+      http.get("http://127.0.0.1:8787/api/models", () => HttpResponse.json({ data: [] })),
+      http.post("http://127.0.0.1:8787/api/threads/:id/interactions/:interactionId/respond", async ({ request }) => {
+        interactionCalls.push(await request.json());
+        return HttpResponse.json({ ok: true });
+      }),
+    );
+
+    render(<ThreadPage params={Promise.resolve({ id: "thread-1" })} />);
+
+    await screen.findByTestId("approval-drawer");
+    const textarea = await screen.findByTestId("turn-input");
+    expect(textarea).not.toBeDisabled();
+
+    fireEvent.click(screen.getByLabelText("Staging - safe env"));
+    fireEvent.change(screen.getByPlaceholderText("Other"), { target: { value: "nightly canary" } });
+    fireEvent.click(screen.getByTestId("interaction-submit"));
+
+    await waitFor(() => {
+      expect(interactionCalls).toHaveLength(1);
+      expect(screen.queryByTestId("approval-drawer")).not.toBeInTheDocument();
+    });
+    expect(interactionCalls[0]).toEqual({
+      answers: {
+        q1: {
+          answers: ["Staging", "nightly canary"],
+        },
+      },
+    });
+  });
+
+  it("desktop interaction options are mutually exclusive per question", async () => {
+    vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+    const interactionCalls: Array<unknown> = [];
+
+    server.use(
+      http.get("http://127.0.0.1:8787/api/threads/:id", ({ params }) =>
+        HttpResponse.json({
+          thread: {
+            id: String(params.id),
+            title: "Main Thread",
+            preview: "Preview",
+            status: "idle",
+            createdAt: null,
+            updatedAt: null,
+          },
+          turns: [],
+          nextCursor: null,
+        }),
+      ),
+      http.get("http://127.0.0.1:8787/api/threads/:id/approvals/pending", () => HttpResponse.json({ data: [] })),
+      http.get("http://127.0.0.1:8787/api/threads/:id/interactions/pending", () =>
+        HttpResponse.json({
+          data: [
+            {
+              interactionId: "ix-1",
+              threadId: "thread-1",
+              turnId: "turn-1",
+              itemId: "item-1",
+              type: "userInput",
+              status: "pending",
+              questions: [
+                {
+                  id: "q1",
+                  header: "Deploy target",
+                  question: "Where should this deploy?",
+                  isOther: false,
+                  isSecret: false,
+                  options: [
+                    { label: "Staging", description: "safe env" },
+                    { label: "Production", description: "live traffic" },
+                  ],
+                },
+              ],
+              createdAt: "2026-01-01T00:00:00.000Z",
+              resolvedAt: null,
+            },
+          ],
+        }),
+      ),
+      http.get("http://127.0.0.1:8787/api/threads", () => HttpResponse.json({ data: [], nextCursor: null })),
+      http.get("http://127.0.0.1:8787/api/threads/:id/timeline", () => HttpResponse.json({ data: [] })),
+      http.get("http://127.0.0.1:8787/api/threads/:id/context", () =>
+        HttpResponse.json({
+          threadId: "thread-1",
+          cwd: "/tmp/project",
+          resolvedCwd: "/tmp/project",
+          isFallback: false,
+          source: "projection",
+        }),
+      ),
+      http.get("http://127.0.0.1:8787/api/models", () => HttpResponse.json({ data: [] })),
+      http.post("http://127.0.0.1:8787/api/threads/:id/interactions/:interactionId/respond", async ({ request }) => {
+        interactionCalls.push(await request.json());
+        return HttpResponse.json({ ok: true });
+      }),
+    );
+
+    render(<ThreadPage params={Promise.resolve({ id: "thread-1" })} />);
+
+    await screen.findByTestId("approval-drawer");
+    fireEvent.click(screen.getByLabelText("Staging - safe env"));
+    fireEvent.click(screen.getByLabelText("Production - live traffic"));
+    fireEvent.click(screen.getByTestId("interaction-submit"));
+
+    await waitFor(() => {
+      expect(interactionCalls).toHaveLength(1);
+    });
+    expect(interactionCalls[0]).toEqual({
+      answers: {
+        q1: {
+          answers: ["Production"],
+        },
+      },
+    });
+  });
+
+  it("mobile questions tab opens from topbar and submits answers", async () => {
+    setMobileViewport(true);
+    vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+    const interactionCalls: Array<unknown> = [];
+
+    server.use(
+      http.get("http://127.0.0.1:8787/api/threads/:id", ({ params }) =>
+        HttpResponse.json({
+          thread: {
+            id: String(params.id),
+            title: "Mobile Thread",
+            preview: "Preview",
+            status: "idle",
+            createdAt: null,
+            updatedAt: null,
+          },
+          turns: [],
+          nextCursor: null,
+        }),
+      ),
+      http.get("http://127.0.0.1:8787/api/threads/:id/approvals/pending", () => HttpResponse.json({ data: [] })),
+      http.get("http://127.0.0.1:8787/api/threads/:id/interactions/pending", () =>
+        HttpResponse.json({
+          data: [
+            {
+              interactionId: "ix-1",
+              threadId: "thread-1",
+              turnId: "turn-1",
+              itemId: "item-1",
+              type: "userInput",
+              status: "pending",
+              questions: [
+                {
+                  id: "q1",
+                  header: "Deploy target",
+                  question: "Where should this deploy?",
+                  isOther: false,
+                  isSecret: false,
+                  options: [{ label: "Staging", description: "safe env" }],
+                },
+              ],
+              createdAt: "2026-01-01T00:00:00.000Z",
+              resolvedAt: null,
+            },
+          ],
+        }),
+      ),
+      http.get("http://127.0.0.1:8787/api/threads", () =>
+        HttpResponse.json({
+          data: [
+            {
+              id: "thread-1",
+              projectKey: "/tmp/project",
+              title: "Mobile Thread",
+              preview: "Preview",
+              status: "idle",
+              lastActiveAt: "2026-01-01T00:00:00.000Z",
+              archived: false,
+              waitingApprovalCount: 0,
+              errorCount: 0,
+            },
+          ],
+          nextCursor: null,
+        }),
+      ),
+      http.get("http://127.0.0.1:8787/api/threads/:id/timeline", () => HttpResponse.json({ data: [] })),
+      http.get("http://127.0.0.1:8787/api/threads/:id/context", () =>
+        HttpResponse.json({
+          threadId: "thread-1",
+          cwd: "/tmp/project",
+          resolvedCwd: "/tmp/project",
+          isFallback: false,
+          source: "projection",
+        }),
+      ),
+      http.get("http://127.0.0.1:8787/api/models", () => HttpResponse.json({ data: [] })),
+      http.post("http://127.0.0.1:8787/api/threads/:id/interactions/:interactionId/respond", async ({ request }) => {
+        interactionCalls.push(await request.json());
+        return HttpResponse.json({ ok: true });
+      }),
+    );
+
+    render(<ThreadPage params={Promise.resolve({ id: "thread-1" })} />);
+
+    await screen.findByTestId("mobile-chat-topbar");
+    fireEvent.click(screen.getByTestId("mobile-topbar-control-toggle"));
+    const sheet = await screen.findByTestId("mobile-control-sheet");
+    expect(within(sheet).getByText("Questions (1)")).toBeInTheDocument();
+    fireEvent.click(within(sheet).getByTestId("mobile-control-tab-questions"));
+
+    fireEvent.click(await within(sheet).findByLabelText("Staging - safe env"));
+    fireEvent.click(within(sheet).getByTestId("interaction-submit"));
+
+    await waitFor(() => {
+      expect(interactionCalls).toHaveLength(1);
+      expect(within(sheet).getByText("Questions (0)")).toBeInTheDocument();
+    });
+  });
+
+  it("desktop proposed plan CTA supports implement + keep planning flows", async () => {
+    vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+    searchParamsValue = new URLSearchParams("mode=plan");
+    const turnCalls: Array<unknown> = [];
+
+    server.use(
+      http.get("http://127.0.0.1:8787/api/threads/:id", ({ params }) =>
+        HttpResponse.json({
+          thread: {
+            id: String(params.id),
+            title: "Main Thread",
+            preview: "Preview",
+            status: "idle",
+            createdAt: null,
+            updatedAt: null,
+          },
+          turns: [],
+          nextCursor: null,
+        }),
+      ),
+      http.get("http://127.0.0.1:8787/api/threads/:id/approvals/pending", () => HttpResponse.json({ data: [] })),
+      http.get("http://127.0.0.1:8787/api/threads/:id/interactions/pending", () => HttpResponse.json({ data: [] })),
+      http.get("http://127.0.0.1:8787/api/threads", () => HttpResponse.json({ data: [], nextCursor: null })),
+      http.get("http://127.0.0.1:8787/api/threads/:id/timeline", () =>
+        HttpResponse.json({
+          data: [
+            {
+              id: "timeline-user",
+              ts: "2026-01-01T00:00:00.000Z",
+              turnId: "turn-1",
+              type: "userMessage",
+              title: "You",
+              text: "plan please",
+              rawType: "userMessage",
+              toolName: null,
+              callId: null,
+            },
+            {
+              id: "timeline-assistant",
+              ts: "2026-01-01T00:00:01.000Z",
+              turnId: "turn-1",
+              type: "assistantMessage",
+              title: "Assistant",
+              text: "<proposed_plan>1. Add pipeline\n2. Verify flow</proposed_plan>",
+              rawType: "agentMessage",
+              toolName: null,
+              callId: null,
+            },
+          ],
+        }),
+      ),
+      http.get("http://127.0.0.1:8787/api/threads/:id/context", () =>
+        HttpResponse.json({
+          threadId: "thread-1",
+          cwd: "/tmp/project",
+          resolvedCwd: "/tmp/project",
+          isFallback: false,
+          source: "projection",
+        }),
+      ),
+      http.get("http://127.0.0.1:8787/api/models", () => HttpResponse.json({ data: [] })),
+      http.post("http://127.0.0.1:8787/api/threads/:id/turns", async ({ request }) => {
+        turnCalls.push(await request.json());
+        return HttpResponse.json({ turnId: "turn-2" });
+      }),
+    );
+
+    render(<ThreadPage params={Promise.resolve({ id: "thread-1" })} />);
+
+    await screen.findByText("Plan ready");
+    fireEvent.click(screen.getByText("Keep planning"));
+    await waitFor(() => {
+      expect(screen.queryByText("Plan ready")).not.toBeInTheDocument();
+    });
+    expect(turnCalls).toHaveLength(0);
+
+    const input = screen.getByTestId("turn-input");
+    fireEvent.change(input, { target: { value: "please plan again" } });
+    fireEvent.click(screen.getByTestId("turn-submit"));
+
+    await waitFor(() => {
+      expect(turnCalls).toHaveLength(1);
+    });
+    expect(turnCalls[0]).toMatchObject({
+      input: [{ type: "text", text: "please plan again" }],
+      options: { collaborationMode: "plan" },
+    });
+    turnCalls.length = 0;
+
+    const es = MockEventSource.instances.at(-1);
+    if (!es) {
+      throw new Error("missing EventSource instance");
+    }
+    es.emit("gateway", {
+      seq: 1,
+      serverTs: "2026-01-01T00:00:02.000Z",
+      threadId: "thread-1",
+      turnId: "turn-2",
+      kind: "item",
+      name: "item/agentMessage/delta",
+      payload: {
+        threadId: "thread-1",
+        turnId: "turn-2",
+        delta: "<proposed_plan>1. Ship\n2. Monitor</proposed_plan>",
+      },
+    });
+    es.emit("gateway", {
+      seq: 2,
+      serverTs: "2026-01-01T00:00:03.000Z",
+      threadId: "thread-1",
+      turnId: "turn-2",
+      kind: "turn",
+      name: "turn/completed",
+      payload: {
+        threadId: "thread-1",
+        turnId: "turn-2",
+        turn: { id: "turn-2", status: "completed" },
+      },
+    });
+
+    await screen.findByText("Plan ready");
+    fireEvent.click(screen.getByText("Implement this plan"));
+    const dialog = await screen.findByTestId("implement-dialog");
+    const draftInput = within(dialog).getByTestId("implement-draft-input");
+    fireEvent.change(draftInput, { target: { value: "Implement quickly" } });
+    fireEvent.click(within(dialog).getByText("Implement this plan"));
+
+    await waitFor(() => {
+      expect(turnCalls).toHaveLength(1);
+      expect(screen.getByTestId("collaboration-mode")).toHaveTextContent("mode: default");
+    });
+    expect(turnCalls[0]).toMatchObject({
+      input: [{ type: "text", text: "Implement quickly" }],
+    });
+    expect(turnCalls[0]).not.toMatchObject({
+      options: { collaborationMode: "plan" },
+    });
+  });
+
+  it("desktop shows plan-ready CTA when proposed plan only exists in thinking", async () => {
+    vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+    searchParamsValue = new URLSearchParams("mode=plan");
+
+    server.use(
+      http.get("http://127.0.0.1:8787/api/threads/:id", ({ params }) =>
+        HttpResponse.json({
+          thread: {
+            id: String(params.id),
+            title: "Main Thread",
+            preview: "Preview",
+            status: "idle",
+            createdAt: null,
+            updatedAt: null,
+          },
+          turns: [],
+          nextCursor: null,
+        }),
+      ),
+      http.get("http://127.0.0.1:8787/api/threads/:id/approvals/pending", () => HttpResponse.json({ data: [] })),
+      http.get("http://127.0.0.1:8787/api/threads/:id/interactions/pending", () => HttpResponse.json({ data: [] })),
+      http.get("http://127.0.0.1:8787/api/threads", () => HttpResponse.json({ data: [], nextCursor: null })),
+      http.get("http://127.0.0.1:8787/api/threads/:id/timeline", () =>
+        HttpResponse.json({
+          data: [
+            {
+              id: "timeline-user",
+              ts: "2026-01-01T00:00:00.000Z",
+              turnId: "turn-1",
+              type: "userMessage",
+              title: "You",
+              text: "plan please",
+              rawType: "userMessage",
+              toolName: null,
+              callId: null,
+            },
+            {
+              id: "timeline-thinking",
+              ts: "2026-01-01T00:00:01.000Z",
+              turnId: "turn-1",
+              type: "reasoning",
+              title: "Thinking",
+              text: "<proposed_plan>1. Evaluate scope\n2. Ship incrementally</proposed_plan>",
+              rawType: "item/plan/delta",
+              toolName: null,
+              callId: null,
+            },
+          ],
+        }),
+      ),
+      http.get("http://127.0.0.1:8787/api/threads/:id/context", () =>
+        HttpResponse.json({
+          threadId: "thread-1",
+          cwd: "/tmp/project",
+          resolvedCwd: "/tmp/project",
+          isFallback: false,
+          source: "projection",
+        }),
+      ),
+      http.get("http://127.0.0.1:8787/api/models", () => HttpResponse.json({ data: [] })),
+    );
+
+    render(<ThreadPage params={Promise.resolve({ id: "thread-1" })} />);
+
+    await screen.findByText("Plan ready");
+    expect(screen.getByText(/1\. Evaluate scope/, { selector: ".cdx-turn-body--plan" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Implement this plan" })).toBeInTheDocument();
+  });
+
+  it("desktop shows plan-ready CTA from live turn/plan/updated event", async () => {
+    vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+    searchParamsValue = new URLSearchParams("mode=plan");
+
+    server.use(
+      http.get("http://127.0.0.1:8787/api/threads/:id", ({ params }) =>
+        HttpResponse.json({
+          thread: {
+            id: String(params.id),
+            title: "Main Thread",
+            preview: "Preview",
+            status: "idle",
+            createdAt: null,
+            updatedAt: null,
+          },
+          turns: [],
+          nextCursor: null,
+        }),
+      ),
+      http.get("http://127.0.0.1:8787/api/threads/:id/approvals/pending", () => HttpResponse.json({ data: [] })),
+      http.get("http://127.0.0.1:8787/api/threads/:id/interactions/pending", () => HttpResponse.json({ data: [] })),
+      http.get("http://127.0.0.1:8787/api/threads", () => HttpResponse.json({ data: [], nextCursor: null })),
+      http.get("http://127.0.0.1:8787/api/threads/:id/timeline", () =>
+        HttpResponse.json({
+          data: [
+            {
+              id: "timeline-user",
+              ts: "2026-01-01T00:00:00.000Z",
+              turnId: "turn-1",
+              type: "userMessage",
+              title: "You",
+              text: "plan please",
+              rawType: "userMessage",
+              toolName: null,
+              callId: null,
+            },
+          ],
+        }),
+      ),
+      http.get("http://127.0.0.1:8787/api/threads/:id/context", () =>
+        HttpResponse.json({
+          threadId: "thread-1",
+          cwd: "/tmp/project",
+          resolvedCwd: "/tmp/project",
+          isFallback: false,
+          source: "projection",
+        }),
+      ),
+      http.get("http://127.0.0.1:8787/api/models", () => HttpResponse.json({ data: [] })),
+    );
+
+    render(<ThreadPage params={Promise.resolve({ id: "thread-1" })} />);
+    await screen.findByText("plan please");
+
+    const es = MockEventSource.instances.at(-1);
+    if (!es) {
+      throw new Error("missing EventSource instance");
+    }
+
+    es.emit("gateway", {
+      seq: 1,
+      serverTs: "2026-01-01T00:00:02.000Z",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      kind: "turn",
+      name: "turn/plan/updated",
+      payload: {
+        turnId: "turn-1",
+        explanation: "Plan drafted",
+        plan: [
+          { step: "Evaluate scope", status: "completed" },
+          { step: "Ship incrementally", status: "inProgress" },
+        ],
+      },
+    });
+
+    await screen.findByText("Plan ready");
+    expect(screen.getByText(/Evaluate scope/, { selector: ".cdx-turn-body--plan" })).toBeInTheDocument();
+  });
+
+  it("mobile proposed plan CTA opens sheet and confirms implement", async () => {
+    setMobileViewport(true);
+    vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+    const turnCalls: Array<unknown> = [];
+
+    server.use(
+      http.get("http://127.0.0.1:8787/api/threads/:id", ({ params }) =>
+        HttpResponse.json({
+          thread: {
+            id: String(params.id),
+            title: "Mobile Thread",
+            preview: "Preview",
+            status: "idle",
+            createdAt: null,
+            updatedAt: null,
+          },
+          turns: [],
+          nextCursor: null,
+        }),
+      ),
+      http.get("http://127.0.0.1:8787/api/threads/:id/approvals/pending", () => HttpResponse.json({ data: [] })),
+      http.get("http://127.0.0.1:8787/api/threads/:id/interactions/pending", () => HttpResponse.json({ data: [] })),
+      http.get("http://127.0.0.1:8787/api/threads", () =>
+        HttpResponse.json({
+          data: [
+            {
+              id: "thread-1",
+              projectKey: "/tmp/project",
+              title: "Mobile Thread",
+              preview: "Preview",
+              status: "idle",
+              lastActiveAt: "2026-01-01T00:00:00.000Z",
+              archived: false,
+              waitingApprovalCount: 0,
+              errorCount: 0,
+            },
+          ],
+          nextCursor: null,
+        }),
+      ),
+      http.get("http://127.0.0.1:8787/api/threads/:id/timeline", () =>
+        HttpResponse.json({
+          data: [
+            {
+              id: "timeline-user",
+              ts: "2026-01-01T00:00:00.000Z",
+              turnId: "turn-1",
+              type: "userMessage",
+              title: "You",
+              text: "plan please",
+              rawType: "userMessage",
+              toolName: null,
+              callId: null,
+            },
+            {
+              id: "timeline-assistant",
+              ts: "2026-01-01T00:00:01.000Z",
+              turnId: "turn-1",
+              type: "assistantMessage",
+              title: "Assistant",
+              text: "<proposed_plan>1. Add API\n2. Add UI</proposed_plan>",
+              rawType: "agentMessage",
+              toolName: null,
+              callId: null,
+            },
+          ],
+        }),
+      ),
+      http.get("http://127.0.0.1:8787/api/threads/:id/context", () =>
+        HttpResponse.json({
+          threadId: "thread-1",
+          cwd: "/tmp/project",
+          resolvedCwd: "/tmp/project",
+          isFallback: false,
+          source: "projection",
+        }),
+      ),
+      http.get("http://127.0.0.1:8787/api/models", () => HttpResponse.json({ data: [] })),
+      http.post("http://127.0.0.1:8787/api/threads/:id/turns", async ({ request }) => {
+        turnCalls.push(await request.json());
+        return HttpResponse.json({ turnId: "turn-2" });
+      }),
+    );
+
+    render(<ThreadPage params={Promise.resolve({ id: "thread-1" })} />);
+
+    await screen.findByTestId("mobile-chat-topbar");
+    fireEvent.click(await screen.findByText("Implement this plan"));
+    const sheet = await screen.findByTestId("mobile-implement-sheet");
+    fireEvent.change(within(sheet).getByTestId("implement-draft-input"), {
+      target: { value: "Implement mobile plan" },
+    });
+    fireEvent.click(within(sheet).getByText("Implement this plan"));
+
+    await waitFor(() => {
+      expect(turnCalls).toHaveLength(1);
+    });
+    expect(turnCalls[0]).toMatchObject({
+      input: [{ type: "text", text: "Implement mobile plan" }],
+    });
+    expect(turnCalls[0]).not.toMatchObject({
+      options: { collaborationMode: "plan" },
     });
   });
 

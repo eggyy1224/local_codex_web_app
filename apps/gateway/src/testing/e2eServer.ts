@@ -32,6 +32,7 @@ class StubAppServer extends EventEmitter implements GatewayAppServerPort {
   private threadSeq = 1;
   private turnSeq = 1;
   private approvalSeq = 100;
+  private interactionSeq = 1_000;
 
   async start(): Promise<void> {
     // no-op
@@ -133,6 +134,8 @@ class StubAppServer extends EventEmitter implements GatewayAppServerPort {
       const turnId = `turn-${this.turnSeq++}`;
       const startedAt = Math.floor(Date.now() / 1000);
       const userText = p.input?.find((item) => item.type === "text")?.text ?? "";
+      const normalizedUserText = userText.toLowerCase();
+      const shouldEmitPlanFlow = normalizedUserText.includes("plan flow");
       const turn: StubTurn = {
         id: turnId,
         status: "in_progress",
@@ -163,13 +166,42 @@ class StubAppServer extends EventEmitter implements GatewayAppServerPort {
         },
       });
 
+      if (shouldEmitPlanFlow) {
+        const interactionId = this.interactionSeq++;
+        this.emit("message", {
+          id: interactionId,
+          method: "tool/requestUserInput",
+          params: {
+            threadId: thread.id,
+            turnId,
+            itemId: `item-${turnId}-question`,
+            questions: [
+              {
+                id: "deploy_target",
+                header: "Deploy target",
+                question: "Pick where to start rollout",
+                isOther: true,
+                isSecret: false,
+                options: [
+                  { label: "Staging", description: "safe environment" },
+                  { label: "Production", description: "live traffic" },
+                ],
+              },
+            ],
+          },
+        });
+      }
+
       setTimeout(() => {
+        const assistantDelta = shouldEmitPlanFlow
+          ? "Plan draft ready.\n<proposed_plan>1. Add interaction pipeline\n2. Build UI submit path\n3. Verify mobile + desktop</proposed_plan>"
+          : `Echo: ${userText || "ok"}`;
         this.emit("message", {
           method: "item/agentMessage/delta",
           params: {
             threadId: thread.id,
             turnId,
-            delta: `Echo: ${userText || "ok"}`,
+            delta: assistantDelta,
           },
         });
 

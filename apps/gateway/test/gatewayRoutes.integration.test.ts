@@ -534,6 +534,38 @@ describe("gateway integration routes", () => {
     }
   });
 
+  it("POST /api/threads/:id/turns falls back when collaborationMode/list is unsupported", async () => {
+    const ctx = await createTestContext();
+    try {
+      ctx.stub.handlers.set("skills/list", () => ({ data: [] }));
+      ctx.stub.handlers.set("app/list", () => ({ data: [], nextCursor: null }));
+      ctx.stub.handlers.set("collaborationMode/list", () => {
+        throw new Error("unsupported method: collaborationMode/list");
+      });
+      ctx.stub.handlers.set("turn/start", (params) => {
+        expect(params).not.toHaveProperty("collaborationMode");
+        return { turn: { id: "turn-plan-fallback-1" } };
+      });
+
+      const res = await ctx.app.inject({
+        method: "POST",
+        url: "/api/threads/thread-1/turns",
+        payload: {
+          input: [{ type: "text", text: "Create a plan" }],
+          options: { collaborationMode: "plan" },
+        },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({
+        turnId: "turn-plan-fallback-1",
+        warnings: ["plan_mode_fallback"],
+      });
+    } finally {
+      await ctx.close();
+    }
+  });
+
   it("POST /api/threads/:id/turns returns readable 400 when collaboration preset cannot be resolved", async () => {
     const ctx = await createTestContext();
     try {
@@ -723,6 +755,244 @@ describe("gateway integration routes", () => {
 
       const pendingAfterRes = await ctx.app.inject({ method: "GET", url: "/api/threads/thread-1/approvals/pending" });
       expect(pendingAfterRes.json().data).toHaveLength(0);
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  it("interaction route accepts requestUserInput and responds with answers", async () => {
+    const ctx = await createTestContext();
+    try {
+      ctx.stub.emit("message", {
+        id: 199,
+        method: "item/tool/requestUserInput",
+        params: {
+          threadId: "thread-1",
+          turnId: "turn-1",
+          itemId: "item-1",
+          questions: [
+            {
+              id: "q1",
+              header: "Deploy target",
+              question: "Where should this deploy?",
+              isOther: true,
+              isSecret: false,
+              options: [
+                { label: "Staging", description: "safe environment" },
+                { label: "Prod", description: "live traffic" },
+              ],
+            },
+          ],
+        },
+      });
+
+      const pendingRes = await ctx.app.inject({
+        method: "GET",
+        url: "/api/threads/thread-1/interactions/pending",
+      });
+      expect(pendingRes.statusCode).toBe(200);
+      expect(pendingRes.json()).toEqual({
+        data: [
+          {
+            interactionId: "199",
+            threadId: "thread-1",
+            turnId: "turn-1",
+            itemId: "item-1",
+            type: "userInput",
+            status: "pending",
+            questions: [
+              {
+                id: "q1",
+                header: "Deploy target",
+                question: "Where should this deploy?",
+                isOther: true,
+                isSecret: false,
+                options: [
+                  { label: "Staging", description: "safe environment" },
+                  { label: "Prod", description: "live traffic" },
+                ],
+              },
+            ],
+            createdAt: expect.any(String),
+            resolvedAt: null,
+          },
+        ],
+      });
+
+      const respondRes = await ctx.app.inject({
+        method: "POST",
+        url: "/api/threads/thread-1/interactions/199/respond",
+        payload: {
+          answers: {
+            q1: {
+              answers: ["Staging", "roll out tonight"],
+            },
+          },
+        },
+      });
+      expect(respondRes.statusCode).toBe(200);
+      expect(respondRes.json()).toEqual({ ok: true });
+      expect(ctx.stub.responses).toContainEqual({
+        id: 199,
+        result: {
+          answers: {
+            q1: {
+              answers: ["Staging", "roll out tonight"],
+            },
+          },
+        },
+      });
+
+      const pendingAfterRes = await ctx.app.inject({
+        method: "GET",
+        url: "/api/threads/thread-1/interactions/pending",
+      });
+      expect(pendingAfterRes.statusCode).toBe(200);
+      expect(pendingAfterRes.json().data).toHaveLength(0);
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  it("interaction route also accepts tool/requestUserInput alias", async () => {
+    const ctx = await createTestContext();
+    try {
+      ctx.stub.emit("message", {
+        id: 299,
+        method: "tool/requestUserInput",
+        params: {
+          threadId: "thread-1",
+          turnId: "turn-9",
+          questions: [
+            {
+              id: "q-deploy",
+              header: "Deploy",
+              question: "Select target",
+              isOther: false,
+              isSecret: false,
+              options: [{ label: "Staging", description: "safe env" }],
+            },
+          ],
+        },
+      });
+
+      const pendingRes = await ctx.app.inject({
+        method: "GET",
+        url: "/api/threads/thread-1/interactions/pending",
+      });
+      expect(pendingRes.statusCode).toBe(200);
+      expect(pendingRes.json().data).toHaveLength(1);
+      expect(pendingRes.json().data[0]).toMatchObject({
+        interactionId: "299",
+        threadId: "thread-1",
+        turnId: "turn-9",
+        type: "userInput",
+        status: "pending",
+      });
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  it("interaction route rejects empty answers payload and keeps pending", async () => {
+    const ctx = await createTestContext();
+    try {
+      ctx.stub.emit("message", {
+        id: 311,
+        method: "item/tool/requestUserInput",
+        params: {
+          threadId: "thread-1",
+          turnId: "turn-3",
+          questions: [
+            {
+              id: "qEmpty",
+              header: "Question",
+              question: "Provide value",
+              isOther: false,
+              isSecret: false,
+              options: null,
+            },
+          ],
+        },
+      });
+
+      const res = await ctx.app.inject({
+        method: "POST",
+        url: "/api/threads/thread-1/interactions/311/respond",
+        payload: {
+          answers: {
+            qEmpty: {
+              answers: ["   "],
+            },
+          },
+        },
+      });
+
+      expect(res.statusCode).toBe(400);
+      expect(ctx.stub.responses).toHaveLength(0);
+
+      const pendingRes = await ctx.app.inject({
+        method: "GET",
+        url: "/api/threads/thread-1/interactions/pending",
+      });
+      expect(pendingRes.statusCode).toBe(200);
+      expect(pendingRes.json().data).toHaveLength(1);
+      expect(pendingRes.json().data[0]).toMatchObject({
+        interactionId: "311",
+        status: "pending",
+      });
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  it("interaction route rejects cross-thread response by interaction id", async () => {
+    const ctx = await createTestContext();
+    try {
+      ctx.stub.emit("message", {
+        id: 355,
+        method: "item/tool/requestUserInput",
+        params: {
+          threadId: "thread-2",
+          turnId: "turn-5",
+          questions: [
+            {
+              id: "q1",
+              header: "Deploy",
+              question: "Select target",
+              isOther: false,
+              isSecret: false,
+              options: [{ label: "staging", description: "safe" }],
+            },
+          ],
+        },
+      });
+
+      const res = await ctx.app.inject({
+        method: "POST",
+        url: "/api/threads/thread-1/interactions/355/respond",
+        payload: {
+          answers: {
+            q1: {
+              answers: ["staging"],
+            },
+          },
+        },
+      });
+
+      expect(res.statusCode).toBe(404);
+      expect(ctx.stub.responses).toHaveLength(0);
+
+      const pendingThread2 = await ctx.app.inject({
+        method: "GET",
+        url: "/api/threads/thread-2/interactions/pending",
+      });
+      expect(pendingThread2.statusCode).toBe(200);
+      expect(pendingThread2.json().data).toHaveLength(1);
+      expect(pendingThread2.json().data[0]).toMatchObject({
+        interactionId: "355",
+        status: "pending",
+      });
     } finally {
       await ctx.close();
     }

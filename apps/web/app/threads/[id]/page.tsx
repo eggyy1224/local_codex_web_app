@@ -16,12 +16,16 @@ import type {
   AccountRateLimitsResponse,
   ApprovalDecisionRequest,
   ApprovalView,
+  CreateTurnResponse,
   CreateReviewRequest,
   CreateReviewResponse,
   GatewayEvent,
+  InteractionRespondRequest,
+  InteractionView,
   ModelOption,
   ModelsResponse,
   PendingApprovalsResponse,
+  PendingInteractionsResponse,
   ThreadControlRequest,
   ThreadDetailResponse,
   ThreadContextResponse,
@@ -62,8 +66,9 @@ type Props = {
 };
 
 type PendingApprovalCard = ApprovalView;
+type PendingInteractionCard = InteractionView;
 type CollaborationModeKind = "plan" | "default";
-type ControlSheetSection = "controls" | "settings" | "approvals";
+type ControlSheetSection = "controls" | "settings" | "questions" | "approvals";
 type ControlSheetSnap = "half" | "full";
 type ThreadTokenUsageSummary = {
   threadId: string;
@@ -146,8 +151,7 @@ function formatTimestamp(value: string | null): string {
 
 function approvalTypeFromEventName(eventName: string): PendingApprovalCard["type"] {
   if (eventName === "item/commandExecution/requestApproval") return "commandExecution";
-  if (eventName === "item/fileChange/requestApproval") return "fileChange";
-  return "userInput";
+  return "fileChange";
 }
 
 function approvalFromEvent(event: GatewayEvent): PendingApprovalCard | null {
@@ -159,7 +163,7 @@ function approvalFromEvent(event: GatewayEvent): PendingApprovalCard | null {
 
   const approvalType = readString(payload, "approvalType");
   const type =
-    approvalType === "commandExecution" || approvalType === "fileChange" || approvalType === "userInput"
+    approvalType === "commandExecution" || approvalType === "fileChange"
       ? approvalType
       : approvalTypeFromEventName(event.name);
 
@@ -176,6 +180,96 @@ function approvalFromEvent(event: GatewayEvent): PendingApprovalCard | null {
     createdAt: event.serverTs,
     resolvedAt: null,
   };
+}
+
+function interactionFromEvent(event: GatewayEvent): PendingInteractionCard | null {
+  const payload = asRecord(event.payload);
+  const interactionId = readString(payload, "interactionId");
+  if (!interactionId) {
+    return null;
+  }
+  const questionsRaw = payload?.questions;
+  if (!Array.isArray(questionsRaw)) {
+    return null;
+  }
+  const questions = questionsRaw
+    .map((entry) => {
+      if (!entry || typeof entry !== "object") {
+        return null;
+      }
+      const question = entry as Record<string, unknown>;
+      const id = readString(question, "id");
+      const header = readString(question, "header");
+      const body = readString(question, "question");
+      if (!id || !header || !body) {
+        return null;
+      }
+      const options = Array.isArray(question.options)
+        ? question.options
+            .map((option) => {
+              if (!option || typeof option !== "object") {
+                return null;
+              }
+              const candidate = option as Record<string, unknown>;
+              const label = readString(candidate, "label");
+              const description = readString(candidate, "description");
+              if (!label || !description) {
+                return null;
+              }
+              return { label, description };
+            })
+            .filter((option): option is NonNullable<typeof option> => option !== null)
+        : null;
+
+      return {
+        id,
+        header,
+        question: body,
+        isOther: question.isOther === true,
+        isSecret: question.isSecret === true,
+        options,
+      };
+    })
+    .filter((question): question is NonNullable<typeof question> => question !== null);
+
+  return {
+    interactionId,
+    threadId: event.threadId,
+    turnId: event.turnId,
+    itemId: readString(payload, "itemId"),
+    type: "userInput",
+    status: "pending",
+    questions,
+    createdAt: event.serverTs,
+    resolvedAt: null,
+  };
+}
+
+function proposedPlanFromText(text: string | null): string | null {
+  if (!text) {
+    return null;
+  }
+  const normalized = text.replace(/\r\n/g, "\n");
+  const match = normalized.match(/<proposed_plan>([\s\S]*?)<\/proposed_plan>/i);
+  if (!match) {
+    const hasPlanKeyword = /proposed[\s_-]*plan|implementation plan|plan ready|計劃|計畫|規劃/i.test(
+      normalized,
+    );
+    if (!hasPlanKeyword) {
+      return null;
+    }
+
+    const listLines = normalized
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => /^(\d+\.|[-*])\s+\S+/.test(line));
+    if (listLines.length < 2) {
+      return null;
+    }
+    return listLines.join("\n");
+  }
+  const body = match[1]?.trim();
+  return body && body.length > 0 ? body : null;
 }
 
 function isCollaborationModeKind(value: string | null): value is CollaborationModeKind {
@@ -262,9 +356,14 @@ export default function ThreadPage({ params }: Props) {
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [pendingApprovals, setPendingApprovals] = useState<Record<string, PendingApprovalCard>>({});
+  const [pendingInteractions, setPendingInteractions] = useState<
+    Record<string, PendingInteractionCard>
+  >({});
   const [timelineItems, setTimelineItems] = useState<ThreadTimelineItem[]>([]);
   const [approvalBusy, setApprovalBusy] = useState<string | null>(null);
   const [approvalError, setApprovalError] = useState<string | null>(null);
+  const [interactionBusy, setInteractionBusy] = useState<string | null>(null);
+  const [interactionError, setInteractionError] = useState<string | null>(null);
   const [controlBusy, setControlBusy] = useState<ThreadControlRequest["action"] | null>(null);
   const [controlError, setControlError] = useState<string | null>(null);
   const [threadList, setThreadList] = useState<ThreadListItem[]>([]);
@@ -286,6 +385,16 @@ export default function ThreadPage({ params }: Props) {
   const [showAllTurns, setShowAllTurns] = useState(false);
   const [latestTokenUsage, setLatestTokenUsage] = useState<ThreadTokenUsageSummary | null>(null);
   const [statusBanner, setStatusBanner] = useState<StatusBanner | null>(null);
+  const [dismissedPlanReadyByTurn, setDismissedPlanReadyByTurn] = useState<
+    Record<string, boolean>
+  >({});
+  const [desktopDockTab, setDesktopDockTab] = useState<"questions" | "approvals">("questions");
+  const [desktopQuestionDrafts, setDesktopQuestionDrafts] = useState<
+    Record<string, Record<string, { selected: string | null; other: string; freeform: string }>>
+  >({});
+  const [implementDialogOpen, setImplementDialogOpen] = useState(false);
+  const [implementDraft, setImplementDraft] = useState("");
+  const [implementTargetTurnId, setImplementTargetTurnId] = useState<string | null>(null);
   const [activeSlashIndex, setActiveSlashIndex] = useState(0);
   const [slashMenuDismissed, setSlashMenuDismissed] = useState(false);
   const slashSuggestions = useMemo(
@@ -421,6 +530,14 @@ export default function ThreadPage({ params }: Props) {
     setSheetDragOffsetY(0);
     setIsMessageDetailsOpen(false);
     setActiveMessageId(null);
+    setPendingInteractions({});
+    setInteractionError(null);
+    setDesktopDockTab("questions");
+    setDesktopQuestionDrafts({});
+    setDismissedPlanReadyByTurn({});
+    setImplementDialogOpen(false);
+    setImplementDraft("");
+    setImplementTargetTurnId(null);
   }, [threadId]);
 
   useEffect(() => {
@@ -633,9 +750,10 @@ export default function ThreadPage({ params }: Props) {
 
     async function load() {
       try {
-        const [detailRes, approvalsRes, threadsRes, timelineRes, contextRes] = await Promise.all([
+        const [detailRes, approvalsRes, interactionsRes, threadsRes, timelineRes, contextRes] = await Promise.all([
           fetch(`${gatewayUrl}/api/threads/${threadId}?includeTurns=true`),
           fetch(`${gatewayUrl}/api/threads/${threadId}/approvals/pending`),
+          fetch(`${gatewayUrl}/api/threads/${threadId}/interactions/pending`),
           fetch(`${gatewayUrl}/api/threads?limit=200`),
           fetch(`${gatewayUrl}/api/threads/${threadId}/timeline?limit=600`),
           fetch(`${gatewayUrl}/api/threads/${threadId}/context`),
@@ -646,6 +764,9 @@ export default function ThreadPage({ params }: Props) {
         }
         if (!approvalsRes.ok) {
           throw new Error(`approvals http ${approvalsRes.status}`);
+        }
+        if (!interactionsRes.ok) {
+          throw new Error(`interactions http ${interactionsRes.status}`);
         }
         if (!threadsRes.ok) {
           throw new Error(`thread list http ${threadsRes.status}`);
@@ -659,6 +780,8 @@ export default function ThreadPage({ params }: Props) {
 
         const data = (await detailRes.json()) as ThreadDetailResponse;
         const pending = (await approvalsRes.json()) as PendingApprovalsResponse;
+        const pendingInteractionsResult =
+          (await interactionsRes.json()) as PendingInteractionsResponse;
         const threadListResult = (await threadsRes.json()) as { data: ThreadListItem[] };
         const timeline = (await timelineRes.json()) as ThreadTimelineResponse;
         const context = (await contextRes.json()) as ThreadContextResponse;
@@ -670,6 +793,11 @@ export default function ThreadPage({ params }: Props) {
           setThreadContext(context);
           setPendingApprovals(() =>
             Object.fromEntries(pending.data.map((item) => [item.approvalId, item])),
+          );
+          setPendingInteractions(() =>
+            Object.fromEntries(
+              pendingInteractionsResult.data.map((item) => [item.interactionId, item]),
+            ),
           );
           setTimelineItems(timeline.data);
           setLoading(false);
@@ -748,12 +876,33 @@ export default function ThreadPage({ params }: Props) {
               return next;
             });
           }
+        } else if (payload.name === "interaction/responded") {
+          const interactionPayload = asRecord(payload.payload);
+          const interactionId = readString(interactionPayload, "interactionId");
+          if (interactionId) {
+            setPendingInteractions((prev) => {
+              if (!prev[interactionId]) {
+                return prev;
+              }
+              const next = { ...prev };
+              delete next[interactionId];
+              return next;
+            });
+          }
         } else if (payload.kind === "approval") {
           const approval = approvalFromEvent(payload);
           if (approval) {
             setPendingApprovals((prev) => ({
               ...prev,
               [approval.approvalId]: approval,
+            }));
+          }
+        } else if (payload.kind === "interaction") {
+          const interaction = interactionFromEvent(payload);
+          if (interaction) {
+            setPendingInteractions((prev) => ({
+              ...prev,
+              [interaction.interactionId]: interaction,
             }));
           }
         }
@@ -863,11 +1012,6 @@ export default function ThreadPage({ params }: Props) {
     }
     return commandByTurnId;
   }, [allTimelineItems]);
-  const hiddenTimelineCount = Math.max(0, allConversationTurns.length - 120);
-  const visibleConversationTurns = showAllTurns
-    ? allConversationTurns
-    : allConversationTurns.slice(-120);
-
   const activeThread = threadList.find((thread) => thread.id === threadId);
   const groupedThreads = useMemo(() => groupThreadsByProject(threadList), [threadList]);
   const mobileThreadSwitcherItems = useMemo<MobileThreadSwitcherItem[]>(
@@ -897,6 +1041,13 @@ export default function ThreadPage({ params }: Props) {
       )[0] ?? null,
     [pendingApprovals],
   );
+  const activeInteraction = useMemo(
+    () =>
+      Object.values(pendingInteractions).sort((a, b) =>
+        a.createdAt.localeCompare(b.createdAt),
+      )[0] ?? null,
+    [pendingInteractions],
+  );
   const pendingApprovalList = useMemo(
     () =>
       Object.values(pendingApprovals)
@@ -910,6 +1061,55 @@ export default function ThreadPage({ params }: Props) {
         })),
     [pendingApprovals],
   );
+  const pendingInteractionList = useMemo(
+    () =>
+      Object.values(pendingInteractions)
+        .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+        .map((item) => ({
+          interactionId: item.interactionId,
+          questions: item.questions,
+        })),
+    [pendingInteractions],
+  );
+  const planReadyByTurnId = useMemo(() => {
+    const planUpdatedByTurnId = new Map<string, string>();
+    for (const item of allTimelineItems) {
+      if (item.rawType !== "turn/plan/updated" || !item.turnId || !item.text) {
+        continue;
+      }
+      planUpdatedByTurnId.set(item.turnId, item.text);
+    }
+
+    const result: Record<string, string> = {};
+    for (const turn of allConversationTurns) {
+      const plan =
+        proposedPlanFromText(turn.assistantText) ??
+        proposedPlanFromText(turn.thinkingText) ??
+        planUpdatedByTurnId.get(turn.turnId) ??
+        null;
+      if (!plan) {
+        continue;
+      }
+      result[turn.turnId] = plan;
+    }
+    return result;
+  }, [allConversationTurns, allTimelineItems]);
+  const visibleConversationTurns = useMemo(() => {
+    const latestTurns = showAllTurns ? allConversationTurns : allConversationTurns.slice(-120);
+    if (showAllTurns) {
+      return latestTurns;
+    }
+
+    const pinnedTurns = allConversationTurns.filter(
+      (turn) =>
+        Boolean(planReadyByTurnId[turn.turnId]) &&
+        !dismissedPlanReadyByTurn[turn.turnId] &&
+        !latestTurns.some((candidate) => candidate.turnId === turn.turnId),
+    );
+    return [...pinnedTurns, ...latestTurns];
+  }, [allConversationTurns, dismissedPlanReadyByTurn, planReadyByTurnId, showAllTurns]);
+  const hiddenTimelineCount = Math.max(0, allConversationTurns.length - visibleConversationTurns.length);
+  const pendingActionCount = pendingApprovalList.length + pendingInteractionList.length;
   const selectedModelLabel = useMemo(
     () => modelOptions.find((option) => option.value === model)?.label ?? model,
     [model, modelOptions],
@@ -969,6 +1169,7 @@ export default function ThreadPage({ params }: Props) {
     hiddenTimelineCount,
     visibleConversationTurns,
     activeApproval?.approvalId,
+    activeInteraction?.interactionId,
     syncTimelineStickyState,
   ]);
 
@@ -1022,6 +1223,71 @@ export default function ThreadPage({ params }: Props) {
     };
   }, [threadId, threadList.length, sidebarOpen]);
 
+  useEffect(() => {
+    if (pendingInteractionList.length > 0) {
+      setDesktopDockTab("questions");
+      return;
+    }
+    if (pendingApprovalList.length > 0) {
+      setDesktopDockTab("approvals");
+    }
+  }, [pendingApprovalList.length, pendingInteractionList.length]);
+
+  const updateDesktopQuestionDraft = useCallback(
+    (
+      interactionId: string,
+      questionId: string,
+      updater: (prev: { selected: string | null; other: string; freeform: string }) => {
+        selected: string | null;
+        other: string;
+        freeform: string;
+      },
+    ) => {
+      setDesktopQuestionDrafts((prev) => {
+        const interaction = prev[interactionId] ?? {};
+        const current = interaction[questionId] ?? { selected: null, other: "", freeform: "" };
+        const nextQuestion = updater(current);
+        return {
+          ...prev,
+          [interactionId]: {
+            ...interaction,
+            [questionId]: nextQuestion,
+          },
+        };
+      });
+    },
+    [],
+  );
+
+  const answersForDesktopInteraction = useCallback(
+    (
+      interaction: PendingInteractionCard,
+    ): InteractionRespondRequest["answers"] | null => {
+      const draft = desktopQuestionDrafts[interaction.interactionId] ?? {};
+      const result: InteractionRespondRequest["answers"] = {};
+      for (const question of interaction.questions) {
+        const questionDraft = draft[question.id] ?? { selected: null, other: "", freeform: "" };
+        const answers: string[] = [];
+        if (question.options && question.options.length > 0) {
+          if (questionDraft.selected && questionDraft.selected.trim().length > 0) {
+            answers.push(questionDraft.selected.trim());
+          }
+        } else if (questionDraft.freeform.trim().length > 0) {
+          answers.push(questionDraft.freeform.trim());
+        }
+        if (question.isOther && questionDraft.other.trim().length > 0) {
+          answers.push(questionDraft.other.trim());
+        }
+        if (answers.length === 0) {
+          return null;
+        }
+        result[question.id] = { answers };
+      }
+      return result;
+    },
+    [desktopQuestionDrafts],
+  );
+
   async function createThread(): Promise<void> {
     try {
       const body = activeProjectKey !== "unknown" ? { cwd: activeProjectKey } : {};
@@ -1041,6 +1307,12 @@ export default function ThreadPage({ params }: Props) {
       setError(createError instanceof Error ? createError.message : "create thread failed");
     }
   }
+
+  const openImplementDialog = useCallback((turnId: string, planText: string) => {
+    setImplementTargetTurnId(turnId);
+    setImplementDraft(`Implement this plan:\n\n${planText}`);
+    setImplementDialogOpen(true);
+  }, []);
 
   async function decideApproval(
     approvalId: string,
@@ -1085,6 +1357,49 @@ export default function ThreadPage({ params }: Props) {
       );
     } finally {
       setApprovalBusy(null);
+    }
+  }
+
+  async function respondInteraction(
+    interactionId: string,
+    answers: InteractionRespondRequest["answers"],
+  ): Promise<void> {
+    if (!threadId || interactionBusy) {
+      return;
+    }
+
+    setInteractionBusy(interactionId);
+    setInteractionError(null);
+    try {
+      const res = await fetch(
+        `${gatewayUrl}/api/threads/${threadId}/interactions/${interactionId}/respond`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            answers,
+          } satisfies InteractionRespondRequest),
+        },
+      );
+      if (!res.ok) {
+        throw new Error(`interaction http ${res.status}`);
+      }
+      setPendingInteractions((prev) => {
+        if (!prev[interactionId]) {
+          return prev;
+        }
+        const next = { ...prev };
+        delete next[interactionId];
+        return next;
+      });
+    } catch (interactionErr) {
+      setInteractionError(
+        interactionErr instanceof Error ? interactionErr.message : "interaction failed",
+      );
+    } finally {
+      setInteractionBusy(null);
     }
   }
 
@@ -1135,6 +1450,11 @@ export default function ThreadPage({ params }: Props) {
         setActiveMessageId(null);
         return;
       }
+      if (implementDialogOpen) {
+        event.preventDefault();
+        setImplementDialogOpen(false);
+        return;
+      }
       if (isControlSheetOpen) {
         event.preventDefault();
         setSheetDragOffsetY(0);
@@ -1157,6 +1477,7 @@ export default function ThreadPage({ params }: Props) {
     };
   }, [
     isControlSheetOpen,
+    implementDialogOpen,
     isMessageDetailsOpen,
     isThreadSwitcherOpen,
     sendControl,
@@ -1262,7 +1583,10 @@ export default function ThreadPage({ params }: Props) {
           throw new Error(payload?.message ?? `turn submit http ${res.status}`);
         }
 
-        await res.json();
+        const payload = (await res.json()) as CreateTurnResponse;
+        if (payload.warnings?.includes("plan_mode_fallback")) {
+          setSubmitError("Plan mode unavailable on this app-server; sent in default mode.");
+        }
         return true;
       } catch (submitErr) {
         setSubmitError(submitErr instanceof Error ? submitErr.message : "submit failed");
@@ -1342,6 +1666,34 @@ export default function ThreadPage({ params }: Props) {
       return false;
     }
   }, [latestTokenUsage, threadId]);
+
+  const keepPlanning = useCallback((turnId: string) => {
+    setDismissedPlanReadyByTurn((prev) => ({
+      ...prev,
+      [turnId]: true,
+    }));
+  }, []);
+
+  const confirmImplementPlan = useCallback(async (): Promise<void> => {
+    if (!implementDraft.trim()) {
+      return;
+    }
+    const sent = await submitTurnText(implementDraft, "default");
+    if (!sent) {
+      return;
+    }
+    applyCollaborationMode("default");
+    if (implementTargetTurnId) {
+      setDismissedPlanReadyByTurn((prev) => ({
+        ...prev,
+        [implementTargetTurnId]: true,
+      }));
+    }
+    setImplementDialogOpen(false);
+    setImplementTargetTurnId(null);
+    setImplementDraft("");
+    setPrompt("");
+  }, [applyCollaborationMode, implementDraft, implementTargetTurnId, submitTurnText]);
 
   const applyPromptSlash = useCallback((command: KnownSlashCommand) => {
     setPrompt((previous) => applySlashSuggestion(previous, command));
@@ -1584,10 +1936,17 @@ export default function ThreadPage({ params }: Props) {
         <MobileChatTopBar
           threadTitle={activeThreadTitle}
           modelLabel={selectedModelLabel}
-          pendingApprovalCount={pendingApprovalList.length}
+          pendingActionCount={pendingActionCount}
           onOpenThreads={() => setIsThreadSwitcherOpen(true)}
           onOpenControls={() =>
-            openControlSheet(pendingApprovalList.length > 0 ? "approvals" : "controls", "half")
+            openControlSheet(
+              pendingInteractionList.length > 0
+                ? "questions"
+                : pendingApprovalList.length > 0
+                  ? "approvals"
+                  : "controls",
+              "half",
+            )
           }
         />
 
@@ -1602,6 +1961,7 @@ export default function ThreadPage({ params }: Props) {
           {error ? <p className="cdx-error">{error}</p> : null}
           {submitError ? <p className="cdx-error">{submitError}</p> : null}
           {approvalError ? <p className="cdx-error">{approvalError}</p> : null}
+          {interactionError ? <p className="cdx-error">{interactionError}</p> : null}
           {controlError ? <p className="cdx-error">{controlError}</p> : null}
           {modelCatalogError ? (
             <p className="cdx-helper">Model catalog unavailable ({modelCatalogError}); using fallback list.</p>
@@ -1618,6 +1978,36 @@ export default function ThreadPage({ params }: Props) {
             reviewSlashCommandByTurnId={reviewSlashCommandByTurnId}
             onCopyMessage={(text) => void copyMessage(text)}
             onOpenMessageDetails={openMessageDetails}
+            renderTurnActions={(turnId) => {
+              const planText = planReadyByTurnId[turnId];
+              if (!planText || dismissedPlanReadyByTurn[turnId]) {
+                return null;
+              }
+              return (
+                <section className="cdx-message cdx-message--detail cdx-plan-ready-card">
+                  <div className="cdx-message-meta">
+                    <strong className="cdx-message-role">Plan ready</strong>
+                  </div>
+                  <pre className="cdx-turn-body cdx-turn-body--plan">{truncateText(planText, 4000)}</pre>
+                  <div className="cdx-inline-actions">
+                    <button
+                      type="button"
+                      className="cdx-toolbar-btn cdx-toolbar-btn--positive"
+                      onClick={() => openImplementDialog(turnId, planText)}
+                    >
+                      Implement this plan
+                    </button>
+                    <button
+                      type="button"
+                      className="cdx-toolbar-btn"
+                      onClick={() => keepPlanning(turnId)}
+                    >
+                      Keep planning
+                    </button>
+                  </div>
+                </section>
+              );
+            }}
           />
         </main>
 
@@ -1647,8 +2037,10 @@ export default function ThreadPage({ params }: Props) {
           isDragging={isDraggingSheet}
           dragOffsetY={sheetDragOffsetY}
           approvalBusy={approvalBusy}
+          interactionBusy={interactionBusy}
           controlBusy={controlBusy}
           pendingApprovals={pendingApprovalList}
+          pendingInteractions={pendingInteractionList}
           model={model}
           modelOptions={modelOptions.map((option) => ({ value: option.value, label: option.label }))}
           thinkingEffort={thinkingEffort}
@@ -1661,11 +2053,55 @@ export default function ThreadPage({ params }: Props) {
           onDragOffsetChange={setSheetDragOffsetY}
           onControl={(action) => void sendControl(action)}
           onDecision={(approvalId, decision) => void decideApproval(approvalId, decision)}
+          onRespondInteraction={(interactionId, answers) => void respondInteraction(interactionId, answers)}
           onModelChange={setModel}
           onThinkingEffortChange={setThinkingEffort}
           onPermissionModeChange={setPermissionMode}
           formatEffortLabel={formatEffortLabel}
         />
+
+        {implementDialogOpen ? (
+          <section className="cdx-mobile-implement-sheet" data-testid="mobile-implement-sheet">
+            <div className="cdx-turn-head">
+              <strong>Implement plan</strong>
+              <button
+                type="button"
+                className="cdx-mobile-inline-btn"
+                onClick={() => setImplementDialogOpen(false)}
+              >
+                Close
+              </button>
+            </div>
+            <textarea
+              data-testid="implement-draft-input"
+              value={implementDraft}
+              onChange={(event) => setImplementDraft(event.target.value)}
+              rows={8}
+            />
+            <div className="cdx-inline-actions">
+              <button
+                type="button"
+                className="cdx-toolbar-btn cdx-toolbar-btn--positive"
+                onClick={() => void confirmImplementPlan()}
+                disabled={submitting || implementDraft.trim().length === 0}
+              >
+                Implement this plan
+              </button>
+              <button
+                type="button"
+                className="cdx-toolbar-btn"
+                onClick={() => {
+                  if (implementTargetTurnId) {
+                    keepPlanning(implementTargetTurnId);
+                  }
+                  setImplementDialogOpen(false);
+                }}
+              >
+                Keep planning
+              </button>
+            </div>
+          </section>
+        ) : null}
 
         <MobileMessageDetailsSheet
           open={isMessageDetailsOpen}
@@ -1827,8 +2263,9 @@ export default function ThreadPage({ params }: Props) {
               >
                 mode: {collaborationMode}
               </span>
+              <span className="cdx-status is-pending">Pending approval: {pendingApprovalList.length}</span>
               <span className="cdx-status is-pending">
-                Pending approval: {Object.keys(pendingApprovals).length}
+                Pending questions: {pendingInteractionList.length}
               </span>
               <span
                 className={`cdx-status ${
@@ -1849,6 +2286,7 @@ export default function ThreadPage({ params }: Props) {
             {error ? <p className="cdx-error">{error}</p> : null}
             {submitError ? <p className="cdx-error">{submitError}</p> : null}
             {approvalError ? <p className="cdx-error">{approvalError}</p> : null}
+            {interactionError ? <p className="cdx-error">{interactionError}</p> : null}
             {controlError ? <p className="cdx-error">{controlError}</p> : null}
             {modelCatalogError ? (
               <p className="cdx-helper">Model catalog unavailable ({modelCatalogError}); using fallback list.</p>
@@ -1986,52 +2424,199 @@ export default function ThreadPage({ params }: Props) {
                         </div>
                       </details>
                     ) : null}
+                    {planReadyByTurnId[turn.turnId] && !dismissedPlanReadyByTurn[turn.turnId] ? (
+                      <section className="cdx-message cdx-message--detail cdx-plan-ready-card">
+                        <div className="cdx-message-meta">
+                          <strong className="cdx-message-role">Plan ready</strong>
+                        </div>
+                        <pre className="cdx-turn-body cdx-turn-body--plan">
+                          {truncateText(planReadyByTurnId[turn.turnId], 4000)}
+                        </pre>
+                        <div className="cdx-inline-actions">
+                          <button
+                            type="button"
+                            className="cdx-toolbar-btn cdx-toolbar-btn--positive"
+                            onClick={() => openImplementDialog(turn.turnId, planReadyByTurnId[turn.turnId])}
+                          >
+                            Implement this plan
+                          </button>
+                          <button
+                            type="button"
+                            className="cdx-toolbar-btn"
+                            onClick={() => keepPlanning(turn.turnId)}
+                          >
+                            Keep planning
+                          </button>
+                        </div>
+                      </section>
+                    ) : null}
                   </article>
                 );
               })
             )}
           </section>
 
-          {activeApproval ? (
+          {activeApproval || activeInteraction ? (
             <aside data-testid="approval-drawer" className="cdx-approval-dock">
-              <div className="cdx-turn-head">
-                <strong>Approval Required</strong>
-                <span className="cdx-status is-pending">{activeApproval.type}</span>
-              </div>
-              <p>{activeApproval.reason ?? "This action requires your decision."}</p>
-              {activeApproval.commandPreview ? (
-                <pre className="cdx-turn-body">{activeApproval.commandPreview}</pre>
-              ) : null}
-              {activeApproval.fileChangePreview ? <p>target: {activeApproval.fileChangePreview}</p> : null}
               <div className="cdx-inline-actions">
                 <button
                   type="button"
-                  data-testid="approval-allow"
-                  className="cdx-toolbar-btn cdx-toolbar-btn--positive"
-                  disabled={approvalBusy === activeApproval.approvalId}
-                  onClick={() => void decideApproval(activeApproval.approvalId, "allow")}
+                  className={`cdx-toolbar-btn ${desktopDockTab === "questions" ? "cdx-toolbar-btn--solid" : ""}`}
+                  onClick={() => setDesktopDockTab("questions")}
                 >
-                  Allow
+                  Questions ({pendingInteractionList.length})
                 </button>
                 <button
                   type="button"
-                  data-testid="approval-deny"
-                  className="cdx-toolbar-btn cdx-toolbar-btn--danger"
-                  disabled={approvalBusy === activeApproval.approvalId}
-                  onClick={() => void decideApproval(activeApproval.approvalId, "deny")}
+                  className={`cdx-toolbar-btn ${desktopDockTab === "approvals" ? "cdx-toolbar-btn--solid" : ""}`}
+                  onClick={() => setDesktopDockTab("approvals")}
                 >
-                  Deny
-                </button>
-                <button
-                  type="button"
-                  data-testid="approval-cancel"
-                  className="cdx-toolbar-btn"
-                  disabled={approvalBusy === activeApproval.approvalId}
-                  onClick={() => void decideApproval(activeApproval.approvalId, "cancel")}
-                >
-                  Cancel
+                  Approvals ({pendingApprovalList.length})
                 </button>
               </div>
+              {desktopDockTab === "questions" ? (
+                activeInteraction ? (
+                  <>
+                    <div className="cdx-turn-head">
+                      <strong>Questions Required</strong>
+                      <span className="cdx-status is-pending">pending</span>
+                    </div>
+                    <div className="cdx-mobile-sheet-form">
+                      {activeInteraction.questions.map((question) => {
+                        const current =
+                          desktopQuestionDrafts[activeInteraction.interactionId]?.[question.id] ?? {
+                            selected: null,
+                            other: "",
+                            freeform: "",
+                          };
+                        return (
+                          <div key={`${activeInteraction.interactionId}-${question.id}`} className="cdx-mobile-sheet-field">
+                            <span>{question.header}</span>
+                            <p className="cdx-helper">{question.question}</p>
+                            {question.options ? (
+                              <div className="cdx-mobile-sheet-block">
+                                {question.options.map((option) => (
+                                  <label key={option.label} className="cdx-option-row">
+                                    <input
+                                      type="radio"
+                                      name={`desktop-question-${activeInteraction.interactionId}-${question.id}`}
+                                      aria-label={`${option.label} - ${option.description}`}
+                                      checked={current.selected === option.label}
+                                      onChange={(event) => {
+                                        updateDesktopQuestionDraft(
+                                          activeInteraction.interactionId,
+                                          question.id,
+                                          (prev) => ({
+                                            ...prev,
+                                            selected: event.target.checked ? option.label : null,
+                                          }),
+                                        );
+                                      }}
+                                    />
+                                    <span className="cdx-option-text">
+                                      <span className="cdx-option-title">{option.label}</span>
+                                      <span className="cdx-option-desc">{option.description}</span>
+                                    </span>
+                                  </label>
+                                ))}
+                              </div>
+                            ) : (
+                              <input
+                                type={question.isSecret ? "password" : "text"}
+                                value={current.freeform}
+                                onChange={(event) => {
+                                  updateDesktopQuestionDraft(
+                                    activeInteraction.interactionId,
+                                    question.id,
+                                    (prev) => ({ ...prev, freeform: event.target.value }),
+                                  );
+                                }}
+                              />
+                            )}
+                            {question.isOther ? (
+                              <input
+                                type={question.isSecret ? "password" : "text"}
+                                value={current.other}
+                                placeholder="Other"
+                                onChange={(event) => {
+                                  updateDesktopQuestionDraft(
+                                    activeInteraction.interactionId,
+                                    question.id,
+                                    (prev) => ({ ...prev, other: event.target.value }),
+                                  );
+                                }}
+                              />
+                            ) : null}
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <button
+                      type="button"
+                      data-testid="interaction-submit"
+                      className="cdx-toolbar-btn cdx-toolbar-btn--positive"
+                      disabled={
+                        interactionBusy !== null ||
+                        !answersForDesktopInteraction(activeInteraction)
+                      }
+                      onClick={() => {
+                        const answers = answersForDesktopInteraction(activeInteraction);
+                        if (!answers) {
+                          return;
+                        }
+                        void respondInteraction(activeInteraction.interactionId, answers);
+                      }}
+                    >
+                      Submit answers
+                    </button>
+                  </>
+                ) : (
+                  <p className="cdx-helper">No pending questions.</p>
+                )
+              ) : activeApproval ? (
+                <>
+                  <div className="cdx-turn-head">
+                    <strong>Approval Required</strong>
+                    <span className="cdx-status is-pending">{activeApproval.type}</span>
+                  </div>
+                  <p>{activeApproval.reason ?? "This action requires your decision."}</p>
+                  {activeApproval.commandPreview ? (
+                    <pre className="cdx-turn-body">{activeApproval.commandPreview}</pre>
+                  ) : null}
+                  {activeApproval.fileChangePreview ? <p>target: {activeApproval.fileChangePreview}</p> : null}
+                  <div className="cdx-inline-actions">
+                    <button
+                      type="button"
+                      data-testid="approval-allow"
+                      className="cdx-toolbar-btn cdx-toolbar-btn--positive"
+                      disabled={approvalBusy === activeApproval.approvalId}
+                      onClick={() => void decideApproval(activeApproval.approvalId, "allow")}
+                    >
+                      Allow
+                    </button>
+                    <button
+                      type="button"
+                      data-testid="approval-deny"
+                      className="cdx-toolbar-btn cdx-toolbar-btn--danger"
+                      disabled={approvalBusy === activeApproval.approvalId}
+                      onClick={() => void decideApproval(activeApproval.approvalId, "deny")}
+                    >
+                      Deny
+                    </button>
+                    <button
+                      type="button"
+                      data-testid="approval-cancel"
+                      className="cdx-toolbar-btn"
+                      disabled={approvalBusy === activeApproval.approvalId}
+                      onClick={() => void decideApproval(activeApproval.approvalId, "cancel")}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <p className="cdx-helper">No pending approvals.</p>
+              )}
             </aside>
           ) : null}
 
@@ -2072,7 +2657,7 @@ export default function ThreadPage({ params }: Props) {
               </div>
             ) : null}
             <p className="cdx-helper">
-              Mode: {collaborationMode} · Shift+Tab toggle · /plan /review /status
+              Mode: {collaborationMode} · Pending questions: {pendingInteractionList.length} · Shift+Tab toggle · /plan /review /status
             </p>
             <div className={`cdx-composer-row ${isMobileViewport ? "cdx-composer-row--mobile" : ""}`}>
               <div className={`cdx-inline-actions ${isMobileViewport ? "cdx-inline-actions--mobile" : ""}`}>
@@ -2187,6 +2772,52 @@ export default function ThreadPage({ params }: Props) {
           />
         ) : null}
       </div>
+
+      {implementDialogOpen ? (
+        <div
+          className="cdx-implement-overlay"
+          data-testid="implement-dialog"
+          onClick={(event) => {
+            if (event.target === event.currentTarget) {
+              setImplementDialogOpen(false);
+            }
+          }}
+        >
+          <section className="cdx-implement-dialog" onClick={(event) => event.stopPropagation()}>
+            <div className="cdx-turn-head">
+              <strong>Implement plan</strong>
+            </div>
+            <textarea
+              data-testid="implement-draft-input"
+              value={implementDraft}
+              onChange={(event) => setImplementDraft(event.target.value)}
+              rows={12}
+            />
+            <div className="cdx-inline-actions">
+              <button
+                type="button"
+                className="cdx-toolbar-btn cdx-toolbar-btn--positive"
+                onClick={() => void confirmImplementPlan()}
+                disabled={submitting || implementDraft.trim().length === 0}
+              >
+                Implement this plan
+              </button>
+              <button
+                type="button"
+                className="cdx-toolbar-btn"
+                onClick={() => {
+                  if (implementTargetTurnId) {
+                    keepPlanning(implementTargetTurnId);
+                  }
+                  setImplementDialogOpen(false);
+                }}
+              >
+                Keep planning
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
 
     </div>
   );

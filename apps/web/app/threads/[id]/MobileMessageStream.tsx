@@ -1,6 +1,6 @@
 "use client";
 
-import type { RefObject } from "react";
+import type { ReactNode, RefObject } from "react";
 import type { ConversationTurn, TurnStatus } from "../../lib/thread-logic";
 import { statusClass, statusLabel, truncateText } from "../../lib/thread-logic";
 
@@ -15,6 +15,7 @@ type MobileMessageStreamProps = {
   reviewSlashCommandByTurnId: Map<string, string>;
   onCopyMessage: (text: string) => void;
   onOpenMessageDetails: (turnId: string) => void;
+  renderTurnActions?: (turnId: string) => ReactNode;
 };
 
 function statusLabelCompact(status: TurnStatus): string {
@@ -36,6 +37,7 @@ export default function MobileMessageStream({
   reviewSlashCommandByTurnId,
   onCopyMessage,
   onOpenMessageDetails,
+  renderTurnActions,
 }: MobileMessageStreamProps) {
   return (
     <section
@@ -139,6 +141,8 @@ export default function MobileMessageStream({
                 </div>
               </details>
             ) : null}
+
+            {renderTurnActions ? renderTurnActions(turn.turnId) : null}
 
             <button
               type="button"
