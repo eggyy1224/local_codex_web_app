@@ -106,23 +106,18 @@
 ## 11. 工程協作規範
 
 1. 開發模式固定為垂直切片：每次只做一條「完成即可使用」的功能。
-2. 每個切片完成前，必須用 CDP MCP 做桌機與手機 viewport 驗證。
-3. 每個切片完成後先整理變更與風險，是否 commit 一律由使用者決定。
-4. commit 規範使用 Conventional Commits。
-5. push 策略：不強制每片立即 push，是否 push 與時機一律由使用者決定。
-6. 任何偏離本文件的設計，必須先在 PR/issue 說明原因。
-7. 文件與介面命名盡量一致（thread/turn/event/approval）。
-8. 實作 app-server 相關能力時，必須優先參考官方 OpenAI/Codex 文件（openai-docs skill）。
-9. 凡涉及 OpenAI/Codex API、命令、schema、限制，禁止猜測；必須先查官方文件（優先 openai-docs skill / 官方 schema）再實作。
-10. 本專案溝通預設使用繁體中文。
-11. 測試強制條款：
-12. 新功能：必須附對應 unit + integration 測試，否則不可 merge。
-13. Bug 修復：必須先有可重現失敗測試，再修復並轉綠。
-14. 行為變更：必須同步更新既有測試與文件，不允許保留紅測試。
-15. UI 互動變更：至少補 integration；關鍵流程需補 e2e（desktop + mobile）。
-16. 每個切片 commit 前，至少執行該切片最小驗證命令；PR 前必跑 `pnpm check`。
-17. `pnpm check` 為本機 merge gate：`lint + typecheck + test:coverage + test:e2e`，任一失敗即不可合併。
-18. CDP 桌機/手機 viewport 驗證屬人工補強，不能替代自動化測試。
-19. 進行前端/CDP 穩定驗證時，優先使用「臨時服務」而非沿用既有常駐開發服務，避免舊狀態、快取或其他工作階段干擾結果。
-20. 臨時服務建議模式：Gateway 使用 `pnpm --filter @lcwa/gateway test:e2e:server -- --port=<PORT>`；Web 使用 `NEXT_PUBLIC_GATEWAY_URL=http://127.0.0.1:<PORT> pnpm --filter @lcwa/web exec next dev --port <WEB_PORT>`。
-21. 驗證完成後必須關閉臨時服務，並檢查測試埠（例如 `lsof -nP -iTCP:<PORT> -sTCP:LISTEN`）確認沒有殘留 listener。
+2. 每個切片完成後先整理變更與風險，是否 commit 一律由使用者決定。
+3. commit 規範使用 Conventional Commits。
+4. push 策略：不強制每片立即 push，是否 push 與時機一律由使用者決定。
+5. 任何偏離本文件的設計，必須先在 PR/issue 說明原因。
+6. 文件與介面命名盡量一致（thread/turn/event/approval）。
+7. 實作 app-server 相關能力時，必須優先參考官方 OpenAI/Codex 文件（openai-docs skill）。
+8. 凡涉及 OpenAI/Codex API、命令、schema、限制，禁止猜測；必須先查官方文件（優先 openai-docs skill / 官方 schema）再實作。
+9. 本專案溝通預設使用繁體中文。
+10. 測試強制條款：
+11. 新功能：必須附對應 unit + integration 測試，否則不可 merge。
+12. Bug 修復：必須先有可重現失敗測試，再修復並轉綠。
+13. 行為變更：必須同步更新既有測試與文件，不允許保留紅測試。
+14. UI 互動變更：至少補 integration；關鍵流程需補 e2e（desktop + mobile）。
+15. 每個切片 commit 前，至少執行該切片最小驗證命令；PR 前必跑 `pnpm check`。
+16. `pnpm check` 為本機 merge gate：`lint + typecheck + test:coverage + test:e2e`，任一失敗即不可合併。
