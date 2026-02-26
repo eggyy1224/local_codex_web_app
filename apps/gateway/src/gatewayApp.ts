@@ -10,6 +10,9 @@ import type {
   ApprovalType,
   CreateReviewRequest,
   CreateReviewResponse,
+  InteractionRespondRequest,
+  InteractionRespondResponse,
+  InteractionType,
   CreateTurnRequest,
   CreateTurnResponse,
   GatewayEvent,
@@ -17,6 +20,7 @@ import type {
   ModelOption,
   ModelsResponse,
   PendingApprovalsResponse,
+  PendingInteractionsResponse,
   TerminalClientMessage,
   TerminalServerMessage,
   ThreadDetailResponse,
@@ -35,12 +39,14 @@ import type { GatewayAppServerPort } from "./appServerPort.js";
 import {
   gatewayDb,
   type ApprovalProjection,
+  type InteractionProjection,
   type GatewayDbPort,
   type ThreadProjection,
 } from "./db.js";
 import {
   approvalTypeFromMethod,
   applyFilters,
+  isUserInputRequestMethod,
   kindFromMethod,
   permissionModeToTurnStartParams,
   statusFromRaw,
@@ -221,6 +227,16 @@ export async function createGatewayApp(
       type: ApprovalType;
     }
   >();
+  const pendingInteractions = new Map<
+    string,
+    {
+      rpcId: string | number;
+      threadId: string;
+      turnId: string | null;
+      type: InteractionType;
+    }
+  >();
+  let collaborationModeListSupported: boolean | null = null;
 
 function subscribe(threadId: string, fn: (event: GatewayEvent) => void): () => void {
   const set = subscribers.get(threadId) ?? new Set<(event: GatewayEvent) => void>();
@@ -393,6 +409,15 @@ function makeReadableModeError(mode: "plan" | "default", message: string): Error
   return error;
 }
 
+function isCollaborationModeListUnsupported(message: string): boolean {
+  const normalized = message.toLowerCase();
+  return (
+    normalized.includes("unsupported method: collaborationmode/list") ||
+    normalized.includes("unhandled method: collaborationmode/list") ||
+    (normalized.includes("method not found") && normalized.includes("collaborationmode/list"))
+  );
+}
+
 async function resolveCollaborationMode(
   mode: "plan" | "default",
   fallbackModel?: string,
@@ -404,11 +429,19 @@ async function resolveCollaborationMode(
     developer_instructions: string | null;
   };
 }> {
+  if (collaborationModeListSupported === false) {
+    throw makeReadableModeError(mode, "unsupported method: collaborationMode/list");
+  }
+
   let rawResult: unknown;
   try {
     rawResult = await appServer.request("collaborationMode/list", {});
+    collaborationModeListSupported = true;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    if (isCollaborationModeListUnsupported(message)) {
+      collaborationModeListSupported = false;
+    }
     throw makeReadableModeError(mode, message);
   }
 
@@ -439,6 +472,37 @@ async function resolveCollaborationMode(
       developer_instructions: developerInstructions ?? null,
     },
   };
+}
+
+async function resolveCollaborationModeWithFallback(
+  mode: "plan" | "default" | undefined,
+  fallbackModel: string | undefined,
+  warnings: string[],
+): Promise<
+  | {
+      mode: "plan" | "default";
+      settings: {
+        model: string;
+        reasoning_effort: string | null;
+        developer_instructions: string | null;
+      };
+    }
+  | undefined
+> {
+  if (!mode) {
+    return undefined;
+  }
+
+  try {
+    return await resolveCollaborationMode(mode, fallbackModel);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (mode === "plan" && isCollaborationModeListUnsupported(message)) {
+      warnings.push("plan_mode_fallback");
+      return undefined;
+    }
+    throw error;
+  }
 }
 
 async function listEnabledSkills(cwd?: string): Promise<Map<string, { name: string; path: string }>> {
@@ -664,6 +728,38 @@ function parseTerminalClientMessage(raw: unknown): TerminalClientMessage | null 
   return null;
 }
 
+function readInteractionAnswers(
+  raw: InteractionRespondRequest["answers"],
+): Record<string, { answers: string[] }> | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return null;
+  }
+
+  const normalized: Record<string, { answers: string[] }> = {};
+  let questionCount = 0;
+  for (const [questionId, value] of Object.entries(raw)) {
+    if (questionId.trim().length === 0) {
+      return null;
+    }
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      return null;
+    }
+    const candidate = value as { answers?: unknown };
+    if (!Array.isArray(candidate.answers)) {
+      return null;
+    }
+    const answers = candidate.answers
+      .map((entry) => (typeof entry === "string" ? entry.trim() : ""))
+      .filter((entry) => entry.length > 0);
+    if (answers.length === 0) {
+      return null;
+    }
+    normalized[questionId] = { answers };
+    questionCount += 1;
+  }
+  return questionCount > 0 ? normalized : null;
+}
+
 function extractThreadId(params: unknown): string | null {
   if (!params || typeof params !== "object") {
     return null;
@@ -714,6 +810,7 @@ appServer.on("message", (msg: unknown) => {
 
   const turnId = extractTurnId(raw.params);
   const approvalType = approvalTypeFromMethod(raw.method);
+  const isUserInputRequest = isUserInputRequestMethod(raw.method);
   const paramsRecord =
     raw.params && typeof raw.params === "object"
       ? { ...(raw.params as Record<string, unknown>) }
@@ -767,6 +864,49 @@ appServer.on("message", (msg: unknown) => {
       ...(paramsRecord ?? {}),
       approvalId,
       approvalType,
+    };
+  } else if (isUserInputRequest && raw.id !== undefined) {
+    const interactionId = String(raw.id);
+    const createdAt = new Date().toISOString();
+    const requestPayloadJson = JSON.stringify(raw.params ?? null);
+    const itemId =
+      paramsRecord && typeof paramsRecord.itemId === "string" ? paramsRecord.itemId : null;
+
+    const projection: InteractionProjection = {
+      interaction_id: interactionId,
+      thread_id: threadId,
+      turn_id: turnId,
+      item_id: itemId,
+      type: "userInput",
+      status: "pending",
+      request_payload_json: requestPayloadJson,
+      response_payload_json: null,
+      created_at: createdAt,
+      resolved_at: null,
+    };
+    db.upsertInteractionRequest(projection);
+    pendingInteractions.set(interactionId, {
+      rpcId: raw.id,
+      threadId,
+      turnId,
+      type: "userInput",
+    });
+    db.insertAuditLog({
+      ts: createdAt,
+      actor: "gateway",
+      action: "interaction.requested",
+      threadId,
+      turnId,
+      metadata: {
+        interactionId,
+        type: "userInput",
+        itemId,
+      },
+    });
+    payloadForEvent = {
+      ...(paramsRecord ?? {}),
+      interactionId,
+      interactionType: "userInput",
     };
   }
 
@@ -1281,6 +1421,16 @@ app.get(
   },
 );
 
+app.get(
+  "/api/threads/:id/interactions/pending",
+  async (request): Promise<PendingInteractionsResponse> => {
+    const params = request.params as { id: string };
+    return {
+      data: db.listPendingInteractionsByThread(params.id),
+    };
+  },
+);
+
 app.post("/api/threads/:id/turns", async (request): Promise<CreateTurnResponse> => {
   const params = request.params as { id: string };
   const body = request.body as CreateTurnRequest;
@@ -1302,9 +1452,12 @@ app.post("/api/threads/:id/turns", async (request): Promise<CreateTurnResponse> 
     body.input,
     inferredCwd,
   );
-  const collaborationMode = body.options?.collaborationMode
-    ? await resolveCollaborationMode(body.options.collaborationMode, body.options.model)
-    : undefined;
+  const warnings: string[] = [];
+  const collaborationMode = await resolveCollaborationModeWithFallback(
+    body.options?.collaborationMode,
+    body.options?.model,
+    warnings,
+  );
 
   lastTurnInputByThread.set(params.id, {
     input,
@@ -1346,7 +1499,7 @@ app.post("/api/threads/:id/turns", async (request): Promise<CreateTurnResponse> 
     threadContextResolver.invalidate(params.id);
   }
 
-  return { turnId };
+  return warnings.length > 0 ? { turnId, warnings } : { turnId };
 });
 
 app.post("/api/threads/:id/review", async (request): Promise<CreateReviewResponse> => {
@@ -1486,6 +1639,81 @@ app.post(
   },
 );
 
+app.post(
+  "/api/threads/:id/interactions/:interactionId/respond",
+  async (request): Promise<InteractionRespondResponse> => {
+    const params = request.params as { id: string; interactionId: string };
+    const body = request.body as InteractionRespondRequest;
+    const answers = readInteractionAnswers(body?.answers);
+    if (!answers) {
+      const error = new Error("invalid answers") as Error & { statusCode?: number };
+      error.statusCode = 400;
+      throw error;
+    }
+
+    const pending = pendingInteractions.get(params.interactionId);
+    const interaction = db.getInteractionById(params.interactionId);
+    if (!pending && !interaction) {
+      const error = new Error("interaction not found") as Error & { statusCode?: number };
+      error.statusCode = 404;
+      throw error;
+    }
+    const ownerThreadId = interaction?.threadId ?? pending?.threadId ?? null;
+    if (ownerThreadId && ownerThreadId !== params.id) {
+      const error = new Error("interaction not found") as Error & { statusCode?: number };
+      error.statusCode = 404;
+      throw error;
+    }
+
+    const fallbackRpcId: string | number = /^\d+$/.test(params.interactionId)
+      ? Number(params.interactionId)
+      : params.interactionId;
+    const rpcId = pending?.rpcId ?? fallbackRpcId;
+    const threadId = ownerThreadId ?? params.id;
+    const turnId = pending?.turnId ?? interaction?.turnId ?? null;
+
+    appServer.respond(rpcId, {
+      answers,
+    });
+
+    const resolvedAt = new Date().toISOString();
+    const responsePayloadJson = JSON.stringify({ answers });
+    db.respondInteractionRequest(
+      params.interactionId,
+      "responded",
+      responsePayloadJson,
+      resolvedAt,
+    );
+
+    pendingInteractions.delete(params.interactionId);
+    db.insertAuditLog({
+      ts: resolvedAt,
+      actor: "user",
+      action: "interaction.responded",
+      threadId,
+      turnId,
+      metadata: {
+        interactionId: params.interactionId,
+      },
+    });
+
+    const eventBase: Omit<GatewayEvent, "seq"> = {
+      serverTs: resolvedAt,
+      threadId,
+      turnId,
+      kind: "interaction",
+      name: "interaction/responded",
+      payload: {
+        interactionId: params.interactionId,
+      },
+    };
+    const seq = db.insertGatewayEvent(eventBase);
+    broadcast({ ...eventBase, seq });
+
+    return { ok: true };
+  },
+);
+
 app.post("/api/threads/:id/control", async (request): Promise<ThreadControlResponse> => {
   const params = request.params as { id: string };
   const body = request.body as ThreadControlRequest;
@@ -1504,12 +1732,11 @@ app.post("/api/threads/:id/control", async (request): Promise<ThreadControlRespo
       throw error;
     }
 
-    const collaborationMode = previous.options?.collaborationMode
-      ? await resolveCollaborationMode(
-          previous.options.collaborationMode,
-          previous.options.model,
-        )
-      : undefined;
+    const collaborationMode = await resolveCollaborationModeWithFallback(
+      previous.options?.collaborationMode,
+      previous.options?.model,
+      [],
+    );
 
     const startTurn = async (): Promise<{ turn?: RawTurn }> =>
       (await appServer.request("turn/start", {

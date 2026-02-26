@@ -169,8 +169,11 @@ export function applyFilters(
 }
 
 export function kindFromMethod(method: GatewayEvent["name"]): GatewayEvent["kind"] {
-  if (method.includes("requestApproval") || method.startsWith("tool/requestUserInput")) {
+  if (method.includes("requestApproval")) {
     return "approval";
+  }
+  if (isUserInputRequestMethod(method)) {
+    return "interaction";
   }
   if (method.startsWith("thread/")) return "thread";
   if (method.startsWith("turn/")) return "turn";
@@ -185,8 +188,9 @@ export function approvalTypeFromMethod(method: string): ApprovalType | null {
   if (method === "item/fileChange/requestApproval") {
     return "fileChange";
   }
-  if (method === "tool/requestUserInput") {
-    return "userInput";
-  }
   return null;
+}
+
+export function isUserInputRequestMethod(method: string): boolean {
+  return method === "item/tool/requestUserInput" || method === "tool/requestUserInput";
 }

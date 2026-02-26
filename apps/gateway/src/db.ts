@@ -7,8 +7,12 @@ import type {
   ApprovalType,
   ApprovalView,
   GatewayEvent,
+  InteractionStatus,
+  InteractionType,
+  InteractionView,
   ThreadListItem,
   ThreadStatus,
+  UserInputQuestionView,
 } from "@lcwa/shared-types";
 
 export type ThreadProjection = {
@@ -32,6 +36,19 @@ export type ApprovalProjection = {
   request_payload_json: string;
   decision: string | null;
   note: string | null;
+  created_at: string;
+  resolved_at: string | null;
+};
+
+export type InteractionProjection = {
+  interaction_id: string;
+  thread_id: string;
+  turn_id: string | null;
+  item_id: string | null;
+  type: InteractionType;
+  status: InteractionStatus;
+  request_payload_json: string;
+  response_payload_json: string | null;
   created_at: string;
   resolved_at: string | null;
 };
@@ -62,6 +79,15 @@ export type GatewayDbPort = {
   ): void;
   getApprovalById(approvalId: string): ApprovalView | null;
   listPendingApprovalsByThread(threadId: string): ApprovalView[];
+  upsertInteractionRequest(row: InteractionProjection): void;
+  respondInteractionRequest(
+    interactionId: string,
+    status: InteractionStatus,
+    responsePayloadJson: string,
+    resolvedAt: string,
+  ): void;
+  getInteractionById(interactionId: string): InteractionView | null;
+  listPendingInteractionsByThread(threadId: string): InteractionView[];
   insertAuditLog(entry: AuditLogEntry): void;
 };
 
@@ -108,6 +134,72 @@ function toApprovalView(row: ApprovalProjection): ApprovalView {
     reason: typeof requestPayload.reason === "string" ? requestPayload.reason : null,
     commandPreview,
     fileChangePreview,
+    createdAt: row.created_at,
+    resolvedAt: row.resolved_at,
+  };
+}
+
+function readQuestions(requestPayload: Record<string, unknown>): UserInputQuestionView[] {
+  if (!Array.isArray(requestPayload.questions)) {
+    return [];
+  }
+
+  return requestPayload.questions
+    .map((entry) => {
+      if (!entry || typeof entry !== "object") {
+        return null;
+      }
+      const question = entry as Record<string, unknown>;
+      const id = typeof question.id === "string" ? question.id : null;
+      const header = typeof question.header === "string" ? question.header : null;
+      const body = typeof question.question === "string" ? question.question : null;
+      if (!id || !header || !body) {
+        return null;
+      }
+      const options = Array.isArray(question.options)
+        ? question.options
+            .map((option) => {
+              if (!option || typeof option !== "object") {
+                return null;
+              }
+              const candidate = option as Record<string, unknown>;
+              const label = typeof candidate.label === "string" ? candidate.label : null;
+              const description =
+                typeof candidate.description === "string"
+                  ? candidate.description
+                  : null;
+              if (!label || !description) {
+                return null;
+              }
+              return { label, description };
+            })
+            .filter((option): option is NonNullable<typeof option> => option !== null)
+        : null;
+
+      return {
+        id,
+        header,
+        question: body,
+        isOther: question.isOther === true,
+        isSecret: question.isSecret === true,
+        options,
+      };
+    })
+    .filter((entry): entry is UserInputQuestionView => entry !== null);
+}
+
+function toInteractionView(row: InteractionProjection): InteractionView {
+  const requestPayload = JSON.parse(row.request_payload_json) as Record<string, unknown>;
+  const questions = readQuestions(requestPayload);
+
+  return {
+    interactionId: row.interaction_id,
+    threadId: row.thread_id,
+    turnId: row.turn_id,
+    itemId: row.item_id,
+    type: row.type,
+    status: row.status,
+    questions,
     createdAt: row.created_at,
     resolvedAt: row.resolved_at,
   };
@@ -167,6 +259,19 @@ CREATE TABLE IF NOT EXISTS approvals (
   request_payload_json TEXT NOT NULL,
   decision TEXT,
   note TEXT,
+  created_at TEXT NOT NULL,
+  resolved_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS interactions (
+  interaction_id TEXT PRIMARY KEY,
+  thread_id TEXT NOT NULL,
+  turn_id TEXT,
+  item_id TEXT,
+  type TEXT NOT NULL,
+  status TEXT NOT NULL,
+  request_payload_json TEXT NOT NULL,
+  response_payload_json TEXT,
   created_at TEXT NOT NULL,
   resolved_at TEXT
 );
@@ -313,6 +418,72 @@ INSERT INTO audit_log (ts, actor, action, thread_id, turn_id, metadata_json)
 VALUES (?, ?, ?, ?, ?, ?)
 `);
 
+  const upsertInteractionStmt = sqlite.prepare(`
+INSERT INTO interactions (
+  interaction_id,
+  thread_id,
+  turn_id,
+  item_id,
+  type,
+  status,
+  request_payload_json,
+  response_payload_json,
+  created_at,
+  resolved_at
+)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(interaction_id) DO UPDATE SET
+  thread_id = excluded.thread_id,
+  turn_id = excluded.turn_id,
+  item_id = excluded.item_id,
+  type = excluded.type,
+  status = excluded.status,
+  request_payload_json = excluded.request_payload_json,
+  response_payload_json = excluded.response_payload_json,
+  created_at = excluded.created_at,
+  resolved_at = excluded.resolved_at;
+`);
+
+  const respondInteractionStmt = sqlite.prepare(`
+UPDATE interactions
+SET status = ?, response_payload_json = ?, resolved_at = ?
+WHERE interaction_id = ?
+`);
+
+  const getInteractionByIdStmt = sqlite.prepare(`
+SELECT
+  interaction_id,
+  thread_id,
+  turn_id,
+  item_id,
+  type,
+  status,
+  request_payload_json,
+  response_payload_json,
+  created_at,
+  resolved_at
+FROM interactions
+WHERE interaction_id = ?
+LIMIT 1
+`);
+
+  const listPendingInteractionsByThreadStmt = sqlite.prepare(`
+SELECT
+  interaction_id,
+  thread_id,
+  turn_id,
+  item_id,
+  type,
+  status,
+  request_payload_json,
+  response_payload_json,
+  created_at,
+  resolved_at
+FROM interactions
+WHERE thread_id = ? AND status = 'pending'
+ORDER BY created_at ASC
+`);
+
   return {
     sqlite,
     dataDir,
@@ -440,6 +611,39 @@ VALUES (?, ?, ?, ?, ?, ?)
       const rows = listPendingApprovalsByThreadStmt.all(threadId) as ApprovalProjection[];
       return rows.map(toApprovalView);
     },
+    upsertInteractionRequest(row: InteractionProjection): void {
+      upsertInteractionStmt.run(
+        row.interaction_id,
+        row.thread_id,
+        row.turn_id,
+        row.item_id,
+        row.type,
+        row.status,
+        row.request_payload_json,
+        row.response_payload_json,
+        row.created_at,
+        row.resolved_at,
+      );
+    },
+    respondInteractionRequest(
+      interactionId: string,
+      status: InteractionStatus,
+      responsePayloadJson: string,
+      resolvedAt: string,
+    ): void {
+      respondInteractionStmt.run(status, responsePayloadJson, resolvedAt, interactionId);
+    },
+    getInteractionById(interactionId: string): InteractionView | null {
+      const row = getInteractionByIdStmt.get(interactionId) as InteractionProjection | undefined;
+      if (!row) {
+        return null;
+      }
+      return toInteractionView(row);
+    },
+    listPendingInteractionsByThread(threadId: string): InteractionView[] {
+      const rows = listPendingInteractionsByThreadStmt.all(threadId) as InteractionProjection[];
+      return rows.map(toInteractionView);
+    },
     insertAuditLog(entry: AuditLogEntry): void {
       insertAuditStmt.run(
         entry.ts,
@@ -504,6 +708,27 @@ export function getApprovalById(approvalId: string): ApprovalView | null {
 
 export function listPendingApprovalsByThread(threadId: string): ApprovalView[] {
   return gatewayDb.listPendingApprovalsByThread(threadId);
+}
+
+export function upsertInteractionRequest(row: InteractionProjection): void {
+  gatewayDb.upsertInteractionRequest(row);
+}
+
+export function respondInteractionRequest(
+  interactionId: string,
+  status: InteractionStatus,
+  responsePayloadJson: string,
+  resolvedAt: string,
+): void {
+  gatewayDb.respondInteractionRequest(interactionId, status, responsePayloadJson, resolvedAt);
+}
+
+export function getInteractionById(interactionId: string): InteractionView | null {
+  return gatewayDb.getInteractionById(interactionId);
+}
+
+export function listPendingInteractionsByThread(threadId: string): InteractionView[] {
+  return gatewayDb.listPendingInteractionsByThread(threadId);
 }
 
 export function insertAuditLog(entry: AuditLogEntry): void {

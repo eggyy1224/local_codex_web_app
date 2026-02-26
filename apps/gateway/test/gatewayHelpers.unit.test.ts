@@ -3,6 +3,7 @@ import type { ThreadListItem } from "@lcwa/shared-types";
 import {
   approvalTypeFromMethod,
   applyFilters,
+  isUserInputRequestMethod,
   kindFromMethod,
   permissionModeToTurnStartParams,
   statusFromRaw,
@@ -124,7 +125,7 @@ describe("approval and kind mapping", () => {
   it("maps approval method to type", () => {
     expect(approvalTypeFromMethod("item/commandExecution/requestApproval")).toBe("commandExecution");
     expect(approvalTypeFromMethod("item/fileChange/requestApproval")).toBe("fileChange");
-    expect(approvalTypeFromMethod("tool/requestUserInput")).toBe("userInput");
+    expect(approvalTypeFromMethod("tool/requestUserInput")).toBeNull();
     expect(approvalTypeFromMethod("turn/started")).toBeNull();
   });
 
@@ -133,7 +134,14 @@ describe("approval and kind mapping", () => {
     expect(kindFromMethod("turn/completed")).toBe("turn");
     expect(kindFromMethod("item/started")).toBe("item");
     expect(kindFromMethod("item/fileChange/requestApproval")).toBe("approval");
-    expect(kindFromMethod("tool/requestUserInput")).toBe("approval");
+    expect(kindFromMethod("tool/requestUserInput")).toBe("interaction");
+    expect(kindFromMethod("item/tool/requestUserInput")).toBe("interaction");
     expect(kindFromMethod("system/ping")).toBe("system");
+  });
+
+  it("normalizes user input request method aliases", () => {
+    expect(isUserInputRequestMethod("item/tool/requestUserInput")).toBe(true);
+    expect(isUserInputRequestMethod("tool/requestUserInput")).toBe(true);
+    expect(isUserInputRequestMethod("item/fileChange/requestApproval")).toBe(false);
   });
 });
