@@ -249,9 +249,24 @@ function proposedPlanFromText(text: string | null): string | null {
   if (!text) {
     return null;
   }
-  const match = text.match(/<proposed_plan>([\s\S]*?)<\/proposed_plan>/i);
+  const normalized = text.replace(/\r\n/g, "\n");
+  const match = normalized.match(/<proposed_plan>([\s\S]*?)<\/proposed_plan>/i);
   if (!match) {
-    return null;
+    const hasPlanKeyword = /proposed[\s_-]*plan|implementation plan|plan ready|計劃|計畫|規劃/i.test(
+      normalized,
+    );
+    if (!hasPlanKeyword) {
+      return null;
+    }
+
+    const listLines = normalized
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => /^(\d+\.|[-*])\s+\S+/.test(line));
+    if (listLines.length < 2) {
+      return null;
+    }
+    return listLines.join("\n");
   }
   const body = match[1]?.trim();
   return body && body.length > 0 ? body : null;
@@ -375,7 +390,7 @@ export default function ThreadPage({ params }: Props) {
   >({});
   const [desktopDockTab, setDesktopDockTab] = useState<"questions" | "approvals">("questions");
   const [desktopQuestionDrafts, setDesktopQuestionDrafts] = useState<
-    Record<string, Record<string, { selected: string[]; other: string; freeform: string }>>
+    Record<string, Record<string, { selected: string | null; other: string; freeform: string }>>
   >({});
   const [implementDialogOpen, setImplementDialogOpen] = useState(false);
   const [implementDraft, setImplementDraft] = useState("");
@@ -997,11 +1012,6 @@ export default function ThreadPage({ params }: Props) {
     }
     return commandByTurnId;
   }, [allTimelineItems]);
-  const hiddenTimelineCount = Math.max(0, allConversationTurns.length - 120);
-  const visibleConversationTurns = showAllTurns
-    ? allConversationTurns
-    : allConversationTurns.slice(-120);
-
   const activeThread = threadList.find((thread) => thread.id === threadId);
   const groupedThreads = useMemo(() => groupThreadsByProject(threadList), [threadList]);
   const mobileThreadSwitcherItems = useMemo<MobileThreadSwitcherItem[]>(
@@ -1062,19 +1072,43 @@ export default function ThreadPage({ params }: Props) {
     [pendingInteractions],
   );
   const planReadyByTurnId = useMemo(() => {
-    const result: Record<string, string> = {};
-    for (const turn of allConversationTurns) {
-      if (turn.isStreaming) {
+    const planUpdatedByTurnId = new Map<string, string>();
+    for (const item of allTimelineItems) {
+      if (item.rawType !== "turn/plan/updated" || !item.turnId || !item.text) {
         continue;
       }
-      const plan = proposedPlanFromText(turn.assistantText);
+      planUpdatedByTurnId.set(item.turnId, item.text);
+    }
+
+    const result: Record<string, string> = {};
+    for (const turn of allConversationTurns) {
+      const plan =
+        proposedPlanFromText(turn.assistantText) ??
+        proposedPlanFromText(turn.thinkingText) ??
+        planUpdatedByTurnId.get(turn.turnId) ??
+        null;
       if (!plan) {
         continue;
       }
       result[turn.turnId] = plan;
     }
     return result;
-  }, [allConversationTurns]);
+  }, [allConversationTurns, allTimelineItems]);
+  const visibleConversationTurns = useMemo(() => {
+    const latestTurns = showAllTurns ? allConversationTurns : allConversationTurns.slice(-120);
+    if (showAllTurns) {
+      return latestTurns;
+    }
+
+    const pinnedTurns = allConversationTurns.filter(
+      (turn) =>
+        Boolean(planReadyByTurnId[turn.turnId]) &&
+        !dismissedPlanReadyByTurn[turn.turnId] &&
+        !latestTurns.some((candidate) => candidate.turnId === turn.turnId),
+    );
+    return [...pinnedTurns, ...latestTurns];
+  }, [allConversationTurns, dismissedPlanReadyByTurn, planReadyByTurnId, showAllTurns]);
+  const hiddenTimelineCount = Math.max(0, allConversationTurns.length - visibleConversationTurns.length);
   const pendingActionCount = pendingApprovalList.length + pendingInteractionList.length;
   const selectedModelLabel = useMemo(
     () => modelOptions.find((option) => option.value === model)?.label ?? model,
@@ -1203,15 +1237,15 @@ export default function ThreadPage({ params }: Props) {
     (
       interactionId: string,
       questionId: string,
-      updater: (prev: { selected: string[]; other: string; freeform: string }) => {
-        selected: string[];
+      updater: (prev: { selected: string | null; other: string; freeform: string }) => {
+        selected: string | null;
         other: string;
         freeform: string;
       },
     ) => {
       setDesktopQuestionDrafts((prev) => {
         const interaction = prev[interactionId] ?? {};
-        const current = interaction[questionId] ?? { selected: [], other: "", freeform: "" };
+        const current = interaction[questionId] ?? { selected: null, other: "", freeform: "" };
         const nextQuestion = updater(current);
         return {
           ...prev,
@@ -1232,13 +1266,11 @@ export default function ThreadPage({ params }: Props) {
       const draft = desktopQuestionDrafts[interaction.interactionId] ?? {};
       const result: InteractionRespondRequest["answers"] = {};
       for (const question of interaction.questions) {
-        const questionDraft = draft[question.id] ?? { selected: [], other: "", freeform: "" };
+        const questionDraft = draft[question.id] ?? { selected: null, other: "", freeform: "" };
         const answers: string[] = [];
         if (question.options && question.options.length > 0) {
-          for (const option of questionDraft.selected) {
-            if (option.trim().length > 0) {
-              answers.push(option.trim());
-            }
+          if (questionDraft.selected && questionDraft.selected.trim().length > 0) {
+            answers.push(questionDraft.selected.trim());
           }
         } else if (questionDraft.freeform.trim().length > 0) {
           answers.push(questionDraft.freeform.trim());
@@ -1952,22 +1984,28 @@ export default function ThreadPage({ params }: Props) {
                 return null;
               }
               return (
-                <div className="cdx-inline-actions">
-                  <button
-                    type="button"
-                    className="cdx-toolbar-btn cdx-toolbar-btn--positive"
-                    onClick={() => openImplementDialog(turnId, planText)}
-                  >
-                    Implement this plan
-                  </button>
-                  <button
-                    type="button"
-                    className="cdx-toolbar-btn"
-                    onClick={() => keepPlanning(turnId)}
-                  >
-                    Keep planning
-                  </button>
-                </div>
+                <section className="cdx-message cdx-message--detail cdx-plan-ready-card">
+                  <div className="cdx-message-meta">
+                    <strong className="cdx-message-role">Plan ready</strong>
+                  </div>
+                  <pre className="cdx-turn-body cdx-turn-body--plan">{truncateText(planText, 4000)}</pre>
+                  <div className="cdx-inline-actions">
+                    <button
+                      type="button"
+                      className="cdx-toolbar-btn cdx-toolbar-btn--positive"
+                      onClick={() => openImplementDialog(turnId, planText)}
+                    >
+                      Implement this plan
+                    </button>
+                    <button
+                      type="button"
+                      className="cdx-toolbar-btn"
+                      onClick={() => keepPlanning(turnId)}
+                    >
+                      Keep planning
+                    </button>
+                  </div>
+                </section>
               );
             }}
           />
@@ -2387,10 +2425,13 @@ export default function ThreadPage({ params }: Props) {
                       </details>
                     ) : null}
                     {planReadyByTurnId[turn.turnId] && !dismissedPlanReadyByTurn[turn.turnId] ? (
-                      <section className="cdx-message cdx-message--detail">
+                      <section className="cdx-message cdx-message--detail cdx-plan-ready-card">
                         <div className="cdx-message-meta">
                           <strong className="cdx-message-role">Plan ready</strong>
                         </div>
+                        <pre className="cdx-turn-body cdx-turn-body--plan">
+                          {truncateText(planReadyByTurnId[turn.turnId], 4000)}
+                        </pre>
                         <div className="cdx-inline-actions">
                           <button
                             type="button"
@@ -2444,7 +2485,7 @@ export default function ThreadPage({ params }: Props) {
                       {activeInteraction.questions.map((question) => {
                         const current =
                           desktopQuestionDrafts[activeInteraction.interactionId]?.[question.id] ?? {
-                            selected: [],
+                            selected: null,
                             other: "",
                             freeform: "",
                           };
@@ -2455,24 +2496,27 @@ export default function ThreadPage({ params }: Props) {
                             {question.options ? (
                               <div className="cdx-mobile-sheet-block">
                                 {question.options.map((option) => (
-                                  <label key={option.label} className="cdx-helper">
+                                  <label key={option.label} className="cdx-option-row">
                                     <input
-                                      type="checkbox"
-                                      checked={current.selected.includes(option.label)}
+                                      type="radio"
+                                      name={`desktop-question-${activeInteraction.interactionId}-${question.id}`}
+                                      aria-label={`${option.label} - ${option.description}`}
+                                      checked={current.selected === option.label}
                                       onChange={(event) => {
                                         updateDesktopQuestionDraft(
                                           activeInteraction.interactionId,
                                           question.id,
                                           (prev) => ({
                                             ...prev,
-                                            selected: event.target.checked
-                                              ? [...prev.selected, option.label]
-                                              : prev.selected.filter((entry) => entry !== option.label),
+                                            selected: event.target.checked ? option.label : null,
                                           }),
                                         );
                                       }}
-                                    />{" "}
-                                    {option.label} - {option.description}
+                                    />
+                                    <span className="cdx-option-text">
+                                      <span className="cdx-option-title">{option.label}</span>
+                                      <span className="cdx-option-desc">{option.description}</span>
+                                    </span>
                                   </label>
                                 ))}
                               </div>

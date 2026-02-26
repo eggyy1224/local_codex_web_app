@@ -113,7 +113,7 @@ export default function MobileControlSheet({
   const dialogRef = useRef<HTMLElement | null>(null);
   const [viewportHeight, setViewportHeight] = useState(844);
   const [questionDrafts, setQuestionDrafts] = useState<
-    Record<string, Record<string, { selected: string[]; other: string; freeform: string }>>
+    Record<string, Record<string, { selected: string | null; other: string; freeform: string }>>
   >({});
 
   useEffect(() => {
@@ -238,15 +238,15 @@ export default function MobileControlSheet({
   const updateQuestionDraft = (
     interactionId: string,
     questionId: string,
-    updater: (prev: { selected: string[]; other: string; freeform: string }) => {
-      selected: string[];
+    updater: (prev: { selected: string | null; other: string; freeform: string }) => {
+      selected: string | null;
       other: string;
       freeform: string;
     },
   ) => {
     setQuestionDrafts((prev) => {
       const interaction = prev[interactionId] ?? {};
-      const current = interaction[questionId] ?? { selected: [], other: "", freeform: "" };
+      const current = interaction[questionId] ?? { selected: null, other: "", freeform: "" };
       const nextQuestion = updater(current);
       return {
         ...prev,
@@ -266,13 +266,11 @@ export default function MobileControlSheet({
     const result: InteractionRespondRequest["answers"] = {};
 
     for (const question of questions) {
-      const questionDraft = draft[question.id] ?? { selected: [], other: "", freeform: "" };
+      const questionDraft = draft[question.id] ?? { selected: null, other: "", freeform: "" };
       const answers: string[] = [];
       if (question.options && question.options.length > 0) {
-        for (const option of questionDraft.selected) {
-          if (option.trim().length > 0) {
-            answers.push(option.trim());
-          }
+        if (questionDraft.selected && questionDraft.selected.trim().length > 0) {
+          answers.push(questionDraft.selected.trim());
         }
       } else if (questionDraft.freeform.trim().length > 0) {
         answers.push(questionDraft.freeform.trim());
@@ -464,7 +462,7 @@ export default function MobileControlSheet({
                       {interaction.questions.map((question) => {
                         const current =
                           questionDrafts[interaction.interactionId]?.[question.id] ?? {
-                            selected: [],
+                            selected: null,
                             other: "",
                             freeform: "",
                           };
@@ -475,24 +473,27 @@ export default function MobileControlSheet({
                             {question.options ? (
                               <div className="cdx-mobile-sheet-block">
                                 {question.options.map((option) => (
-                                  <label key={option.label} className="cdx-helper">
+                                  <label key={option.label} className="cdx-option-row">
                                     <input
-                                      type="checkbox"
-                                      checked={current.selected.includes(option.label)}
+                                      type="radio"
+                                      name={`mobile-question-${interaction.interactionId}-${question.id}`}
+                                      aria-label={`${option.label} - ${option.description}`}
+                                      checked={current.selected === option.label}
                                       onChange={(event) => {
                                         updateQuestionDraft(
                                           interaction.interactionId,
                                           question.id,
                                           (prev) => ({
                                             ...prev,
-                                            selected: event.target.checked
-                                              ? [...prev.selected, option.label]
-                                              : prev.selected.filter((entry) => entry !== option.label),
+                                            selected: event.target.checked ? option.label : null,
                                           }),
                                         );
                                       }}
-                                    />{" "}
-                                    {option.label} - {option.description}
+                                    />
+                                    <span className="cdx-option-text">
+                                      <span className="cdx-option-title">{option.label}</span>
+                                      <span className="cdx-option-desc">{option.description}</span>
+                                    </span>
                                   </label>
                                 ))}
                               </div>
