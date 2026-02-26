@@ -183,6 +183,84 @@ describe("Thread page integration", () => {
     expect(screen.getByTestId("timeline")).toBeInTheDocument();
   });
 
+  it("shows desktop thinking state while turn submission is in flight", async () => {
+    vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+    let releaseTurnRequest: (() => void) | null = null;
+    const turnRequestGate = new Promise<void>((resolve) => {
+      releaseTurnRequest = resolve;
+    });
+
+    server.use(
+      http.get("http://127.0.0.1:8787/api/threads/:id", ({ params }) =>
+        HttpResponse.json({
+          thread: {
+            id: String(params.id),
+            title: "Main Thread",
+            preview: "Preview",
+            status: "idle",
+            createdAt: null,
+            updatedAt: null,
+          },
+          turns: [],
+          nextCursor: null,
+        }),
+      ),
+      http.get("http://127.0.0.1:8787/api/threads/:id/approvals/pending", () => HttpResponse.json({ data: [] })),
+      http.get("http://127.0.0.1:8787/api/threads", () =>
+        HttpResponse.json({
+          data: [
+            {
+              id: "thread-1",
+              projectKey: "/tmp/project",
+              title: "Main Thread",
+              preview: "Preview",
+              status: "idle",
+              lastActiveAt: "2026-01-01T00:00:00.000Z",
+              archived: false,
+              waitingApprovalCount: 0,
+              errorCount: 0,
+            },
+          ],
+          nextCursor: null,
+        }),
+      ),
+      http.get("http://127.0.0.1:8787/api/threads/:id/timeline", () => HttpResponse.json({ data: [] })),
+      http.get("http://127.0.0.1:8787/api/threads/:id/context", () =>
+        HttpResponse.json({
+          threadId: "thread-1",
+          cwd: "/tmp/project",
+          resolvedCwd: "/tmp/project",
+          isFallback: false,
+          source: "projection",
+        }),
+      ),
+      http.get("http://127.0.0.1:8787/api/models", () => HttpResponse.json({ data: [] })),
+      http.post("http://127.0.0.1:8787/api/threads/:id/turns", async () => {
+        await turnRequestGate;
+        return HttpResponse.json({ turnId: "turn-2" });
+      }),
+    );
+
+    render(<ThreadPage params={Promise.resolve({ id: "thread-1" })} />);
+    await screen.findByTestId("turn-input");
+
+    fireEvent.change(screen.getByTestId("turn-input"), { target: { value: "run long request" } });
+    fireEvent.click(screen.getByTestId("turn-submit"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("desktop-thinking-pill")).toHaveTextContent("Preparing request");
+      expect(screen.getByTestId("desktop-thinking-placeholder")).toBeInTheDocument();
+      expect(screen.getByTestId("turn-submit")).toBeDisabled();
+    });
+
+    releaseTurnRequest?.();
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("desktop-thinking-pill")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("desktop-thinking-placeholder")).not.toBeInTheDocument();
+    });
+  });
+
   it("mobile thread page uses chat-first shell with overlay switcher and control sheet", async () => {
     setMobileViewport(true);
     vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);

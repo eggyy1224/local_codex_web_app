@@ -1933,6 +1933,25 @@ export default function ThreadPage({ params }: Props) {
       hasThinking: Boolean(turn.thinkingText),
     };
   }, [activeMessageId, allConversationTurns]);
+  const latestStreamingTurn = useMemo(() => {
+    for (let index = visibleConversationTurns.length - 1; index >= 0; index -= 1) {
+      const candidate = visibleConversationTurns[index];
+      if (candidate?.isStreaming) {
+        return candidate;
+      }
+    }
+    return null;
+  }, [visibleConversationTurns]);
+  const streamingTurnCount = useMemo(
+    () => visibleConversationTurns.filter((turn) => turn.isStreaming).length,
+    [visibleConversationTurns],
+  );
+  const isThinkingActive = submitting || streamingTurnCount > 0;
+  const thinkingBannerText = submitting
+    ? "Preparing request..."
+    : latestStreamingTurn?.thinkingText
+      ? "Reasoning in progress..."
+      : "Thinking in progress...";
 
   if (isMobileViewport) {
     return (
@@ -2125,7 +2144,11 @@ export default function ThreadPage({ params }: Props) {
   }
 
   return (
-    <div className={`cdx-app ${sidebarVisible ? "" : "cdx-app--sidebar-collapsed"}`}>
+    <div
+      className={`cdx-app ${sidebarVisible ? "" : "cdx-app--sidebar-collapsed"} ${
+        isThinkingActive ? "cdx-app--thinking" : ""
+      }`}
+    >
       <header
         className={`cdx-topbar ${isCompactViewport ? "cdx-topbar--compact" : ""} ${
           isMobileViewport ? "cdx-topbar--mobile" : ""
@@ -2247,14 +2270,24 @@ export default function ThreadPage({ params }: Props) {
         <main className={`cdx-main ${isCompactViewport ? "cdx-main--compact" : ""}`}>
           <section className="cdx-hero cdx-hero--thread">
             <div className="cdx-hero-row">
-              <h1 data-testid="thread-title">Let&apos;s build</h1>
-              <button type="button" className="cdx-project-chip">
-                {activeProjectLabel}
-              </button>
+              <div className="cdx-hero-identity">
+                <h1 data-testid="thread-title">{activeThreadTitle}</h1>
+                <p className="cdx-helper cdx-thread-seq">
+                  thread {threadId} · seq <span data-testid="event-cursor">{lastSeq}</span>
+                </p>
+              </div>
+              <div className="cdx-hero-row-end">
+                {isThinkingActive ? (
+                  <span className="cdx-thinking-pill" aria-live="polite" data-testid="desktop-thinking-pill">
+                    <span className="cdx-thinking-pill-dot" aria-hidden="true" />
+                    {thinkingBannerText}
+                  </span>
+                ) : null}
+                <button type="button" className="cdx-project-chip">
+                  {activeProjectLabel}
+                </button>
+              </div>
             </div>
-            <p className="cdx-helper cdx-thread-seq">
-              {detail?.thread.title ?? threadId} · seq <span data-testid="event-cursor">{lastSeq}</span>
-            </p>
             <div className="cdx-status-row">
               <span className={`cdx-status ${statusClass(connectionState === "connected" ? "completed" : "unknown")}`}>
                 {connectionText}
@@ -2286,6 +2319,11 @@ export default function ThreadPage({ params }: Props) {
                 </button>
               </Link>
             </div>
+            {isThinkingActive ? (
+              <p className="cdx-helper cdx-helper--thinking">
+                Live activity: {streamingTurnCount > 0 ? `${streamingTurnCount} turn(s) streaming` : "awaiting first tokens"}
+              </p>
+            ) : null}
             {loading ? <p className="cdx-helper">Loading thread...</p> : null}
             {error ? <p className="cdx-error">{error}</p> : null}
             {submitError ? <p className="cdx-error">{submitError}</p> : null}
@@ -2303,6 +2341,25 @@ export default function ThreadPage({ params }: Props) {
             ref={timelineRef}
             onScroll={handleTimelineScroll}
           >
+            {isThinkingActive && visibleConversationTurns.length === 0 ? (
+              <section
+                className="cdx-thinking-placeholder cdx-thinking-placeholder--global"
+                aria-live="polite"
+                data-testid="desktop-thinking-placeholder"
+              >
+                <header className="cdx-thinking-placeholder-head">
+                  <span className="cdx-stream-indicator">
+                    <span className="cdx-stream-indicator-dot" aria-hidden="true" />
+                    Codex is thinking
+                  </span>
+                </header>
+                <div className="cdx-thinking-placeholder-bars" aria-hidden="true">
+                  <span />
+                  <span />
+                  <span />
+                </div>
+              </section>
+            ) : null}
             {hiddenTimelineCount > 0 && !showAllTurns ? (
               <button
                 type="button"
@@ -2333,7 +2390,7 @@ export default function ThreadPage({ params }: Props) {
                   <article
                     className={`cdx-turn-card cdx-turn-card--conversation ${
                       turn.isStreaming ? "cdx-turn-card--streaming" : ""
-                    }`}
+                    } ${turn.thinkingText ? "cdx-turn-card--has-thinking" : ""}`}
                     key={turn.turnId}
                   >
                     <div className="cdx-turn-head">
@@ -2368,6 +2425,7 @@ export default function ThreadPage({ params }: Props) {
                           turn.isStreaming ? "cdx-message--assistant-streaming" : ""
                         }`}
                       >
+                        {turn.isStreaming ? <span className="cdx-message-live-rail" aria-hidden="true" /> : null}
                         <div className="cdx-message-meta">
                           <strong className="cdx-message-role">Codex</strong>
                           <button
@@ -2383,6 +2441,21 @@ export default function ThreadPage({ params }: Props) {
                           {turn.isStreaming ? <span className="cdx-stream-cursor" aria-hidden="true" /> : null}
                         </pre>
                       </section>
+                    ) : turn.isStreaming ? (
+                      <section className="cdx-thinking-placeholder" aria-live="polite">
+                        <header className="cdx-thinking-placeholder-head">
+                          <span className="cdx-stream-indicator">
+                            <span className="cdx-stream-indicator-dot" aria-hidden="true" />
+                            Codex is responding
+                          </span>
+                        </header>
+                        <div className="cdx-thinking-placeholder-bars" aria-hidden="true">
+                          <span />
+                          <span />
+                          <span />
+                        </div>
+                        <p className="cdx-helper cdx-helper--streaming">Codex is responding...</p>
+                      </section>
                     ) : (
                       <p className={`cdx-helper ${turn.isStreaming ? "cdx-helper--streaming" : ""}`}>
                         {turn.isStreaming ? "Codex is responding..." : "Waiting for response..."}
@@ -2391,8 +2464,11 @@ export default function ThreadPage({ params }: Props) {
                     {turn.thinkingText || turn.toolCalls.length > 0 || turn.toolResults.length > 0 ? (
                       <details className="cdx-message-collapsible">
                         <summary>
-                          Thinking & tools (
-                          {(turn.thinkingText ? 1 : 0) + turn.toolCalls.length + turn.toolResults.length})
+                          <span>
+                            Thinking & tools (
+                            {(turn.thinkingText ? 1 : 0) + turn.toolCalls.length + turn.toolResults.length})
+                          </span>
+                          {turn.isStreaming ? <span className="cdx-collapsible-live">live</span> : null}
                         </summary>
                         <div className="cdx-message-stack cdx-message-stack--details">
                           {turn.thinkingText ? (
