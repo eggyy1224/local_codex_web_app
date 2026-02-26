@@ -154,6 +154,7 @@ export type CreateTurnRequest = {
 
 export type CreateTurnResponse = {
   turnId: string;
+  warnings?: string[];
 };
 
 export type ReviewDelivery = "inline" | "detached";
@@ -208,7 +209,7 @@ export type AccountRateLimitsResponse = {
   error?: string;
 };
 
-export type ApprovalType = "commandExecution" | "fileChange" | "userInput";
+export type ApprovalType = "commandExecution" | "fileChange";
 
 export type ApprovalStatus = "pending" | "approved" | "denied" | "cancelled";
 
@@ -239,6 +240,48 @@ export type PendingApprovalsResponse = {
   data: ApprovalView[];
 };
 
+export type InteractionType = "userInput";
+
+export type InteractionStatus = "pending" | "responded" | "cancelled";
+
+export type UserInputOptionView = {
+  label: string;
+  description: string;
+};
+
+export type UserInputQuestionView = {
+  id: string;
+  header: string;
+  question: string;
+  isOther: boolean;
+  isSecret: boolean;
+  options: UserInputOptionView[] | null;
+};
+
+export type InteractionView = {
+  interactionId: string;
+  threadId: string;
+  turnId: string | null;
+  itemId: string | null;
+  type: InteractionType;
+  status: InteractionStatus;
+  questions: UserInputQuestionView[];
+  createdAt: string;
+  resolvedAt: string | null;
+};
+
+export type PendingInteractionsResponse = {
+  data: InteractionView[];
+};
+
+export type InteractionRespondRequest = {
+  answers: Record<string, { answers: string[] }>;
+};
+
+export type InteractionRespondResponse = {
+  ok: true;
+};
+
 export type ThreadControlRequest = {
   action: "stop" | "retry" | "cancel";
 };
@@ -253,7 +296,7 @@ export type GatewayEvent = {
   serverTs: string;
   threadId: string;
   turnId: string | null;
-  kind: "thread" | "turn" | "item" | "approval" | "system";
+  kind: "thread" | "turn" | "item" | "approval" | "interaction" | "system";
   name: string;
   payload: unknown;
 };
