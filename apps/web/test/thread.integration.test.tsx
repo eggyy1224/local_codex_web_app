@@ -948,6 +948,84 @@ describe("Thread page integration", () => {
     expect(screen.queryByTestId("file-mention-menu")).not.toBeInTheDocument();
   });
 
+  it("mobile composer file mention menu dismisses on Escape and slash menu wins precedence", async () => {
+    setMobileViewport(true);
+    vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+
+    server.use(
+      http.get("http://127.0.0.1:8795/api/threads/:id", ({ params }) =>
+        HttpResponse.json({
+          thread: {
+            id: String(params.id),
+            title: "Precedence",
+            preview: "",
+            status: "idle",
+            createdAt: null,
+            updatedAt: null,
+          },
+          turns: [],
+          nextCursor: null,
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/approvals/pending", () =>
+        HttpResponse.json({ data: [] }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads", () =>
+        HttpResponse.json({ data: [], nextCursor: null }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/timeline", () =>
+        HttpResponse.json({ data: [] }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/context", () =>
+        HttpResponse.json({
+          threadId: "thread-1",
+          cwd: "/tmp/p",
+          resolvedCwd: "/tmp/p",
+          isFallback: false,
+          source: "projection",
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/models", () => HttpResponse.json({ data: [] })),
+      http.get("http://127.0.0.1:8795/api/files/search", () =>
+        HttpResponse.json({
+          data: [
+            {
+              root: "/tmp/p",
+              path: "x/y.ts",
+              fileName: "y.ts",
+              score: 1,
+              matchType: "file",
+              indices: [],
+            },
+          ],
+        }),
+      ),
+    );
+
+    render(<ThreadPage params={Promise.resolve({ id: "thread-1" })} />);
+    const input = (await screen.findByTestId("turn-input")) as HTMLTextAreaElement;
+
+    // Open file mention menu via @ trigger.
+    fireEvent.change(input, { target: { value: "@y" } });
+    await screen.findByTestId("file-mention-menu");
+
+    // Pressing Escape dismisses it but leaves the textarea text in place.
+    fireEvent.keyDown(input, { key: "Escape" });
+    await waitFor(() => {
+      expect(screen.queryByTestId("file-mention-menu")).not.toBeInTheDocument();
+    });
+    expect(input.value).toBe("@y");
+
+    // Typing past the @-token reopens the menu (no whitespace, new trigger).
+    fireEvent.change(input, { target: { value: "@yz" } });
+    await screen.findByTestId("file-mention-menu");
+
+    // Now type / at the start — slash menu takes precedence, file menu hides.
+    fireEvent.change(input, { target: { value: "/pla" } });
+    await screen.findByTestId("thread-slash-menu");
+    expect(screen.queryByTestId("file-mention-menu")).not.toBeInTheDocument();
+  });
+
   it("mobile composer steers via /steer instead of /turns while a turn is running", async () => {
     setMobileViewport(true);
     vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);

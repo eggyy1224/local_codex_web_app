@@ -66,6 +66,9 @@ export function useFileMentionSearch(
       abortRef.current?.abort();
       const controller = new AbortController();
       abortRef.current = controller;
+      // Capture the query identity inside the fetch closure so a slow response
+      // for a stale query can't write back over fresher state.
+      const fetchKey = { query: queryKey.query, cwd: queryKey.cwd };
       setIsLoading(true);
 
       const params = new URLSearchParams({ roots: cwd, query: trigger.query });
@@ -79,11 +82,19 @@ export function useFileMentionSearch(
           return (await res.json()) as FuzzyFileSearchResponse;
         })
         .then((body) => {
+          const current = lastQueryRef.current;
+          if (!current || current.query !== fetchKey.query || current.cwd !== fetchKey.cwd) {
+            return; // stale response, ignore
+          }
           setResults((body.data ?? []).slice(0, MAX_RESULTS));
           setIsLoading(false);
         })
         .catch((err) => {
           if ((err as Error)?.name === "AbortError") return;
+          const current = lastQueryRef.current;
+          if (!current || current.query !== fetchKey.query || current.cwd !== fetchKey.cwd) {
+            return; // stale failure for a query we don't care about
+          }
           setResults([]);
           setIsLoading(false);
         });

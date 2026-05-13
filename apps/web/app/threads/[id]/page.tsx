@@ -2073,6 +2073,11 @@ export default function ThreadPage({ params }: Props) {
       setSlashMenuDismissed(true);
       return;
     }
+    if (fileMentionOpen && event.key === "Escape") {
+      event.preventDefault();
+      setFileMentionDismissed(true);
+      return;
+    }
     if (event.key !== "Enter" || event.shiftKey) {
       return;
     }
@@ -2090,6 +2095,7 @@ export default function ThreadPage({ params }: Props) {
   }, [
     activeSlashIndex,
     applyPromptSlash,
+    fileMentionOpen,
     slashMenuOpen,
     slashSuggestions,
     submitComposer,
