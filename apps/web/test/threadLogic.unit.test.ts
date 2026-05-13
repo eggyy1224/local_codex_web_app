@@ -31,15 +31,13 @@ describe("thread logic helpers", () => {
     expect(timelineItemFromGatewayEvent(event)).toBeNull();
   });
 
-  it("drops plan/reasoning/tool-output delta events too", () => {
-    const names = [
+  it("drops plan / command / file-change delta events but keeps reasoning deltas as live thinking items", () => {
+    const droppedNames = [
       "item/plan/delta",
-      "item/reasoning/textDelta",
-      "item/reasoning/summaryTextDelta",
       "item/commandExecution/outputDelta",
       "item/fileChange/outputDelta",
     ] as const;
-    for (const name of names) {
+    for (const name of droppedNames) {
       const event: GatewayEvent = {
         seq: 1,
         serverTs: "2026-01-01T00:00:00.000Z",
@@ -50,6 +48,25 @@ describe("thread logic helpers", () => {
         payload: { delta: "x" },
       };
       expect(timelineItemFromGatewayEvent(event)).toBeNull();
+    }
+
+    const reasoningNames = ["item/reasoning/textDelta", "item/reasoning/summaryTextDelta"] as const;
+    for (const name of reasoningNames) {
+      const event: GatewayEvent = {
+        seq: 1,
+        serverTs: "2026-01-01T00:00:00.000Z",
+        threadId: "thread-1",
+        turnId: "turn-1",
+        kind: "item",
+        name,
+        payload: { delta: "thinking..." },
+      };
+      expect(timelineItemFromGatewayEvent(event)).toMatchObject({
+        type: "reasoning",
+        title: "Thinking",
+        text: "thinking...",
+        rawType: name,
+      });
     }
   });
 

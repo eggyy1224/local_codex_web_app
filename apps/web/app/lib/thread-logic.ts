@@ -364,20 +364,37 @@ export function timelineItemFromGatewayEvent(event: GatewayEvent): ThreadTimelin
     };
   }
 
-  // Streaming delta events are dropped on the floor. Rendering the live
-  // accumulating text caused O(N²) string concatenation and a giant <pre> that
-  // dragged mobile rendering to a halt on long answers. The completed item
-  // (handled below) carries the final text; turn/started is still mapped so
-  // the running-turn indicator (Stop button, steer composer) works.
+  // The noisy delta streams (agent message body, plan body, command stdout,
+  // file change body) are dropped — accumulating them blew the rendered <pre>
+  // to 40k+ chars on long turns and froze mobile rendering. The completed
+  // item below carries the final text. Reasoning deltas are KEPT (and capped
+  // downstream) so the user can still watch Codex think while a turn runs.
   if (
     event.name === "item/agentMessage/delta" ||
     event.name === "item/plan/delta" ||
-    event.name === "item/reasoning/summaryTextDelta" ||
-    event.name === "item/reasoning/textDelta" ||
     event.name === "item/commandExecution/outputDelta" ||
     event.name === "item/fileChange/outputDelta"
   ) {
     return null;
+  }
+
+  if (
+    event.name === "item/reasoning/summaryTextDelta" ||
+    event.name === "item/reasoning/textDelta"
+  ) {
+    const delta = readString(payload, "delta");
+    if (!delta) return null;
+    return {
+      id: `${eventId}-reasoning-delta`,
+      ts: event.serverTs,
+      turnId: event.turnId,
+      type: "reasoning",
+      title: "Thinking",
+      text: delta,
+      rawType: event.name,
+      toolName: null,
+      callId: null,
+    };
   }
 
   if ((event.name === "item/started" || event.name === "item/completed") && item) {
@@ -600,6 +617,11 @@ export function buildConversationTurns(items: ThreadTimelineItem[]): Conversatio
     if (item.type === "reasoning") {
       if (item.rawType.includes("delta")) {
         turn.thinkingDelta += item.text;
+        // Cap the live buffer so long reasoning streams can't recreate the
+        // 40k-char <pre> stall we saw on agent message deltas.
+        if (turn.thinkingDelta.length > 2000) {
+          turn.thinkingDelta = turn.thinkingDelta.slice(-2000);
+        }
       } else {
         appendUniqueText(turn.thinkingTexts, turn.thinkingSeen, item.text);
       }

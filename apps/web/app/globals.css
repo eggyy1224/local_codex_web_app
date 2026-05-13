@@ -1474,7 +1474,7 @@ textarea {
   border-radius: 10px;
   border: 1px solid var(--border-soft);
   overflow: auto;
-  max-height: 140px;
+  max-height: 88px;
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -1649,6 +1649,16 @@ textarea {
   grid-template-rows: auto auto minmax(0, 1fr);
   overflow: hidden;
   touch-action: pan-y;
+}
+
+/* On desktop / fine-pointer devices the half-snap translateY pushes the body
+ * row below the viewport — Speed/Model/Permission become unreachable. Pin the
+ * sheet to its full height so the body's overflow:auto can do the work. */
+@media (pointer: fine) {
+  .cdx-mobile-control-sheet {
+    transform: none !important;
+    transition: none !important;
+  }
 }
 
 .cdx-mobile-control-sheet.is-dragging {

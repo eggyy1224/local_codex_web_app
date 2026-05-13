@@ -162,6 +162,14 @@ export default function MobileControlSheet({
   const transformPx = baseOffsetPx + appliedOffset;
 
   const handlePointerDown = (event: React.PointerEvent<HTMLElement>) => {
+    // Only initiate a drag when the user grabs the drag handle itself — not
+    // when they click a button (Close) or any other interactive child of the
+    // header. Capturing the pointer on the header would otherwise eat the
+    // button's click on pointer-up.
+    const target = event.target as HTMLElement | null;
+    if (target && target !== event.currentTarget && target.closest("button, a, input, select, textarea")) {
+      return;
+    }
     dragRef.current = {
       startY: event.clientY,
       startTs: performance.now(),
