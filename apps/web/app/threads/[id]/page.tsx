@@ -7,8 +7,6 @@ import {
   useMemo,
   useRef,
   useState,
-  type CSSProperties,
-  type PointerEvent as ReactPointerEvent,
 } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type {
@@ -77,6 +75,7 @@ import InteractionQuestionForm, {
   updateInteractionQuestionDrafts,
   type InteractionQuestionDrafts,
 } from "./InteractionQuestionForm";
+import { useThreadViewportShell } from "./use-thread-viewport-shell";
 
 type ConnectionState = "connecting" | "connected" | "reconnecting" | "lagging";
 
@@ -120,10 +119,6 @@ const THINKING_EFFORT_STORAGE_KEY = "lcwa.thinking.effort.v1";
 const THREAD_MODE_STORAGE_KEY_PREFIX = "lcwa.thread.mode.v1";
 const TIMELINE_STICKY_THRESHOLD_PX = 56;
 const ACTIVE_THREAD_SCROLL_SNAP_THRESHOLD_PX = 24;
-const TERMINAL_WIDTH_STORAGE_KEY = "lcwa.terminal.width.v1";
-const TERMINAL_MIN_WIDTH = 320;
-const TERMINAL_MAX_WIDTH = 720;
-
 const FALLBACK_THINKING_EFFORT_OPTIONS = ["minimal", "low", "medium", "high"];
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -137,18 +132,6 @@ function readString(obj: Record<string, unknown> | null, key: string): string | 
   if (!obj) return null;
   const value = obj[key];
   return typeof value === "string" ? value : null;
-}
-
-function maxTerminalWidthForViewport(): number {
-  if (typeof window === "undefined") {
-    return TERMINAL_MAX_WIDTH;
-  }
-  return Math.min(TERMINAL_MAX_WIDTH, Math.floor(window.innerWidth * 0.6));
-}
-
-function clampTerminalWidth(width: number): number {
-  const max = Math.max(TERMINAL_MIN_WIDTH, maxTerminalWidthForViewport());
-  return Math.min(max, Math.max(TERMINAL_MIN_WIDTH, Math.round(width)));
 }
 
 function formatTimestamp(value: string | null): string {
@@ -372,11 +355,7 @@ export default function ThreadPage({ params }: Props) {
   const [isMessageDetailsOpen, setIsMessageDetailsOpen] = useState(false);
   const [activeMessageId, setActiveMessageId] = useState<string | null>(null);
   const [threadContext, setThreadContext] = useState<ThreadContextResponse | null>(null);
-  const [terminalOpen, setTerminalOpen] = useState(false);
-  const [terminalWidth, setTerminalWidth] = useState(420);
-  const [isMobileViewport, setIsMobileViewport] = useState(false);
   const gatewayConfig = useGatewayConfig();
-  const [isCompactViewport, setIsCompactViewport] = useState(false);
   const [showAllTurns, setShowAllTurns] = useState(false);
   const [latestTokenUsage, setLatestTokenUsage] = useState<ThreadTokenUsageSummary | null>(null);
   const [statusBanner, setStatusBanner] = useState<StatusBanner | null>(null);
@@ -404,6 +383,31 @@ export default function ThreadPage({ params }: Props) {
     fileMentionDismissed || slashMenuOpen,
   );
   const fileMentionOpen = fileMentionSearch.trigger !== null && !slashMenuOpen;
+
+  const handleEnterMobileViewport = useCallback(() => {
+    setIsThreadSwitcherOpen(false);
+    setIsMessageDetailsOpen(false);
+  }, []);
+  const handleExitMobileViewport = useCallback(() => {
+    setIsThreadSwitcherOpen(false);
+    setIsControlSheetOpen(false);
+    setIsMessageDetailsOpen(false);
+  }, []);
+  const {
+    isMobileViewport,
+    isCompactViewport,
+    terminalOpen,
+    setTerminalOpen,
+    terminalWidth,
+    terminalEnabled,
+    sidebarVisible,
+    workspaceStyle,
+    handleTerminalResizeStart,
+  } = useThreadViewportShell({
+    sidebarOpen,
+    onEnterMobile: handleEnterMobileViewport,
+    onExitMobile: handleExitMobileViewport,
+  });
 
   useEffect(() => {
     if (!slashMenuOpen) {
@@ -599,99 +603,6 @@ export default function ThreadPage({ params }: Props) {
       replaceWithoutQueryParams(["mode"]);
     }
   }, [applyCollaborationMode, replaceWithoutQueryParams, searchParams, threadId]);
-
-  useEffect(() => {
-    const mediaQuery = window.matchMedia("(max-width: 1024px)");
-    const syncViewport = () => {
-      setIsMobileViewport(mediaQuery.matches);
-    };
-    syncViewport();
-    mediaQuery.addEventListener("change", syncViewport);
-    return () => {
-      mediaQuery.removeEventListener("change", syncViewport);
-    };
-  }, []);
-
-  useEffect(() => {
-    if (isMobileViewport) {
-      setTerminalOpen(false);
-      setIsThreadSwitcherOpen(false);
-      setIsMessageDetailsOpen(false);
-      return;
-    }
-    const savedWidth = window.localStorage.getItem(TERMINAL_WIDTH_STORAGE_KEY);
-    if (savedWidth) {
-      const parsed = Number.parseFloat(savedWidth);
-      if (Number.isFinite(parsed)) {
-        setTerminalWidth(clampTerminalWidth(parsed));
-      }
-    }
-  }, [isMobileViewport]);
-
-  useEffect(() => {
-    if (!isMobileViewport) {
-      setIsThreadSwitcherOpen(false);
-      setIsControlSheetOpen(false);
-      setIsMessageDetailsOpen(false);
-    }
-  }, [isMobileViewport]);
-
-  const handleTerminalResizeStart = useCallback(
-    (event: ReactPointerEvent<HTMLDivElement>) => {
-      if (isMobileViewport) {
-        return;
-      }
-      event.preventDefault();
-      const onMove = (moveEvent: PointerEvent) => {
-        const nextWidth = clampTerminalWidth(window.innerWidth - moveEvent.clientX);
-        setTerminalWidth(nextWidth);
-      };
-      const onUp = () => {
-        window.removeEventListener("pointermove", onMove);
-        window.removeEventListener("pointerup", onUp);
-      };
-      window.addEventListener("pointermove", onMove);
-      window.addEventListener("pointerup", onUp);
-    },
-    [isMobileViewport],
-  );
-
-  useEffect(() => {
-    if (isMobileViewport) {
-      return;
-    }
-    window.localStorage.setItem(TERMINAL_WIDTH_STORAGE_KEY, String(terminalWidth));
-  }, [isMobileViewport, terminalWidth]);
-
-  useEffect(() => {
-    if (isMobileViewport) {
-      setIsCompactViewport(false);
-      return;
-    }
-    const syncCompact = () => {
-      const reserved = terminalOpen ? terminalWidth : 0;
-      const availableMainWidth = window.innerWidth - reserved;
-      setIsCompactViewport(availableMainWidth <= 1024);
-    };
-    syncCompact();
-    window.addEventListener("resize", syncCompact);
-    return () => {
-      window.removeEventListener("resize", syncCompact);
-    };
-  }, [isMobileViewport, terminalOpen, terminalWidth]);
-
-  useEffect(() => {
-    if (isMobileViewport) {
-      return;
-    }
-    const onResize = () => {
-      setTerminalWidth((prev) => clampTerminalWidth(prev));
-    };
-    window.addEventListener("resize", onResize);
-    return () => {
-      window.removeEventListener("resize", onResize);
-    };
-  }, [isMobileViewport]);
 
   useEffect(() => {
     const saved = window.localStorage.getItem(PERMISSION_MODE_STORAGE_KEY);
@@ -1691,32 +1602,6 @@ export default function ThreadPage({ params }: Props) {
     [router, threadId],
   );
 
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (isMobileViewport) {
-        return;
-      }
-      if (event.isComposing || event.altKey) {
-        return;
-      }
-      const key = event.key.toLowerCase();
-      if (!(event.metaKey || event.ctrlKey) || key !== "j") {
-        return;
-      }
-      const target = event.target;
-      if (target instanceof HTMLElement && target.tagName === "SELECT") {
-        return;
-      }
-      event.preventDefault();
-      setTerminalOpen((value) => !value);
-    };
-
-    window.addEventListener("keydown", onKeyDown, true);
-    return () => {
-      window.removeEventListener("keydown", onKeyDown, true);
-    };
-  }, [isMobileViewport]);
-
   const toggleCollaborationMode = useCallback((): CollaborationModeKind => {
     const nextMode: CollaborationModeKind = collaborationMode === "plan" ? "default" : "plan";
     applyCollaborationMode(nextMode);
@@ -2067,16 +1952,9 @@ export default function ThreadPage({ params }: Props) {
     }
   }
 
-  const terminalEnabled = !isMobileViewport && terminalOpen;
-  const sidebarVisible = !isMobileViewport && sidebarOpen && !isCompactViewport;
   const activeProjectLabel = projectLabelFromKey(activeProjectKey);
   const activeThreadTitle =
     detail?.thread.title?.trim() || activeThread?.title?.trim() || "(untitled thread)";
-  const workspaceStyle = terminalEnabled
-    ? ({
-        "--cdx-terminal-width": `${terminalWidth}px`,
-      } as CSSProperties)
-    : undefined;
   const activeMessageDetails = useMemo<MobileMessageDetails | null>(() => {
     if (!activeMessageId) {
       return null;
