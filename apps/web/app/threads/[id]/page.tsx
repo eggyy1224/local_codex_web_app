@@ -537,6 +537,15 @@ export default function ThreadPage({ params }: Props) {
     setLoading(true);
     setError(null);
     setDetail(null);
+    // Drop the previous thread's resolved cwd as soon as the route changes,
+    // UNLESS we already seeded the context for this thread (e.g. createThread
+    // optimistically set the cwd it just asked the gateway for). Without the
+    // reset, the new thread's first turn picks up the OLD thread's cwd via
+    // submitTurnText's threadContext fallback and the turn fires in the
+    // wrong project. The optimistic seed protects against the inverse race —
+    // /context is slower than the user's first keystroke after creating
+    // a thread in another project.
+    setThreadContext((prev) => (prev?.threadId === threadId ? prev : null));
     setEvents([]);
     setLastSeq(0);
     setTimelineItems([]);
@@ -1403,6 +1412,19 @@ export default function ThreadPage({ params }: Props) {
         throw new Error(`create thread http ${res.status}`);
       }
       const payload = (await res.json()) as { threadId: string };
+      // Seed threadContext for the new thread synchronously so that the
+      // user's first turn submit before /context comes back still carries the
+      // right cwd. The reset effect on threadId change keeps this seed
+      // because prev.threadId matches the new route.
+      if (projectKey && projectKey !== "unknown") {
+        setThreadContext({
+          threadId: payload.threadId,
+          cwd: projectKey,
+          resolvedCwd: projectKey,
+          isFallback: false,
+          source: "projection",
+        });
+      }
       router.push(`/threads/${payload.threadId}`);
     } catch (createError) {
       setError(createError instanceof Error ? createError.message : "create thread failed");
