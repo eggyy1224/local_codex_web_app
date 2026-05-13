@@ -12,6 +12,18 @@ export type ConversationDetail =
   | { kind: "toolCall"; ts: string; toolName: string; text: string | null; callId: string | null }
   | { kind: "toolResult"; ts: string; text: string; callId: string | null };
 
+export type TurnSegmentBatchItem = ConversationDetail;
+
+export type TurnSegment =
+  | { kind: "assistant"; ts: string; text: string }
+  | { kind: "thinking"; ts: string; text: string }
+  | {
+      kind: "toolBatch";
+      ts: string;
+      summary: string;
+      items: TurnSegmentBatchItem[];
+    };
+
 export type ConversationTurn = {
   turnId: string;
   startedAt: string | null;
@@ -19,19 +31,32 @@ export type ConversationTurn = {
   status: TurnStatus;
   isStreaming: boolean;
   userText: string | null;
+  /** Aggregated assistant text. Kept for compatibility with surfaces that
+   * only want one line of the final reply (Copy button, message details
+   * sheet, plan-ready detection). UIs that want the real interleaved
+   * narrative should walk `segments` instead. */
   assistantText: string | null;
   thinkingText: string | null;
   toolCalls: ConversationToolCall[];
   toolResults: string[];
   /**
    * thinking / tool-call / tool-result entries in the order they happened on
-   * the server (chronological by timeline item ts). This is what the UI
-   * should render when it wants the real "Codex thought, then called X, then
-   * got result Y, then thought again" narrative — the older toolCalls /
-   * toolResults arrays drop ordering and pairing so they are kept only for
-   * compatibility with existing call sites.
+   * the server (chronological by timeline item ts). Kept for surfaces that
+   * just want the raw detail stream; UIs rendering the conversation should
+   * prefer `segments` because it merges adjacent tool steps into batches and
+   * splits assistant text into the segments Codex actually emitted.
    */
   details: ConversationDetail[];
+  /**
+   * The turn's assistant output split into segments in chronological order.
+   * Each `assistant` segment is a separate agent_message that Codex emitted
+   * (e.g. a "commentary" line before tool use, then a "final_answer" line
+   * after). Each `toolBatch` collapses adjacent tool calls / results into
+   * one summary row (e.g. "Ran 3 commands") with the per-item detail
+   * available inside. `thinking` segments surface reasoning blocks between
+   * tool batches.
+   */
+  segments: TurnSegment[];
 };
 
 type MutableConversationTurn = {
@@ -53,7 +78,17 @@ type MutableConversationTurn = {
   thinkingSeen: Set<string>;
   details: ConversationDetail[];
   detailKeys: Set<string>;
+  // narrative carries each visible event in arrival order so we can split
+  // the turn into chronological segments at finalization time.
+  narrative: NarrativeEntry[];
+  narrativeKeys: Set<string>;
 };
+
+type NarrativeEntry =
+  | { kind: "assistant"; ts: string; text: string }
+  | { kind: "thinking"; ts: string; text: string }
+  | { kind: "toolCall"; ts: string; toolName: string; text: string | null; callId: string | null }
+  | { kind: "toolResult"; ts: string; text: string; callId: string | null };
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== "object") {
@@ -588,6 +623,124 @@ export function timelineItemFromGatewayEvent(event: GatewayEvent): ThreadTimelin
   return null;
 }
 
+function summarizeBatch(items: ConversationDetail[]): string {
+  // Bucket tool calls by a coarse category so the collapsed summary reads
+  // like a normal English status line ("Ran 3 commands, edited 1 file").
+  // Tool results aren't counted on their own — they're paired with a call.
+  const categories = new Map<string, number>();
+  for (const item of items) {
+    if (item.kind !== "toolCall") continue;
+    const name = item.toolName.toLowerCase();
+    let category: string;
+    if (
+      name === "exec_command" ||
+      name === "shell" ||
+      name === "bash" ||
+      name.includes("command")
+    ) {
+      category = "command";
+    } else if (name === "read_file" || name === "fs/readfile" || name.includes("read")) {
+      category = "read";
+    } else if (
+      name === "write_file" ||
+      name === "edit_file" ||
+      name === "apply_patch" ||
+      name.includes("write") ||
+      name.includes("edit") ||
+      name.includes("patch")
+    ) {
+      category = "edit";
+    } else if (name.includes("search") || name.includes("grep") || name.includes("find")) {
+      category = "search";
+    } else {
+      category = "tool";
+    }
+    categories.set(category, (categories.get(category) ?? 0) + 1);
+  }
+
+  const phrases: string[] = [];
+  const labelFor = (category: string, count: number): string => {
+    if (category === "command") return count === 1 ? "1 command" : `${count} commands`;
+    if (category === "read") return count === 1 ? "read 1 file" : `read ${count} files`;
+    if (category === "edit") return count === 1 ? "edited 1 file" : `edited ${count} files`;
+    if (category === "search") return count === 1 ? "1 search" : `${count} searches`;
+    return count === 1 ? "1 tool" : `${count} tools`;
+  };
+  const order = ["command", "edit", "read", "search", "tool"];
+  for (const category of order) {
+    const count = categories.get(category);
+    if (!count) continue;
+    phrases.push(labelFor(category, count));
+  }
+  if (phrases.length === 0) {
+    // batch of only outputs (shouldn't really happen but guard anyway)
+    return `${items.length} steps`;
+  }
+  const head = phrases[0];
+  const capitalized = head[0].toUpperCase() + head.slice(1);
+  return [
+    capitalized.startsWith("Read") || capitalized.startsWith("Edited")
+      ? capitalized
+      : `Ran ${head}`,
+    ...phrases.slice(1),
+  ].join(", ");
+}
+
+function buildSegmentsFromNarrative(narrative: NarrativeEntry[]): TurnSegment[] {
+  const segments: TurnSegment[] = [];
+  let currentBatch: { ts: string; items: ConversationDetail[] } | null = null;
+
+  const flushBatch = () => {
+    if (!currentBatch || currentBatch.items.length === 0) {
+      currentBatch = null;
+      return;
+    }
+    segments.push({
+      kind: "toolBatch",
+      ts: currentBatch.ts,
+      summary: summarizeBatch(currentBatch.items),
+      items: currentBatch.items,
+    });
+    currentBatch = null;
+  };
+
+  for (const entry of narrative) {
+    if (entry.kind === "assistant") {
+      flushBatch();
+      segments.push({ kind: "assistant", ts: entry.ts, text: entry.text });
+      continue;
+    }
+    if (entry.kind === "thinking") {
+      flushBatch();
+      segments.push({ kind: "thinking", ts: entry.ts, text: entry.text });
+      continue;
+    }
+    if (entry.kind === "toolCall") {
+      if (!currentBatch) currentBatch = { ts: entry.ts, items: [] };
+      currentBatch.items.push({
+        kind: "toolCall",
+        ts: entry.ts,
+        toolName: entry.toolName,
+        text: entry.text,
+        callId: entry.callId,
+      });
+      continue;
+    }
+    if (entry.kind === "toolResult") {
+      if (!currentBatch) currentBatch = { ts: entry.ts, items: [] };
+      currentBatch.items.push({
+        kind: "toolResult",
+        ts: entry.ts,
+        text: entry.text,
+        callId: entry.callId,
+      });
+    }
+  }
+  flushBatch();
+
+  return segments;
+}
+
 export function buildConversationTurns(items: ThreadTimelineItem[]): ConversationTurn[] {
   const byTurnId = new Map<string, MutableConversationTurn>();
 
@@ -626,6 +779,8 @@ export function buildConversationTurns(items: ThreadTimelineItem[]): Conversatio
         thinkingSeen: new Set<string>(),
         details: [],
         detailKeys: new Set<string>(),
+        narrative: [],
+        narrativeKeys: new Set<string>(),
       };
 
     if (!existing) {
@@ -661,6 +816,11 @@ export function buildConversationTurns(items: ThreadTimelineItem[]): Conversatio
         }
       } else {
         appendUniqueText(turn.assistantTexts, turn.assistantSeen, item.text);
+        const narrativeKey = `assistant|${comparableText(item.text)}`;
+        if (!turn.narrativeKeys.has(narrativeKey)) {
+          turn.narrativeKeys.add(narrativeKey);
+          turn.narrative.push({ kind: "assistant", ts: item.ts, text: item.text });
+        }
       }
       continue;
     }
@@ -675,10 +835,11 @@ export function buildConversationTurns(items: ThreadTimelineItem[]): Conversatio
         }
       } else {
         appendUniqueText(turn.thinkingTexts, turn.thinkingSeen, item.text);
-        const detailKey = `think|${comparableText(item.text)}`;
-        if (!turn.detailKeys.has(detailKey)) {
-          turn.detailKeys.add(detailKey);
+        const key = `think|${comparableText(item.text)}`;
+        if (!turn.detailKeys.has(key)) {
+          turn.detailKeys.add(key);
           turn.details.push({ kind: "thinking", ts: item.ts, text: item.text });
+          turn.narrative.push({ kind: "thinking", ts: item.ts, text: item.text });
         }
       }
       continue;
@@ -701,6 +862,13 @@ export function buildConversationTurns(items: ThreadTimelineItem[]): Conversatio
           text: item.text,
           callId: item.callId,
         });
+        turn.narrative.push({
+          kind: "toolCall",
+          ts: item.ts,
+          toolName,
+          text: item.text,
+          callId: item.callId,
+        });
       }
       continue;
     }
@@ -715,6 +883,12 @@ export function buildConversationTurns(items: ThreadTimelineItem[]): Conversatio
       if (!turn.detailKeys.has(detailKey)) {
         turn.detailKeys.add(detailKey);
         turn.details.push({
+          kind: "toolResult",
+          ts: item.ts,
+          text: item.text,
+          callId: item.callId,
+        });
+        turn.narrative.push({
           kind: "toolResult",
           ts: item.ts,
           text: item.text,
@@ -768,6 +942,8 @@ export function buildConversationTurns(items: ThreadTimelineItem[]): Conversatio
         });
       }
 
+      const segments = buildSegmentsFromNarrative(turn.narrative);
+
       return {
         turnId: turn.turnId,
         startedAt: turn.startedAt,
@@ -780,6 +956,7 @@ export function buildConversationTurns(items: ThreadTimelineItem[]): Conversatio
         toolCalls: turn.toolCalls,
         toolResults: turn.toolResults,
         details,
+        segments,
       };
     })
     .filter(

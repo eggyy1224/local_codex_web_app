@@ -336,6 +336,109 @@ describe("thread logic helpers", () => {
     ]);
   });
 
+  it("builds interleaved segments: assistant text and tool batches alternate in time order", () => {
+    // Real Codex pattern: commentary message → tool call → tool result → final answer.
+    const items: ThreadTimelineItem[] = [
+      {
+        id: "1",
+        ts: "2026-01-01T00:00:00.000Z",
+        turnId: "t",
+        type: "assistantMessage",
+        title: "Assistant",
+        text: "我先去看 file",
+        rawType: "agent_message",
+        toolName: null,
+        callId: null,
+      },
+      {
+        id: "2",
+        ts: "2026-01-01T00:00:01.000Z",
+        turnId: "t",
+        type: "toolCall",
+        title: "Tool",
+        text: "cat foo",
+        rawType: "function_call",
+        toolName: "exec_command",
+        callId: "c1",
+      },
+      {
+        id: "3",
+        ts: "2026-01-01T00:00:02.000Z",
+        turnId: "t",
+        type: "toolResult",
+        title: "Out",
+        text: "ok",
+        rawType: "function_call_output",
+        toolName: null,
+        callId: "c1",
+      },
+      {
+        id: "4",
+        ts: "2026-01-01T00:00:03.000Z",
+        turnId: "t",
+        type: "assistantMessage",
+        title: "Assistant",
+        text: "OK 看完了, 接著改",
+        rawType: "agent_message",
+        toolName: null,
+        callId: null,
+      },
+      {
+        id: "5",
+        ts: "2026-01-01T00:00:04.000Z",
+        turnId: "t",
+        type: "toolCall",
+        title: "Tool",
+        text: "echo done",
+        rawType: "function_call",
+        toolName: "exec_command",
+        callId: "c2",
+      },
+      {
+        id: "6",
+        ts: "2026-01-01T00:00:05.000Z",
+        turnId: "t",
+        type: "toolCall",
+        title: "Tool",
+        text: "patch x",
+        rawType: "function_call",
+        toolName: "apply_patch",
+        callId: "c3",
+      },
+      {
+        id: "7",
+        ts: "2026-01-01T00:00:06.000Z",
+        turnId: "t",
+        type: "assistantMessage",
+        title: "Assistant",
+        text: "好了",
+        rawType: "agent_message",
+        toolName: null,
+        callId: null,
+      },
+    ];
+
+    const turns = buildConversationTurns(items);
+    expect(turns).toHaveLength(1);
+    const segments = turns[0].segments;
+    expect(segments.map((s) => s.kind)).toEqual([
+      "assistant",
+      "toolBatch",
+      "assistant",
+      "toolBatch",
+      "assistant",
+    ]);
+    // First batch: 1 exec_command (and one result).
+    expect(segments[1].kind === "toolBatch" && segments[1].summary).toBe("Ran 1 command");
+    // Last assistant message keeps its text.
+    expect(segments[2].kind === "assistant" && segments[2].text).toBe("OK 看完了, 接著改");
+    // Second batch: 1 exec_command + 1 apply_patch.
+    expect(segments[3].kind === "toolBatch" && segments[3].summary).toBe(
+      "Ran 1 command, edited 1 file",
+    );
+    expect(segments[4].kind === "assistant" && segments[4].text).toBe("好了");
+  });
+
   it("infers completed status when assistant text exists without turn status events", () => {
     const items: ThreadTimelineItem[] = [
       {

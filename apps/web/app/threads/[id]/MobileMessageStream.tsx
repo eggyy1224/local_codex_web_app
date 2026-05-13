@@ -1,7 +1,7 @@
 "use client";
 
 import type { ReactNode, RefObject } from "react";
-import type { ConversationTurn, TurnStatus } from "../../lib/thread-logic";
+import type { ConversationTurn, TurnSegment, TurnStatus } from "../../lib/thread-logic";
 import { statusClass, statusLabel, truncateText } from "../../lib/thread-logic";
 
 type MobileMessageStreamProps = {
@@ -24,6 +24,49 @@ function statusLabelCompact(status: TurnStatus): string {
   if (status === "failed") return "Failed";
   if (status === "interrupted") return "Stopped";
   return "Unknown";
+}
+
+function renderToolBatch(
+  segment: Extract<TurnSegment, { kind: "toolBatch" }>,
+  key: string,
+): ReactNode {
+  return (
+    <details
+      key={key}
+      className="cdx-mobile-tool-batch"
+      data-testid="mobile-tool-batch"
+    >
+      <summary className="cdx-mobile-tool-batch-summary">
+        <span className="cdx-mobile-tool-batch-icon" aria-hidden="true">⚙</span>
+        <span className="cdx-mobile-tool-batch-text">{segment.summary}</span>
+      </summary>
+      <div className="cdx-mobile-tool-batch-body">
+        {segment.items.map((item, index) => {
+          const itemKey = `${key}-item-${index}`;
+          if (item.kind === "toolCall") {
+            return (
+              <section className="cdx-mobile-msg cdx-mobile-msg--detail" key={itemKey}>
+                <header className="cdx-mobile-msg-head">
+                  <strong>Tool call: {item.toolName}</strong>
+                </header>
+                {item.text ? (
+                  <pre className="cdx-turn-body">{truncateText(item.text, 4500)}</pre>
+                ) : null}
+              </section>
+            );
+          }
+          return (
+            <section className="cdx-mobile-msg cdx-mobile-msg--detail" key={itemKey}>
+              <header className="cdx-mobile-msg-head">
+                <strong>Tool output</strong>
+              </header>
+              <pre className="cdx-turn-body">{truncateText(item.text, 4500)}</pre>
+            </section>
+          );
+        })}
+      </div>
+    </details>
+  );
 }
 
 export default function MobileMessageStream({
@@ -61,6 +104,17 @@ export default function MobileMessageStream({
       {turns.map((turn) => {
         const reviewSlashCommand = reviewSlashCommandByTurnId.get(turn.turnId) ?? null;
         const userDisplayText = reviewSlashCommand ?? turn.userText;
+        const segments = turn.segments;
+        const lastAssistantIndex = (() => {
+          for (let i = segments.length - 1; i >= 0; i -= 1) {
+            if (segments[i].kind === "assistant") return i;
+          }
+          return -1;
+        })();
+        // If no segments were produced (e.g. very early in the stream), fall
+        // back to the aggregated assistantText so the user still sees something.
+        const fallbackAssistant =
+          segments.length === 0 && turn.assistantText ? turn.assistantText : null;
 
         return (
           <article
@@ -76,7 +130,54 @@ export default function MobileMessageStream({
               </section>
             ) : null}
 
-            {turn.assistantText ? (
+            {segments.map((segment, index) => {
+              const key = `${turn.turnId}-seg-${index}`;
+              if (segment.kind === "assistant") {
+                const isLastAssistant = index === lastAssistantIndex;
+                return (
+                  <section
+                    key={key}
+                    className="cdx-mobile-msg cdx-mobile-msg--assistant"
+                    data-testid="mobile-assistant-segment"
+                  >
+                    <header className="cdx-mobile-msg-head">
+                      <strong>Codex</strong>
+                      {isLastAssistant ? (
+                        <div className="cdx-mobile-msg-actions">
+                          <span className={`cdx-status ${statusClass(turn.status)}`}>
+                            {statusLabelCompact(turn.status)}
+                          </span>
+                          <button
+                            type="button"
+                            className="cdx-mobile-inline-btn"
+                            onClick={() => onCopyMessage(segment.text)}
+                          >
+                            Copy
+                          </button>
+                        </div>
+                      ) : null}
+                    </header>
+                    <pre className="cdx-turn-body">
+                      {segment.text}
+                      {turn.isStreaming && isLastAssistant ? (
+                        <span className="cdx-stream-cursor" aria-hidden="true" />
+                      ) : null}
+                    </pre>
+                  </section>
+                );
+              }
+              if (segment.kind === "thinking") {
+                return (
+                  <details key={key} className="cdx-mobile-thinking-inline">
+                    <summary>Thinking</summary>
+                    <pre className="cdx-turn-body">{truncateText(segment.text, 6000)}</pre>
+                  </details>
+                );
+              }
+              return renderToolBatch(segment, key);
+            })}
+
+            {fallbackAssistant ? (
               <section className="cdx-mobile-msg cdx-mobile-msg--assistant">
                 <header className="cdx-mobile-msg-head">
                   <strong>Codex</strong>
@@ -87,60 +188,23 @@ export default function MobileMessageStream({
                     <button
                       type="button"
                       className="cdx-mobile-inline-btn"
-                      onClick={() => onCopyMessage(turn.assistantText ?? "")}
+                      onClick={() => onCopyMessage(fallbackAssistant)}
                     >
                       Copy
                     </button>
                   </div>
                 </header>
                 <pre className="cdx-turn-body">
-                  {turn.assistantText}
+                  {fallbackAssistant}
                   {turn.isStreaming ? <span className="cdx-stream-cursor" aria-hidden="true" /> : null}
                 </pre>
               </section>
-            ) : (
-              <p className="cdx-helper">{turn.isStreaming ? "Codex is responding..." : "Waiting for response..."}</p>
-            )}
+            ) : null}
 
-            {turn.details.length > 0 ? (
-              <details className="cdx-mobile-details-collapsible">
-                <summary>Thinking & tools ({turn.details.length})</summary>
-                <div className="cdx-mobile-details-body">
-                  {turn.details.map((detail, index) => {
-                    const key = `${turn.turnId}-detail-${index}-${detail.kind}`;
-                    if (detail.kind === "thinking") {
-                      return (
-                        <section className="cdx-mobile-msg cdx-mobile-msg--detail" key={key}>
-                          <header className="cdx-mobile-msg-head">
-                            <strong>Thinking</strong>
-                          </header>
-                          <pre className="cdx-turn-body">{truncateText(detail.text, 6000)}</pre>
-                        </section>
-                      );
-                    }
-                    if (detail.kind === "toolCall") {
-                      return (
-                        <section className="cdx-mobile-msg cdx-mobile-msg--detail" key={key}>
-                          <header className="cdx-mobile-msg-head">
-                            <strong>Tool call: {detail.toolName}</strong>
-                          </header>
-                          {detail.text ? (
-                            <pre className="cdx-turn-body">{truncateText(detail.text, 4500)}</pre>
-                          ) : null}
-                        </section>
-                      );
-                    }
-                    return (
-                      <section className="cdx-mobile-msg cdx-mobile-msg--detail" key={key}>
-                        <header className="cdx-mobile-msg-head">
-                          <strong>Tool output</strong>
-                        </header>
-                        <pre className="cdx-turn-body">{truncateText(detail.text, 4500)}</pre>
-                      </section>
-                    );
-                  })}
-                </div>
-              </details>
+            {segments.length === 0 && !fallbackAssistant ? (
+              <p className="cdx-helper">
+                {turn.isStreaming ? "Codex is responding..." : "Waiting for response..."}
+              </p>
             ) : null}
 
             {renderTurnActions ? renderTurnActions(turn.turnId) : null}
