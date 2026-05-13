@@ -65,4 +65,31 @@ describe("parseTimelineItemsFromLines", () => {
     expect(items).toHaveLength(1);
     expect(items[0].type).toBe("assistantMessage");
   });
+
+  it("passes through long user and assistant messages without truncation", () => {
+    // Reproduces the gap exposed by the codex review: the gateway used to
+    // truncate user_message at 4000 and agent_message at 6000 chars, so the
+    // web UI's full-bubble rendering still showed clipped historical turns.
+    const longUser = `${"u".repeat(10_000)}USER_TAIL_KEEPS`;
+    const longAssistant = `${"a".repeat(10_000)}ASSISTANT_TAIL_KEEPS`;
+    const lines = [
+      line({
+        type: "event_msg",
+        timestamp: "2026-01-01T00:00:00.000Z",
+        payload: { type: "user_message", message: longUser, turn_id: "turn-1" },
+      }),
+      line({
+        type: "event_msg",
+        timestamp: "2026-01-01T00:00:01.000Z",
+        payload: { type: "agent_message", message: longAssistant, turn_id: "turn-1" },
+      }),
+    ];
+
+    const items = parseTimelineItemsFromLines(lines, "thread-1", 50);
+    expect(items).toHaveLength(2);
+    expect(items[0].text).toBe(longUser);
+    expect(items[0].text).toContain("USER_TAIL_KEEPS");
+    expect(items[1].text).toBe(longAssistant);
+    expect(items[1].text).toContain("ASSISTANT_TAIL_KEEPS");
+  });
 });

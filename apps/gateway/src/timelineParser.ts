@@ -190,7 +190,11 @@ export function parseTimelineItemsFromLines(
           turnId: eventTurnId,
           type: "userMessage",
           title: "User",
-          text: truncateText(pickString(payload, "message"), 4000),
+          // No truncation for the primary user message: the web UI now
+          // renders the full bubble, and capping at the gateway just clipped
+          // the tail of historical long messages. Reasoning/tool spans
+          // remain capped below since they're collapsed in the UI.
+          text: pickString(payload, "message"),
           rawType: payloadType,
           toolName: null,
           callId: null,
@@ -205,7 +209,7 @@ export function parseTimelineItemsFromLines(
           turnId: eventTurnId,
           type: "assistantMessage",
           title: "Assistant",
-          text: truncateText(pickString(payload, "message"), 6000),
+          text: pickString(payload, "message"),
           rawType: payloadType,
           toolName: null,
           callId: null,

@@ -435,6 +435,71 @@ describe("Thread page integration", () => {
     });
   });
 
+  it("mobile control sheet closes when Close is pressed even after pointer-down on the header (regression)", async () => {
+    // Reproduces the bug fix in commit 24617e4: the sheet header's
+    // onPointerDown used to call setPointerCapture unconditionally, which ate
+    // the Close button's click on pointer-up. Simulate the real interaction
+    // pattern by firing pointerDown on the header (target = close button) then
+    // clicking close — the sheet must dismiss.
+    setMobileViewport(true);
+    vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+
+    server.use(
+      http.get("http://127.0.0.1:8795/api/threads/:id", ({ params }) =>
+        HttpResponse.json({
+          thread: {
+            id: String(params.id),
+            title: "Close Regression Thread",
+            preview: "",
+            status: "idle",
+            createdAt: null,
+            updatedAt: null,
+          },
+          turns: [],
+          nextCursor: null,
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/approvals/pending", () =>
+        HttpResponse.json({ data: [] }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/interactions/pending", () =>
+        HttpResponse.json({ data: [] }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads", () =>
+        HttpResponse.json({ data: [], nextCursor: null }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/timeline", () =>
+        HttpResponse.json({ data: [] }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/context", () =>
+        HttpResponse.json({
+          threadId: "thread-1",
+          cwd: "/tmp/project",
+          resolvedCwd: "/tmp/project",
+          isFallback: false,
+          source: "projection",
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/models", () => HttpResponse.json({ data: [] })),
+    );
+
+    render(<ThreadPage params={Promise.resolve({ id: "thread-1" })} />);
+
+    fireEvent.click(await screen.findByTestId("mobile-topbar-control-toggle"));
+    await screen.findByTestId("mobile-control-sheet");
+    const closeBtn = screen.getByTestId("mobile-control-sheet-close");
+    // Simulate the pointer-down that the header receives when the user starts
+    // pressing the Close button (the button bubbles its pointer event up to
+    // the drag-handle header). Then complete the click.
+    fireEvent.pointerDown(closeBtn, { pointerId: 1, clientY: 100 });
+    fireEvent.pointerUp(closeBtn, { pointerId: 1, clientY: 100 });
+    fireEvent.click(closeBtn);
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("mobile-control-sheet")).not.toBeInTheDocument();
+    });
+  });
+
   it("mobile pending approval renders the foreground action layer and posts allow", async () => {
     setMobileViewport(true);
     vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);

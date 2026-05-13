@@ -86,13 +86,14 @@ test("mobile smoke: chat-first thread flow + sheet controls", async ({ page }, t
   await expect(page.locator(".cdx-mobile-thread-main")).toHaveCSS("overflow-y", "hidden");
   await expect(page.locator(".cdx-mobile-message-stream")).toHaveCSS("overflow-y", "auto");
 
-  await page.getByTestId("mobile-topbar-control-toggle").evaluate((node: HTMLElement) => {
-    node.click();
-  });
+  // Real .click() fires the full pointerdown → pointerup → click sequence,
+  // which exercises the sheet header's pointer-capture guard. A synthetic
+  // .evaluate(node => node.click()) would skip pointerdown entirely and miss
+  // a regression of the bug fixed in 24617e4 (header capturing the pointer
+  // and eating the Close button's click).
+  await page.getByTestId("mobile-topbar-control-toggle").click();
   await expect(page.getByTestId("mobile-control-sheet")).toBeVisible();
-  await page.getByTestId("mobile-control-sheet-close").evaluate((node: HTMLElement) => {
-    node.click();
-  });
+  await page.getByTestId("mobile-control-sheet-close").click();
   await expect(page.getByTestId("mobile-control-sheet")).toHaveCount(0);
 
   await page.getByLabel("Open threads").evaluate((node: HTMLElement) => {
@@ -194,12 +195,10 @@ test("mobile plan flow: answer questions tab then implement from sheet", async (
   await expect(sheet).toBeVisible();
   await sheet.getByTestId("mobile-control-tab-pending").click();
   await sheet.getByLabel("Staging - safe environment").check();
-  await sheet.getByTestId("interaction-submit").evaluate((node: HTMLElement) => {
-    node.click();
-  });
-  await sheet.getByTestId("mobile-control-sheet-close").evaluate((node: HTMLElement) => {
-    node.click();
-  });
+  await sheet.getByTestId("interaction-submit").click();
+  // Real click exercises pointerdown→pointerup on the sheet header (regression
+  // guard for the pointer-capture fix in 24617e4).
+  await sheet.getByTestId("mobile-control-sheet-close").click();
   await expect(sheet).toHaveCount(0);
 
   await expect(page.getByRole("button", { name: "Implement this plan" }).first()).toBeVisible();
