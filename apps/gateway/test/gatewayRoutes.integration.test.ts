@@ -1374,4 +1374,38 @@ describe("gateway integration routes", () => {
       await ctx.close();
     }
   });
+
+  it("SSE route sends an immediate heartbeat for empty streams", async () => {
+    const ctx = await createTestContext();
+    try {
+      await ctx.app.listen({ host: "127.0.0.1", port: 0 });
+      const address = ctx.app.server.address();
+      if (!address || typeof address === "string") {
+        throw new Error("failed to get listen address");
+      }
+
+      const controller = new AbortController();
+      const response = await fetch(
+        `http://127.0.0.1:${address.port}/api/threads/thread-empty/events?since=0`,
+        {
+          headers: { origin: "http://127.0.0.1:3000" },
+          signal: controller.signal,
+        },
+      );
+      expect(response.status).toBe(200);
+
+      const reader = response.body?.getReader();
+      if (!reader) {
+        throw new Error("missing SSE stream");
+      }
+
+      const { value } = await reader.read();
+      const text = new TextDecoder().decode(value);
+
+      expect(text).toContain("event: heartbeat");
+      controller.abort();
+    } finally {
+      await ctx.close();
+    }
+  });
 });

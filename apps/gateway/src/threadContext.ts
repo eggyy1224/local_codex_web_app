@@ -43,6 +43,7 @@ export class ThreadContextResolver {
   private readonly contextByThreadId = new Map<string, ThreadContextResponse>();
   private readonly lookupInFlight = new Map<string, Promise<ThreadContextResponse>>();
   private sessionIndexPromise: Promise<void> | null = null;
+  private sessionIndexRefreshPromise: Promise<void> | null = null;
 
   constructor(options: ResolverOptions = {}) {
     this.codexSessionsDir =
@@ -53,6 +54,12 @@ export class ThreadContextResolver {
 
   async getSessionFilePath(threadId: string): Promise<string | null> {
     await this.ensureSessionFileIndex();
+    const existing = this.sessionFileByThreadId.get(threadId);
+    if (existing) {
+      return existing;
+    }
+
+    await this.refreshSessionFileIndex();
     return this.sessionFileByThreadId.get(threadId) ?? null;
   }
 
@@ -86,7 +93,9 @@ export class ThreadContextResolver {
         this.contextByThreadId.set(threadId, fromProjection);
         return fromProjection;
       }
-      return cached;
+      if (!cached.isFallback) {
+        return cached;
+      }
     }
 
     const inFlight = this.lookupInFlight.get(threadId);
@@ -172,6 +181,26 @@ export class ThreadContextResolver {
       );
     })();
     return this.sessionIndexPromise;
+  }
+
+  private async refreshSessionFileIndex(): Promise<void> {
+    if (this.sessionIndexRefreshPromise) {
+      return this.sessionIndexRefreshPromise;
+    }
+
+    this.sessionIndexRefreshPromise = (async () => {
+      await this.buildSessionFileIndex(this.codexSessionsDir);
+      this.logger?.info(
+        { indexed: this.sessionFileByThreadId.size },
+        "thread context session file index refreshed",
+      );
+    })();
+
+    try {
+      return await this.sessionIndexRefreshPromise;
+    } finally {
+      this.sessionIndexRefreshPromise = null;
+    }
   }
 
   private async buildSessionFileIndex(dirPath: string): Promise<void> {

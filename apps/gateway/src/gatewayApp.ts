@@ -1473,10 +1473,14 @@ app.get("/api/threads/:id/events", async (request, reply) => {
 
   const unsubscribe = subscribe(params.id, writeEvent);
 
-  const heartbeat = setInterval(() => {
+  const writeHeartbeat = (): void => {
     reply.raw.write("event: heartbeat\n");
     reply.raw.write(`data: {"ts":"${new Date().toISOString()}"}\n\n`);
-  }, 15_000);
+  };
+
+  writeHeartbeat();
+
+  const heartbeat = setInterval(writeHeartbeat, 15_000);
 
   request.raw.on("close", () => {
     clearInterval(heartbeat);

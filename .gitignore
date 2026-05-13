@@ -11,3 +11,4 @@ apps/web/test-results/
 
 *.tsbuildinfo
 codex/
+.scratch/
