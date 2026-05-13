@@ -2272,6 +2272,22 @@ export default function ThreadPage({ params }: Props) {
           />
         </main>
 
+        {runningTurnId ? (
+          <div
+            className="cdx-mobile-running-indicator"
+            data-testid="mobile-running-indicator"
+            role="status"
+            aria-live="polite"
+          >
+            <span className="cdx-mobile-running-dots" aria-hidden="true">
+              <span />
+              <span />
+              <span />
+            </span>
+            <span className="cdx-mobile-running-label">Codex is working…</span>
+          </div>
+        ) : null}
+
         <MobileActionLayer
           pendingApprovals={pendingApprovalList}
           pendingInteractions={pendingInteractionList}

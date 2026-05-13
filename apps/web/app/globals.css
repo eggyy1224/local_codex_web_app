@@ -1359,6 +1359,67 @@ textarea {
   gap: 8px;
 }
 
+.cdx-mobile-running-indicator {
+  position: fixed;
+  left: 12px;
+  right: 12px;
+  bottom: calc(108px + env(safe-area-inset-bottom));
+  z-index: 34;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 7px 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(122, 162, 247, 0.32);
+  background: rgba(20, 22, 32, 0.92);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  font-size: 12px;
+  color: rgba(196, 214, 255, 0.95);
+  margin: 0 auto;
+  width: max-content;
+  max-width: calc(100% - 24px);
+  pointer-events: none;
+}
+
+.cdx-mobile-running-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.cdx-mobile-running-dots span {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: rgba(122, 162, 247, 0.9);
+  animation: cdx-running-bounce 900ms ease-in-out infinite;
+}
+
+.cdx-mobile-running-dots span:nth-child(2) {
+  animation-delay: 150ms;
+}
+
+.cdx-mobile-running-dots span:nth-child(3) {
+  animation-delay: 300ms;
+}
+
+@keyframes cdx-running-bounce {
+  0%, 80%, 100% {
+    transform: translateY(0);
+    opacity: 0.4;
+  }
+  40% {
+    transform: translateY(-4px);
+    opacity: 1;
+  }
+}
+
+.cdx-mobile-running-label {
+  letter-spacing: 0.01em;
+}
+
 .cdx-mobile-action-layer {
   position: fixed;
   left: 12px;
