@@ -2754,35 +2754,37 @@ export default function ThreadPage({ params }: Props) {
               Mode: {collaborationMode} · Pending questions: {pendingInteractionList.length} · Shift+Tab toggle · /plan /review /status
             </p>
             <div className={`cdx-composer-row ${isMobileViewport ? "cdx-composer-row--mobile" : ""}`}>
-              <div className={`cdx-inline-actions ${isMobileViewport ? "cdx-inline-actions--mobile" : ""}`}>
-                <button
-                  type="button"
-                  data-testid="control-stop"
-                  className="cdx-toolbar-btn cdx-toolbar-btn--danger"
-                  disabled={controlBusy !== null}
-                  onClick={() => void sendControl("stop")}
-                >
-                  {controlBusy === "stop" ? "Stopping..." : "Stop"}
-                </button>
-                <button
-                  type="button"
-                  data-testid="control-retry"
-                  className="cdx-toolbar-btn cdx-toolbar-btn--positive"
-                  disabled={controlBusy !== null}
-                  onClick={() => void sendControl("retry")}
-                >
-                  {controlBusy === "retry" ? "Retrying..." : "Retry"}
-                </button>
-                <button
-                  type="button"
-                  data-testid="control-cancel"
-                  className="cdx-toolbar-btn"
-                  disabled={controlBusy !== null}
-                  onClick={() => void sendControl("cancel")}
-                >
-                  {controlBusy === "cancel" ? "Cancelling..." : "Cancel"}
-                </button>
-              </div>
+              {isMobileViewport ? null : (
+                <div className="cdx-inline-actions">
+                  <button
+                    type="button"
+                    data-testid="control-stop"
+                    className="cdx-toolbar-btn cdx-toolbar-btn--danger"
+                    disabled={controlBusy !== null}
+                    onClick={() => void sendControl("stop")}
+                  >
+                    {controlBusy === "stop" ? "Stopping..." : "Stop"}
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="control-retry"
+                    className="cdx-toolbar-btn cdx-toolbar-btn--positive"
+                    disabled={controlBusy !== null}
+                    onClick={() => void sendControl("retry")}
+                  >
+                    {controlBusy === "retry" ? "Retrying..." : "Retry"}
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="control-cancel"
+                    className="cdx-toolbar-btn"
+                    disabled={controlBusy !== null}
+                    onClick={() => void sendControl("cancel")}
+                  >
+                    {controlBusy === "cancel" ? "Cancelling..." : "Cancel"}
+                  </button>
+                </div>
+              )}
               <div className={`cdx-composer-right ${isMobileViewport ? "cdx-composer-right--mobile" : ""}`}>
                 <label
                   className={`cdx-composer-select ${isMobileViewport ? "cdx-composer-select--mobile" : ""}`}

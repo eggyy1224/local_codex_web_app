@@ -174,15 +174,33 @@ class StubAppServer extends EventEmitter implements GatewayAppServerPort {
       });
 
       const completeTurn = () => {
-        const assistantDelta = shouldEmitPlanFlow
+        const assistantText = shouldEmitPlanFlow
           ? "Plan draft ready.\n<proposed_plan>1. Add interaction pipeline\n2. Build UI submit path\n3. Verify mobile + desktop</proposed_plan>"
           : `Echo: ${userText || "ok"}`;
+        // Stream the body via delta first (matches real Codex streaming) ...
         this.emit("message", {
           method: "item/agentMessage/delta",
           params: {
             threadId: thread.id,
             turnId,
-            delta: assistantDelta,
+            delta: assistantText,
+          },
+        });
+        // ... then publish the completed item. The web client drops the live
+        // delta events (they explode the rendered <pre> on long turns) and
+        // relies on the completed item for the final assistant text. Without
+        // this second emit, the proposed_plan tag never reaches the timeline
+        // and the plan-ready CTA never appears.
+        this.emit("message", {
+          method: "item/completed",
+          params: {
+            threadId: thread.id,
+            turnId,
+            item: {
+              type: "agentMessage",
+              text: assistantText,
+              turn_id: turnId,
+            },
           },
         });
 
