@@ -263,6 +263,79 @@ describe("thread logic helpers", () => {
     });
   });
 
+  it("preserves chronological order of thinking, tool calls, and tool results in turn.details", () => {
+    // Codex's real flow is "think → call → result → think more → call → result".
+    // The legacy toolCalls / toolResults arrays squished everything by type,
+    // so the UI couldn't show the actual narrative. turn.details fixes that.
+    const items: ThreadTimelineItem[] = [
+      {
+        id: "1",
+        ts: "2026-01-01T00:00:00.000Z",
+        turnId: "t",
+        type: "reasoning",
+        title: "Thinking",
+        text: "first thought",
+        rawType: "reasoning",
+        toolName: null,
+        callId: null,
+      },
+      {
+        id: "2",
+        ts: "2026-01-01T00:00:01.000Z",
+        turnId: "t",
+        type: "toolCall",
+        title: "Tool",
+        text: "ls",
+        rawType: "function_call",
+        toolName: "shell",
+        callId: "call-1",
+      },
+      {
+        id: "3",
+        ts: "2026-01-01T00:00:02.000Z",
+        turnId: "t",
+        type: "toolResult",
+        title: "Out",
+        text: "file.ts",
+        rawType: "function_call_output",
+        toolName: null,
+        callId: "call-1",
+      },
+      {
+        id: "4",
+        ts: "2026-01-01T00:00:03.000Z",
+        turnId: "t",
+        type: "reasoning",
+        title: "Thinking",
+        text: "second thought",
+        rawType: "reasoning",
+        toolName: null,
+        callId: null,
+      },
+      {
+        id: "5",
+        ts: "2026-01-01T00:00:04.000Z",
+        turnId: "t",
+        type: "toolCall",
+        title: "Tool",
+        text: "cat",
+        rawType: "function_call",
+        toolName: "shell",
+        callId: "call-2",
+      },
+    ];
+
+    const turns = buildConversationTurns(items);
+    expect(turns).toHaveLength(1);
+    expect(turns[0].details.map((d) => `${d.kind}:${d.kind === "toolCall" ? d.text : d.kind === "toolResult" ? d.text : d.text}`)).toEqual([
+      "thinking:first thought",
+      "toolCall:ls",
+      "toolResult:file.ts",
+      "thinking:second thought",
+      "toolCall:cat",
+    ]);
+  });
+
   it("infers completed status when assistant text exists without turn status events", () => {
     const items: ThreadTimelineItem[] = [
       {

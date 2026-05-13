@@ -2805,46 +2805,48 @@ export default function ThreadPage({ params }: Props) {
                         {turn.isStreaming ? "Codex is responding..." : "Waiting for response..."}
                       </p>
                     )}
-                    {turn.thinkingText || turn.toolCalls.length > 0 || turn.toolResults.length > 0 ? (
+                    {turn.details.length > 0 ? (
                       <details className="cdx-message-collapsible">
                         <summary>
-                          <span>
-                            Thinking & tools (
-                            {(turn.thinkingText ? 1 : 0) + turn.toolCalls.length + turn.toolResults.length})
-                          </span>
+                          <span>Thinking & tools ({turn.details.length})</span>
                           {turn.isStreaming ? <span className="cdx-collapsible-live">live</span> : null}
                         </summary>
                         <div className="cdx-message-stack cdx-message-stack--details">
-                          {turn.thinkingText ? (
-                            <section className="cdx-message cdx-message--detail">
-                              <div className="cdx-message-meta">
-                                <strong className="cdx-message-role">Thinking</strong>
-                              </div>
-                              <pre className="cdx-turn-body">{truncateText(turn.thinkingText, 6000)}</pre>
-                            </section>
-                          ) : null}
-                          {turn.toolCalls.map((call, index) => (
-                            <section
-                              className="cdx-message cdx-message--tool"
-                              key={`${turn.turnId}-tool-call-${index}-${call.toolName}`}
-                            >
-                              <div className="cdx-message-meta">
-                                <strong className="cdx-message-role">Tool call: {call.toolName}</strong>
-                              </div>
-                              {call.text ? <pre className="cdx-turn-body">{truncateText(call.text, 4500)}</pre> : null}
-                            </section>
-                          ))}
-                          {turn.toolResults.map((result, index) => (
-                            <section
-                              className="cdx-message cdx-message--detail"
-                              key={`${turn.turnId}-tool-result-${index}`}
-                            >
-                              <div className="cdx-message-meta">
-                                <strong className="cdx-message-role">Tool output</strong>
-                              </div>
-                              <pre className="cdx-turn-body">{truncateText(result, 4500)}</pre>
-                            </section>
-                          ))}
+                          {turn.details.map((detail, index) => {
+                            const key = `${turn.turnId}-desktop-detail-${index}-${detail.kind}`;
+                            if (detail.kind === "thinking") {
+                              return (
+                                <section className="cdx-message cdx-message--detail" key={key}>
+                                  <div className="cdx-message-meta">
+                                    <strong className="cdx-message-role">Thinking</strong>
+                                  </div>
+                                  <pre className="cdx-turn-body">{truncateText(detail.text, 6000)}</pre>
+                                </section>
+                              );
+                            }
+                            if (detail.kind === "toolCall") {
+                              return (
+                                <section className="cdx-message cdx-message--tool" key={key}>
+                                  <div className="cdx-message-meta">
+                                    <strong className="cdx-message-role">
+                                      Tool call: {detail.toolName}
+                                    </strong>
+                                  </div>
+                                  {detail.text ? (
+                                    <pre className="cdx-turn-body">{truncateText(detail.text, 4500)}</pre>
+                                  ) : null}
+                                </section>
+                              );
+                            }
+                            return (
+                              <section className="cdx-message cdx-message--detail" key={key}>
+                                <div className="cdx-message-meta">
+                                  <strong className="cdx-message-role">Tool output</strong>
+                                </div>
+                                <pre className="cdx-turn-body">{truncateText(detail.text, 4500)}</pre>
+                              </section>
+                            );
+                          })}
                         </div>
                       </details>
                     ) : null}

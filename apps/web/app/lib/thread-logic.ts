@@ -7,6 +7,11 @@ export type ConversationToolCall = {
   text: string | null;
 };
 
+export type ConversationDetail =
+  | { kind: "thinking"; ts: string; text: string }
+  | { kind: "toolCall"; ts: string; toolName: string; text: string | null; callId: string | null }
+  | { kind: "toolResult"; ts: string; text: string; callId: string | null };
+
 export type ConversationTurn = {
   turnId: string;
   startedAt: string | null;
@@ -18,6 +23,15 @@ export type ConversationTurn = {
   thinkingText: string | null;
   toolCalls: ConversationToolCall[];
   toolResults: string[];
+  /**
+   * thinking / tool-call / tool-result entries in the order they happened on
+   * the server (chronological by timeline item ts). This is what the UI
+   * should render when it wants the real "Codex thought, then called X, then
+   * got result Y, then thought again" narrative — the older toolCalls /
+   * toolResults arrays drop ordering and pairing so they are kept only for
+   * compatibility with existing call sites.
+   */
+  details: ConversationDetail[];
 };
 
 type MutableConversationTurn = {
@@ -37,6 +51,8 @@ type MutableConversationTurn = {
   userSeen: Set<string>;
   assistantSeen: Set<string>;
   thinkingSeen: Set<string>;
+  details: ConversationDetail[];
+  detailKeys: Set<string>;
 };
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -608,6 +624,8 @@ export function buildConversationTurns(items: ThreadTimelineItem[]): Conversatio
         userSeen: new Set<string>(),
         assistantSeen: new Set<string>(),
         thinkingSeen: new Set<string>(),
+        details: [],
+        detailKeys: new Set<string>(),
       };
 
     if (!existing) {
@@ -657,6 +675,11 @@ export function buildConversationTurns(items: ThreadTimelineItem[]): Conversatio
         }
       } else {
         appendUniqueText(turn.thinkingTexts, turn.thinkingSeen, item.text);
+        const detailKey = `think|${comparableText(item.text)}`;
+        if (!turn.detailKeys.has(detailKey)) {
+          turn.detailKeys.add(detailKey);
+          turn.details.push({ kind: "thinking", ts: item.ts, text: item.text });
+        }
       }
       continue;
     }
@@ -668,6 +691,17 @@ export function buildConversationTurns(items: ThreadTimelineItem[]): Conversatio
         turn.toolCallSeen.add(key);
         turn.toolCalls.push({ toolName, text: item.text });
       }
+      const detailKey = `call|${item.callId ?? ""}|${toolName}|${comparableText(item.text)}`;
+      if (!turn.detailKeys.has(detailKey)) {
+        turn.detailKeys.add(detailKey);
+        turn.details.push({
+          kind: "toolCall",
+          ts: item.ts,
+          toolName,
+          text: item.text,
+          callId: item.callId,
+        });
+      }
       continue;
     }
 
@@ -676,6 +710,16 @@ export function buildConversationTurns(items: ThreadTimelineItem[]): Conversatio
       if (!turn.toolResultSeen.has(key)) {
         turn.toolResultSeen.add(key);
         turn.toolResults.push(item.text);
+      }
+      const detailKey = `result|${item.callId ?? ""}|${comparableText(item.text)}`;
+      if (!turn.detailKeys.has(detailKey)) {
+        turn.detailKeys.add(detailKey);
+        turn.details.push({
+          kind: "toolResult",
+          ts: item.ts,
+          text: item.text,
+          callId: item.callId,
+        });
       }
     }
   }
@@ -707,6 +751,23 @@ export function buildConversationTurns(items: ThreadTimelineItem[]): Conversatio
               : "unknown"
           : turn.status;
 
+      // `details` already arrived in chronological order because sortedItems
+      // was sorted by ts. If reasoning is streaming (delta) and no completed
+      // reasoning item has landed yet, surface the live buffer as a tail
+      // entry so the user still sees Codex thinking; otherwise the live
+      // text is already represented by a completed thinking detail.
+      const details = [...turn.details];
+      if (
+        turn.thinkingDelta.length > 0 &&
+        !details.some((d) => d.kind === "thinking" && d.text.includes(turn.thinkingDelta.slice(-80)))
+      ) {
+        details.push({
+          kind: "thinking",
+          ts: turn.completedAt ?? turn.startedAt ?? "",
+          text: turn.thinkingDelta,
+        });
+      }
+
       return {
         turnId: turn.turnId,
         startedAt: turn.startedAt,
@@ -718,6 +779,7 @@ export function buildConversationTurns(items: ThreadTimelineItem[]): Conversatio
         thinkingText,
         toolCalls: turn.toolCalls,
         toolResults: turn.toolResults,
+        details,
       };
     })
     .filter(

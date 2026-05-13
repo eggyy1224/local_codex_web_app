@@ -102,42 +102,43 @@ export default function MobileMessageStream({
               <p className="cdx-helper">{turn.isStreaming ? "Codex is responding..." : "Waiting for response..."}</p>
             )}
 
-            {turn.thinkingText || turn.toolCalls.length > 0 || turn.toolResults.length > 0 ? (
+            {turn.details.length > 0 ? (
               <details className="cdx-mobile-details-collapsible">
-                <summary>
-                  Thinking & tools ({(turn.thinkingText ? 1 : 0) + turn.toolCalls.length + turn.toolResults.length})
-                </summary>
+                <summary>Thinking & tools ({turn.details.length})</summary>
                 <div className="cdx-mobile-details-body">
-                  {turn.thinkingText ? (
-                    <section className="cdx-mobile-msg cdx-mobile-msg--detail">
-                      <header className="cdx-mobile-msg-head">
-                        <strong>Thinking</strong>
-                      </header>
-                      <pre className="cdx-turn-body">{truncateText(turn.thinkingText, 6000)}</pre>
-                    </section>
-                  ) : null}
-                  {turn.toolCalls.map((call, index) => (
-                    <section
-                      className="cdx-mobile-msg cdx-mobile-msg--detail"
-                      key={`${turn.turnId}-mobile-tool-call-${index}-${call.toolName}`}
-                    >
-                      <header className="cdx-mobile-msg-head">
-                        <strong>Tool call: {call.toolName}</strong>
-                      </header>
-                      {call.text ? <pre className="cdx-turn-body">{truncateText(call.text, 4500)}</pre> : null}
-                    </section>
-                  ))}
-                  {turn.toolResults.map((result, index) => (
-                    <section
-                      className="cdx-mobile-msg cdx-mobile-msg--detail"
-                      key={`${turn.turnId}-mobile-tool-result-${index}`}
-                    >
-                      <header className="cdx-mobile-msg-head">
-                        <strong>Tool output</strong>
-                      </header>
-                      <pre className="cdx-turn-body">{truncateText(result, 4500)}</pre>
-                    </section>
-                  ))}
+                  {turn.details.map((detail, index) => {
+                    const key = `${turn.turnId}-detail-${index}-${detail.kind}`;
+                    if (detail.kind === "thinking") {
+                      return (
+                        <section className="cdx-mobile-msg cdx-mobile-msg--detail" key={key}>
+                          <header className="cdx-mobile-msg-head">
+                            <strong>Thinking</strong>
+                          </header>
+                          <pre className="cdx-turn-body">{truncateText(detail.text, 6000)}</pre>
+                        </section>
+                      );
+                    }
+                    if (detail.kind === "toolCall") {
+                      return (
+                        <section className="cdx-mobile-msg cdx-mobile-msg--detail" key={key}>
+                          <header className="cdx-mobile-msg-head">
+                            <strong>Tool call: {detail.toolName}</strong>
+                          </header>
+                          {detail.text ? (
+                            <pre className="cdx-turn-body">{truncateText(detail.text, 4500)}</pre>
+                          ) : null}
+                        </section>
+                      );
+                    }
+                    return (
+                      <section className="cdx-mobile-msg cdx-mobile-msg--detail" key={key}>
+                        <header className="cdx-mobile-msg-head">
+                          <strong>Tool output</strong>
+                        </header>
+                        <pre className="cdx-turn-body">{truncateText(detail.text, 4500)}</pre>
+                      </section>
+                    );
+                  })}
                 </div>
               </details>
             ) : null}
