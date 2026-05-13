@@ -522,6 +522,212 @@ describe("Thread page integration", () => {
     });
   });
 
+  it("mobile action layer shows N-pending counter and reveals next approval after deny", async () => {
+    setMobileViewport(true);
+    vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+
+    const baseApprovals = [
+      {
+        approvalId: "ap-1",
+        threadId: "thread-1",
+        turnId: "turn-1",
+        itemId: null,
+        type: "commandExecution" as const,
+        status: "pending" as const,
+        reason: "First",
+        commandPreview: "rm -rf /tmp/old",
+        fileChangePreview: null,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        resolvedAt: null,
+      },
+      {
+        approvalId: "ap-2",
+        threadId: "thread-1",
+        turnId: "turn-1",
+        itemId: null,
+        type: "fileChange" as const,
+        status: "pending" as const,
+        reason: "Second",
+        commandPreview: null,
+        fileChangePreview: "src/index.ts",
+        createdAt: "2026-01-01T00:00:01.000Z",
+        resolvedAt: null,
+      },
+    ];
+    const decisionCalls: Array<{ approvalId: string; body: unknown }> = [];
+
+    server.use(
+      http.get("http://127.0.0.1:8795/api/threads/:id", ({ params }) =>
+        HttpResponse.json({
+          thread: {
+            id: String(params.id),
+            title: "Multi Approval",
+            preview: "",
+            status: "idle",
+            createdAt: null,
+            updatedAt: null,
+          },
+          turns: [],
+          nextCursor: null,
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/approvals/pending", () =>
+        HttpResponse.json({ data: baseApprovals }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads", () =>
+        HttpResponse.json({ data: [], nextCursor: null }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/timeline", () =>
+        HttpResponse.json({ data: [] }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/context", () =>
+        HttpResponse.json({
+          threadId: "thread-1",
+          cwd: "/tmp/project",
+          resolvedCwd: "/tmp/project",
+          isFallback: false,
+          source: "projection",
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/models", () => HttpResponse.json({ data: [] })),
+      http.post(
+        "http://127.0.0.1:8795/api/threads/:id/approvals/:approvalId",
+        async ({ params, request }) => {
+          decisionCalls.push({
+            approvalId: String(params.approvalId),
+            body: await request.json(),
+          });
+          return HttpResponse.json({ ok: true });
+        },
+      ),
+    );
+
+    render(<ThreadPage params={Promise.resolve({ id: "thread-1" })} />);
+
+    const layer = await screen.findByTestId("mobile-action-layer");
+    expect(layer).toHaveAttribute("data-approval-id", "ap-1");
+    expect(layer).toHaveTextContent("2 pending");
+
+    fireEvent.click(screen.getByTestId("mobile-action-deny"));
+
+    await waitFor(() => {
+      expect(decisionCalls).toHaveLength(1);
+    });
+    expect(decisionCalls[0]).toEqual({
+      approvalId: "ap-1",
+      body: { decision: "deny" },
+    });
+
+    // After the local optimistic resolution of ap-1, ap-2 should surface as the new card.
+    await waitFor(() => {
+      const next = screen.getByTestId("mobile-action-layer");
+      expect(next).toHaveAttribute("data-approval-id", "ap-2");
+    });
+    const nextLayer = screen.getByTestId("mobile-action-layer");
+    expect(nextLayer).not.toHaveTextContent("2 pending");
+    expect(nextLayer).toHaveTextContent("src/index.ts");
+  });
+
+  it("mobile action layer prefers question card when both an approval and a question are pending", async () => {
+    setMobileViewport(true);
+    vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+
+    server.use(
+      http.get("http://127.0.0.1:8795/api/threads/:id", ({ params }) =>
+        HttpResponse.json({
+          thread: {
+            id: String(params.id),
+            title: "Both Pending",
+            preview: "",
+            status: "idle",
+            createdAt: null,
+            updatedAt: null,
+          },
+          turns: [],
+          nextCursor: null,
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/approvals/pending", () =>
+        HttpResponse.json({
+          data: [
+            {
+              approvalId: "ap-1",
+              threadId: "thread-1",
+              turnId: "turn-1",
+              itemId: null,
+              type: "commandExecution",
+              status: "pending",
+              reason: "Run script",
+              commandPreview: "pnpm test",
+              fileChangePreview: null,
+              createdAt: "2026-01-01T00:00:00.000Z",
+              resolvedAt: null,
+            },
+          ],
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/interactions/pending", () =>
+        HttpResponse.json({
+          data: [
+            {
+              interactionId: "ix-1",
+              threadId: "thread-1",
+              turnId: "turn-1",
+              itemId: null,
+              type: "userInput",
+              status: "pending",
+              questions: [
+                {
+                  id: "q1",
+                  header: "Branch",
+                  question: "Which branch should I push to?",
+                  isOther: false,
+                  isSecret: false,
+                  options: [
+                    { label: "main", description: "default" },
+                    { label: "dev", description: "" },
+                  ],
+                },
+              ],
+              createdAt: "2026-01-01T00:00:01.000Z",
+              resolvedAt: null,
+            },
+          ],
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads", () =>
+        HttpResponse.json({ data: [], nextCursor: null }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/timeline", () =>
+        HttpResponse.json({ data: [] }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/context", () =>
+        HttpResponse.json({
+          threadId: "thread-1",
+          cwd: "/tmp/project",
+          resolvedCwd: "/tmp/project",
+          isFallback: false,
+          source: "projection",
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/models", () => HttpResponse.json({ data: [] })),
+    );
+
+    render(<ThreadPage params={Promise.resolve({ id: "thread-1" })} />);
+
+    const layer = await screen.findByTestId("mobile-action-layer");
+    expect(layer).toHaveAttribute("data-kind", "question");
+
+    // Approval is NOT surfaced inline while a question is blocking the turn.
+    expect(screen.queryByTestId("mobile-action-allow")).not.toBeInTheDocument();
+
+    // Tapping Answer opens the Questions tab in the sheet.
+    fireEvent.click(screen.getByTestId("mobile-action-open-question"));
+    await screen.findByTestId("mobile-control-sheet");
+    const questionsTab = screen.getByTestId("mobile-control-tab-questions");
+    expect(questionsTab).toHaveClass("is-active");
+  });
+
   it("mobile composer steers via /steer instead of /turns while a turn is running", async () => {
     setMobileViewport(true);
     vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
