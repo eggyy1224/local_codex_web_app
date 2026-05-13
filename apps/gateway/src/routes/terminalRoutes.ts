@@ -157,12 +157,15 @@ export function registerTerminalRoutes(
       closeReason: string,
     ): void => {
       // Handler may run before the WebSocket upgrade has fully completed on the
-      // client side (e.g. fastify's injectWS test transport). Defer send until
-      // the next tick so the client can attach listeners, and defer close again
-      // so the framed message is flushed before the close handshake begins.
+      // client side (e.g. fastify's injectWS test transport). Defer one tick so
+      // the client can attach listeners, then use ws.send's write callback to
+      // sequence the close handshake after the frame is flushed.
       setImmediate(() => {
-        send(message);
-        setImmediate(() => {
+        if (ws.readyState !== 1) {
+          ws.close(closeCode, closeReason);
+          return;
+        }
+        ws.send(JSON.stringify(message), () => {
           ws.close(closeCode, closeReason);
         });
       });

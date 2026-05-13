@@ -1547,6 +1547,120 @@ describe("gateway integration routes", () => {
     }
   });
 
+  it("terminal websocket rejects disallowed origins and records origin_denied audit", async () => {
+    const ctx = await createTestContext();
+    try {
+      await ctx.app.ready();
+      const ws = (await (
+        ctx.app as typeof ctx.app & {
+          injectWS: (
+            path: string,
+            upgradeContext?: { headers?: Record<string, string> },
+          ) => Promise<InjectedWs>;
+        }
+      ).injectWS("/api/terminal/ws", {
+        headers: { origin: "http://evil.example.com" },
+      })) as InjectedWs;
+
+      expect(await readWsJson(ws)).toEqual({
+        type: "terminal/error",
+        message: "origin not allowed",
+        code: "TERMINAL_WS_ORIGIN_DENIED",
+      });
+      ws.terminate();
+
+      const rows = ctx.db.sqlite
+        .prepare("SELECT action, thread_id, metadata_json FROM audit_log ORDER BY id ASC")
+        .all() as Array<{ action: string; thread_id: string | null; metadata_json: string }>;
+      expect(rows).toEqual([
+        {
+          action: "terminal.origin_denied",
+          thread_id: null,
+          metadata_json: JSON.stringify({ origin: "http://evil.example.com" }),
+        },
+      ]);
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  it("terminal websocket records terminal.closed reason=reopened when client opens a second thread", async () => {
+    const opened: string[] = [];
+    const terminalManager = {
+      openClient(client: { send: (message: unknown) => void }, threadId: string) {
+        opened.push(threadId);
+        client.send({ type: "terminal/ready", sessionId: `s-${threadId}`, threadId });
+      },
+      closeClient() {},
+      onClientDisconnect() {},
+      writeInput() {
+        return true;
+      },
+      resize() {
+        return true;
+      },
+      setCwd() {
+        return true;
+      },
+      destroy() {},
+      setSessionEndedListener() {},
+    } as unknown as NonNullable<GatewayAppDeps["terminalManager"]>;
+    const threadContextResolver = {
+      async resolveThreadContext(threadId: string) {
+        return {
+          threadId,
+          cwd: `/tmp/${threadId}`,
+          resolvedCwd: `/tmp/${threadId}`,
+          isFallback: false,
+          source: "projection" as const,
+        };
+      },
+      invalidate() {},
+    } as unknown as NonNullable<GatewayAppDeps["threadContextResolver"]>;
+    const ctx = await createTestContext({
+      deps: { terminalManager, threadContextResolver },
+    });
+    try {
+      await ctx.app.ready();
+      const ws = (await (
+        ctx.app as typeof ctx.app & {
+          injectWS: (
+            path: string,
+            upgradeContext?: { headers?: Record<string, string> },
+          ) => Promise<InjectedWs>;
+        }
+      ).injectWS("/api/terminal/ws", {
+        headers: { origin: "http://127.0.0.1:3000" },
+      })) as InjectedWs;
+
+      ws.send(JSON.stringify({ type: "terminal/open", threadId: "thread-first" }));
+      expect(await readWsJson(ws)).toMatchObject({ type: "terminal/ready", threadId: "thread-first" });
+
+      ws.send(JSON.stringify({ type: "terminal/open", threadId: "thread-second" }));
+      expect(await readWsJson(ws)).toMatchObject({ type: "terminal/ready", threadId: "thread-second" });
+
+      ws.terminate();
+      expect(opened).toEqual(["thread-first", "thread-second"]);
+
+      const rows = ctx.db.sqlite
+        .prepare("SELECT action, thread_id, metadata_json FROM audit_log ORDER BY id ASC")
+        .all() as Array<{ action: string; thread_id: string | null; metadata_json: string }>;
+      const reopened = rows.find(
+        (row) => row.action === "terminal.closed" && row.thread_id === "thread-first",
+      );
+      expect(reopened).toBeTruthy();
+      expect(JSON.parse(reopened!.metadata_json)).toMatchObject({
+        reason: "reopened",
+        cwd: "/tmp/thread-first",
+      });
+      expect(
+        rows.filter((row) => row.action === "terminal.opened").map((row) => row.thread_id),
+      ).toEqual(["thread-first", "thread-second"]);
+    } finally {
+      await ctx.close();
+    }
+  });
+
   it("terminal websocket audits open and close lifecycle", async () => {
     const opened: Array<{ threadId: string }> = [];
     const terminalManager = {
