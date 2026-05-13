@@ -23,7 +23,7 @@ export type ApprovalInteractionRoutesDeps = {
   broadcast: (event: GatewayEvent) => void;
 };
 
-function readInteractionAnswers(
+export function readInteractionAnswers(
   raw: InteractionRespondRequest["answers"],
 ): Record<string, { answers: string[] }> | null {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {

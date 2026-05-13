@@ -36,7 +36,7 @@ function terminalError(message: string, code?: string): TerminalServerMessage {
   };
 }
 
-function parseTerminalClientMessage(raw: unknown): TerminalClientMessage | null {
+export function parseTerminalClientMessage(raw: unknown): TerminalClientMessage | null {
   if (!raw || typeof raw !== "object") {
     return null;
   }
