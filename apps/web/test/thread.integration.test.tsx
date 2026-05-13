@@ -443,9 +443,13 @@ describe("Thread page integration", () => {
     const groups = await screen.findAllByTestId("mobile-thread-switcher-group");
     expect(groups).toHaveLength(2);
 
-    // The active thread surfaces a running badge; the beta thread surfaces a waiting badge.
-    expect(screen.getByText("Running")).toBeInTheDocument();
-    expect(screen.getByText("2 pending")).toBeInTheDocument();
+    // The alpha-active thread surfaces a running badge; the beta thread
+    // surfaces a waiting badge. We intentionally scope these queries to the
+    // switcher overlay so they don't collide with other surfaces that may
+    // also render "Running" / "N pending" in future fixtures.
+    const overlay = screen.getByTestId("mobile-thread-switcher-overlay");
+    expect(within(overlay).getByText("Running")).toBeInTheDocument();
+    expect(within(overlay).getByText("2 pending")).toBeInTheDocument();
 
     // Collapse the alpha group — its two items should disappear, but the beta group still renders its item.
     const alphaToggle = within(groups[0]).getByTestId("mobile-thread-switcher-group-toggle");

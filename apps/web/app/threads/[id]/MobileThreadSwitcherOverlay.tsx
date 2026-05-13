@@ -35,15 +35,18 @@ type StatusBadge = {
   label: string;
 };
 
-function badgeForItem(item: MobileThreadSwitcherItem): StatusBadge {
-  if (item.status === "active") {
-    return { kind: "running", label: "Running" };
-  }
+export function badgeForItem(item: MobileThreadSwitcherItem): StatusBadge {
+  // A thread that's running AND has a pending approval is paused waiting on
+  // the user — pending wins over running here because the action item is
+  // what matters to the reader of the switcher.
   if (item.waitingApprovalCount > 0) {
     return {
       kind: "waiting",
       label: item.waitingApprovalCount === 1 ? "1 pending" : `${item.waitingApprovalCount} pending`,
     };
+  }
+  if (item.status === "active") {
+    return { kind: "running", label: "Running" };
   }
   if (item.status === "systemError" || item.errorCount > 0) {
     return { kind: "error", label: "Error" };

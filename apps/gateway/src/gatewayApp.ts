@@ -357,7 +357,11 @@ function unixSecondsToIso(ts?: number): string {
   return new Date(ts * 1000).toISOString();
 }
 
-function toThreadListItem(raw: RawThread, projectKey = "unknown"): ThreadListItem {
+function toThreadListItem(
+  raw: RawThread,
+  projectKey = "unknown",
+  waitingApprovalCount = 0,
+): ThreadListItem {
   const status = statusFromRaw(raw.status);
   const title = raw.name ?? raw.preview?.slice(0, 80) ?? raw.id;
   const preview = raw.preview ?? "";
@@ -371,7 +375,7 @@ function toThreadListItem(raw: RawThread, projectKey = "unknown"): ThreadListIte
     status,
     lastActiveAt,
     archived: false,
-    waitingApprovalCount: 0,
+    waitingApprovalCount,
     errorCount: status === "systemError" ? 1 : 0,
   };
 }
@@ -1117,6 +1121,14 @@ app.get("/api/threads", async (request): Promise<ThreadListResponse> => {
       nextCursor?: string | null;
     };
 
+    const approvalCountByThread = new Map<string, number>();
+    for (const pending of pendingApprovals.values()) {
+      approvalCountByThread.set(
+        pending.threadId,
+        (approvalCountByThread.get(pending.threadId) ?? 0) + 1,
+      );
+    }
+
     const items = await Promise.all(
       (result.data ?? []).map(async (thread) => {
         const projected = db.getProjectedThread(thread.id);
@@ -1128,7 +1140,7 @@ app.get("/api/threads", async (request): Promise<ThreadListResponse> => {
             threadContextResolver.invalidate(thread.id);
           }
         }
-        return toThreadListItem(thread, projectKey);
+        return toThreadListItem(thread, projectKey, approvalCountByThread.get(thread.id) ?? 0);
       }),
     );
 
@@ -1153,10 +1165,19 @@ app.get("/api/threads", async (request): Promise<ThreadListResponse> => {
     app.log.error({ err: error }, "thread/list failed, fallback to projection cache");
 
     const projected = db.listProjectedThreads(limit);
+    const approvalCountByThread = new Map<string, number>();
+    for (const pending of pendingApprovals.values()) {
+      approvalCountByThread.set(
+        pending.threadId,
+        (approvalCountByThread.get(pending.threadId) ?? 0) + 1,
+      );
+    }
+
     const hydrated = await Promise.all(
       projected.map(async (thread) => {
+        const waitingApprovalCount = approvalCountByThread.get(thread.id) ?? 0;
         if (thread.projectKey !== "unknown") {
-          return thread;
+          return { ...thread, waitingApprovalCount };
         }
         const projectKey = await threadContextResolver.resolveProjectKey(thread.id, thread.projectKey);
         if (projectKey !== "unknown") {
@@ -1166,6 +1187,7 @@ app.get("/api/threads", async (request): Promise<ThreadListResponse> => {
         return {
           ...thread,
           projectKey,
+          waitingApprovalCount,
         };
       }),
     );

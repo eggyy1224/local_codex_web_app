@@ -761,6 +761,48 @@ describe("gateway integration routes", () => {
     }
   });
 
+  it("GET /api/threads surfaces waitingApprovalCount per thread (regression)", async () => {
+    // The thread switcher's amber "N pending" badge only fires if the gateway
+    // actually fills waitingApprovalCount. Previously it was hard-coded to 0
+    // for both the live and projection-cache branches.
+    const ctx = await createTestContext();
+    try {
+      ctx.stub.handlers.set("thread/list", () => ({
+        data: [
+          { id: "thread-a", name: "A", preview: "", status: "idle", createdAt: 1, updatedAt: 1 },
+          { id: "thread-b", name: "B", preview: "", status: "idle", createdAt: 1, updatedAt: 1 },
+        ],
+        nextCursor: null,
+      }));
+
+      // Two pending approvals for thread-a, one for thread-b.
+      ctx.stub.emit("message", {
+        id: 1,
+        method: "item/commandExecution/requestApproval",
+        params: { threadId: "thread-a", turnId: "t1", command: "x" },
+      });
+      ctx.stub.emit("message", {
+        id: 2,
+        method: "item/commandExecution/requestApproval",
+        params: { threadId: "thread-a", turnId: "t1", command: "y" },
+      });
+      ctx.stub.emit("message", {
+        id: 3,
+        method: "item/commandExecution/requestApproval",
+        params: { threadId: "thread-b", turnId: "t2", command: "z" },
+      });
+
+      const res = await ctx.app.inject({ method: "GET", url: "/api/threads?limit=10" });
+      expect(res.statusCode).toBe(200);
+      const items = (res.json() as { data: Array<{ id: string; waitingApprovalCount: number }> })
+        .data;
+      const byId = Object.fromEntries(items.map((item) => [item.id, item.waitingApprovalCount]));
+      expect(byId).toEqual({ "thread-a": 2, "thread-b": 1 });
+    } finally {
+      await ctx.close();
+    }
+  });
+
   it("interaction route accepts requestUserInput and responds with answers", async () => {
     const ctx = await createTestContext();
     try {
