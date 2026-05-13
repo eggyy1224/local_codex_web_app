@@ -198,6 +198,39 @@ export function truncateText(text: string, maxLength: number): string {
   return `${text.slice(0, maxLength)}...`;
 }
 
+function isMeaningfulPlanBody(body: string): boolean {
+  // Reject placeholder-like content ("...", "…", whitespace-only) and anything
+  // too short to be a real plan. The detector is opportunistic so the bar for
+  // what counts as a plan needs to be higher than "non-empty".
+  const trimmed = body.trim();
+  if (trimmed.length < 8) return false;
+  if (/^[.…\s]+$/.test(trimmed)) return false;
+  return true;
+}
+
+export function proposedPlanFromText(text: string | null): string | null {
+  if (!text) {
+    return null;
+  }
+  // The plan-ready CTA is opt-in via an explicit <proposed_plan>...</proposed_plan>
+  // tag emitted by Codex. The previous "keyword + bullets" fallback fired on
+  // any feature-explanation reply that mentioned plan mode and contained list
+  // items — a common, frustrating false positive. Code spans are stripped
+  // first so the tag has to be a real markup element, not documentation that
+  // quotes the tag inside backticks.
+  const normalized = text
+    .replace(/\r\n/g, "\n")
+    .replace(/```[\s\S]*?```/g, "")
+    .replace(/`[^`\n]*`/g, "");
+
+  const match = normalized.match(/<proposed_plan>([\s\S]*?)<\/proposed_plan>/i);
+  if (!match) {
+    return null;
+  }
+  const body = match[1]?.trim() ?? "";
+  return isMeaningfulPlanBody(body) ? body : null;
+}
+
 export function formatEffortLabel(effort: string): string {
   return effort
     .split(/[-_]/g)

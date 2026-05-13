@@ -50,6 +50,7 @@ import { groupThreadsByProject, pickDefaultProjectKey, projectLabelFromKey } fro
 import {
   buildConversationTurns,
   formatEffortLabel,
+  proposedPlanFromText,
   statusClass,
   statusLabel,
   timelineItemFromGatewayEvent,
@@ -253,32 +254,8 @@ function interactionFromEvent(event: GatewayEvent): PendingInteractionCard | nul
   };
 }
 
-function proposedPlanFromText(text: string | null): string | null {
-  if (!text) {
-    return null;
-  }
-  const normalized = text.replace(/\r\n/g, "\n");
-  const match = normalized.match(/<proposed_plan>([\s\S]*?)<\/proposed_plan>/i);
-  if (!match) {
-    const hasPlanKeyword = /proposed[\s_-]*plan|implementation plan|plan ready|計劃|計畫|規劃/i.test(
-      normalized,
-    );
-    if (!hasPlanKeyword) {
-      return null;
-    }
-
-    const listLines = normalized
-      .split("\n")
-      .map((line) => line.trim())
-      .filter((line) => /^(\d+\.|[-*])\s+\S+/.test(line));
-    if (listLines.length < 2) {
-      return null;
-    }
-    return listLines.join("\n");
-  }
-  const body = match[1]?.trim();
-  return body && body.length > 0 ? body : null;
-}
+// proposedPlanFromText is re-exported from ../lib/thread-logic so it can be
+// unit-tested in isolation.
 
 function isCollaborationModeKind(value: string | null): value is CollaborationModeKind {
   return value === "plan" || value === "default";

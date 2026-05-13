@@ -3,6 +3,7 @@ import type { GatewayEvent, ThreadTimelineItem } from "@lcwa/shared-types";
 import {
   buildConversationTurns,
   formatEffortLabel,
+  proposedPlanFromText,
   statusClass,
   statusLabel,
   timelineItemFromGatewayEvent,
@@ -296,5 +297,47 @@ describe("thread logic helpers", () => {
       isStreaming: false,
       assistantText: "world",
     });
+  });
+});
+
+describe("proposedPlanFromText", () => {
+  it("extracts real plan content from <proposed_plan> tags", () => {
+    const result = proposedPlanFromText(
+      "Here's the plan:\n<proposed_plan>1. Add API\n2. Add UI\n3. Ship</proposed_plan>",
+    );
+    expect(result).toBe("1. Add API\n2. Add UI\n3. Ship");
+  });
+
+  it("returns null when <proposed_plan> appears inside backticks (feature documentation)", () => {
+    // Reproduces the user-reported false positive: the assistant explained the
+    // feature and quoted `<proposed_plan>...</proposed_plan>` literally; the
+    // detector should not treat that as a real plan.
+    const text =
+      "我們有 proposed plan CTA：看到 `<proposed_plan>...</proposed_plan>` 就會顯示 Implement.";
+    expect(proposedPlanFromText(text)).toBeNull();
+  });
+
+  it("returns null for fenced code-block discussions of the plan tag", () => {
+    const text = "Docs:\n```html\n<proposed_plan>1. step</proposed_plan>\n```\nthat's how.";
+    expect(proposedPlanFromText(text)).toBeNull();
+  });
+
+  it("rejects placeholder plan bodies like '...'", () => {
+    expect(proposedPlanFromText("<proposed_plan>...</proposed_plan>")).toBeNull();
+    expect(proposedPlanFromText("<proposed_plan>…</proposed_plan>")).toBeNull();
+    expect(proposedPlanFromText("<proposed_plan>   </proposed_plan>")).toBeNull();
+  });
+
+  it("returns null when prose mentions plans with bullets but no <proposed_plan> tag (false-positive guard)", () => {
+    // Reproduces: assistant explains plan-mode features in a bullet list — UI
+    // must NOT treat that as a real plan. The canonical signal is the tag.
+    const text =
+      "我們有 plan mode：\n- Web 支援 /plan slash command\n- Gateway 會呼叫 collaborationMode/list\n- Mobile 有 plan pill 和 implement plan sheet";
+    expect(proposedPlanFromText(text)).toBeNull();
+  });
+
+  it("returns null when input is empty or null", () => {
+    expect(proposedPlanFromText(null)).toBeNull();
+    expect(proposedPlanFromText("")).toBeNull();
   });
 });
