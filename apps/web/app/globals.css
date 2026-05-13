@@ -495,15 +495,39 @@ textarea {
 }
 
 .cdx-status-banner {
+  position: relative;
   width: min(1120px, calc(100% - 24px));
   margin: 8px auto 0;
   border: 1px solid var(--border-soft);
   border-radius: 12px;
   background: rgba(30, 30, 30, 0.82);
-  padding: 8px 10px;
+  padding: 8px 36px 8px 10px;
   font-size: 12px;
   display: grid;
   gap: 4px;
+}
+
+.cdx-status-banner-close {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  width: 24px;
+  height: 24px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.cdx-status-banner-close:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text);
 }
 
 .cdx-status {
@@ -1256,10 +1280,36 @@ textarea {
   border: 1px solid var(--border-soft);
   border-radius: 10px;
   background: rgba(30, 30, 30, 0.72);
-  padding: 8px;
+  padding: 8px 8px 8px 10px;
   font-size: 11px;
   display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 8px;
+}
+
+.cdx-mobile-status-banner-lines {
+  display: grid;
   gap: 3px;
+  min-width: 0;
+}
+
+.cdx-mobile-status-banner-close {
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text);
+  font-size: 18px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.cdx-mobile-status-banner-close:active {
+  background: rgba(255, 255, 255, 0.14);
 }
 
 .cdx-mobile-message-stream {

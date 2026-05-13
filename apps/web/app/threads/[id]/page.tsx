@@ -2191,9 +2191,20 @@ export default function ThreadPage({ params }: Props) {
         <main className="cdx-mobile-thread-main">
           {statusBanner ? (
             <div className="cdx-mobile-status-banner" data-testid="status-banner">
-              <span>{statusBanner.lines[0]}</span>
-              <span>{statusBanner.lines[1]}</span>
-              <span>{statusBanner.lines[2]}</span>
+              <div className="cdx-mobile-status-banner-lines">
+                <span>{statusBanner.lines[0]}</span>
+                <span>{statusBanner.lines[1]}</span>
+                <span>{statusBanner.lines[2]}</span>
+              </div>
+              <button
+                type="button"
+                className="cdx-mobile-status-banner-close"
+                data-testid="status-banner-close"
+                aria-label="Dismiss status"
+                onClick={() => setStatusBanner(null)}
+              >
+                ×
+              </button>
             </div>
           ) : null}
           {error ? <p className="cdx-error">{error}</p> : null}
@@ -2479,6 +2490,15 @@ export default function ThreadPage({ params }: Props) {
           <span>{statusBanner.lines[0]}</span>
           <span>{statusBanner.lines[1]}</span>
           <span>{statusBanner.lines[2]}</span>
+          <button
+            type="button"
+            className="cdx-status-banner-close"
+            data-testid="status-banner-close"
+            aria-label="Dismiss status"
+            onClick={() => setStatusBanner(null)}
+          >
+            ×
+          </button>
         </div>
       ) : null}
 

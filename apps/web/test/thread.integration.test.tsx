@@ -2518,6 +2518,12 @@ describe("Thread page integration", () => {
       expect(rateLimitCalls).toBe(2);
       expect(screen.getByTestId("status-banner")).toBeInTheDocument();
     });
+
+    // The banner should be dismissable via its close button.
+    fireEvent.click(screen.getByTestId("status-banner-close"));
+    await waitFor(() => {
+      expect(screen.queryByTestId("status-banner")).not.toBeInTheDocument();
+    });
   });
 
   it("shows full /review command text in timeline user message", async () => {
