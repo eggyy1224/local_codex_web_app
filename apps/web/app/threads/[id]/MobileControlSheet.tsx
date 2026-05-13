@@ -431,12 +431,13 @@ export default function MobileControlSheet({
                   value={permissionMode}
                   onChange={(event) => {
                     const value = event.target.value;
-                    if (value === "local" || value === "full-access") {
+                    if (value === "local" || value === "auto" || value === "full-access") {
                       onPermissionModeChange(value);
                     }
                   }}
                 >
                   <option value="local">Local (on-request)</option>
+                  <option value="auto">Auto review</option>
                   <option value="full-access">Full access (never)</option>
                 </select>
               </label>

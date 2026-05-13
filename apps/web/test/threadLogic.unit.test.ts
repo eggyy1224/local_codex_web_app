@@ -439,6 +439,71 @@ describe("thread logic helpers", () => {
     expect(segments[4].kind === "assistant" && segments[4].text).toBe("好了");
   });
 
+  it("steer messages: subsequent user_message in the same turn becomes a steered segment", () => {
+    // Real Codex flow: turn starts with userMessage, then mid-turn the user
+    // steers (POST /api/threads/:id/steer) which injects another userMessage
+    // BEFORE the next agent_message. The UI must surface both user bubbles
+    // in order, with the steer one visually flagged.
+    const items: ThreadTimelineItem[] = [
+      {
+        id: "1",
+        ts: "2026-01-01T00:00:00.000Z",
+        turnId: "t",
+        type: "userMessage",
+        title: "User",
+        text: "原始 prompt",
+        rawType: "user_message",
+        toolName: null,
+        callId: null,
+      },
+      {
+        id: "2",
+        ts: "2026-01-01T00:00:05.000Z",
+        turnId: "t",
+        type: "toolCall",
+        title: "Tool",
+        text: "ls",
+        rawType: "function_call",
+        toolName: "exec_command",
+        callId: "c1",
+      },
+      {
+        id: "3",
+        ts: "2026-01-01T00:00:08.000Z",
+        turnId: "t",
+        type: "userMessage",
+        title: "User",
+        text: "steer 補充",
+        rawType: "user_message",
+        toolName: null,
+        callId: null,
+      },
+      {
+        id: "4",
+        ts: "2026-01-01T00:00:12.000Z",
+        turnId: "t",
+        type: "assistantMessage",
+        title: "Assistant",
+        text: "好",
+        rawType: "agent_message",
+        toolName: null,
+        callId: null,
+      },
+    ];
+
+    const turns = buildConversationTurns(items);
+    expect(turns).toHaveLength(1);
+    const segments = turns[0].segments;
+    expect(segments.map((s) => s.kind)).toEqual([
+      "user",
+      "toolBatch",
+      "user",
+      "assistant",
+    ]);
+    expect(segments[0]).toMatchObject({ kind: "user", text: "原始 prompt", isSteer: false });
+    expect(segments[2]).toMatchObject({ kind: "user", text: "steer 補充", isSteer: true });
+  });
+
   it("infers completed status when assistant text exists without turn status events", () => {
     const items: ThreadTimelineItem[] = [
       {

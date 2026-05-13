@@ -1515,6 +1515,17 @@ textarea {
   padding: 10px 12px;
 }
 
+.cdx-mobile-msg--user.is-steer {
+  background: rgba(34, 48, 70, 0.92);
+  border: 1px solid rgba(122, 162, 247, 0.45);
+}
+
+.cdx-mobile-msg--user.is-steer .cdx-mobile-msg-head span {
+  color: rgba(196, 214, 255, 0.95);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+}
+
 .cdx-mobile-msg--assistant {
   justify-self: stretch;
   width: 100%;

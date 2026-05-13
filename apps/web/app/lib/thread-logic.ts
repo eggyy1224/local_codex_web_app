@@ -15,6 +15,7 @@ export type ConversationDetail =
 export type TurnSegmentBatchItem = ConversationDetail;
 
 export type TurnSegment =
+  | { kind: "user"; ts: string; text: string; isSteer: boolean }
   | { kind: "assistant"; ts: string; text: string }
   | { kind: "thinking"; ts: string; text: string }
   | {
@@ -85,6 +86,7 @@ type MutableConversationTurn = {
 };
 
 type NarrativeEntry =
+  | { kind: "user"; ts: string; text: string }
   | { kind: "assistant"; ts: string; text: string }
   | { kind: "thinking"; ts: string; text: string }
   | { kind: "toolCall"; ts: string; toolName: string; text: string | null; callId: string | null }
@@ -689,6 +691,7 @@ function summarizeBatch(items: ConversationDetail[]): string {
 function buildSegmentsFromNarrative(narrative: NarrativeEntry[]): TurnSegment[] {
   const segments: TurnSegment[] = [];
   let currentBatch: { ts: string; items: ConversationDetail[] } | null = null;
+  let userMessageCount = 0;
 
   const flushBatch = () => {
     if (!currentBatch || currentBatch.items.length === 0) {
@@ -705,6 +708,19 @@ function buildSegmentsFromNarrative(narrative: NarrativeEntry[]): TurnSegment[] 
   };
 
   for (const entry of narrative) {
+    if (entry.kind === "user") {
+      flushBatch();
+      // The first user message in a turn is the original prompt; anything
+      // after that is a steer injected mid-turn via /api/threads/:id/steer.
+      segments.push({
+        kind: "user",
+        ts: entry.ts,
+        text: entry.text,
+        isSteer: userMessageCount > 0,
+      });
+      userMessageCount += 1;
+      continue;
+    }
     if (entry.kind === "assistant") {
       flushBatch();
       segments.push({ kind: "assistant", ts: entry.ts, text: entry.text });
@@ -805,6 +821,11 @@ export function buildConversationTurns(items: ThreadTimelineItem[]): Conversatio
 
     if (item.type === "userMessage") {
       appendUniqueText(turn.userTexts, turn.userSeen, item.text);
+      const narrativeKey = `user|${comparableText(item.text)}`;
+      if (!turn.narrativeKeys.has(narrativeKey)) {
+        turn.narrativeKeys.add(narrativeKey);
+        turn.narrative.push({ kind: "user", ts: item.ts, text: item.text });
+      }
       continue;
     }
 

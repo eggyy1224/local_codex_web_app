@@ -103,7 +103,6 @@ export default function MobileMessageStream({
 
       {turns.map((turn) => {
         const reviewSlashCommand = reviewSlashCommandByTurnId.get(turn.turnId) ?? null;
-        const userDisplayText = reviewSlashCommand ?? turn.userText;
         const segments = turn.segments;
         const lastAssistantIndex = (() => {
           for (let i = segments.length - 1; i >= 0; i -= 1) {
@@ -112,7 +111,10 @@ export default function MobileMessageStream({
           return -1;
         })();
         // If no segments were produced (e.g. very early in the stream), fall
-        // back to the aggregated assistantText so the user still sees something.
+        // back to the aggregated userText / assistantText so the user still
+        // sees something while the timeline loads.
+        const fallbackUser =
+          segments.length === 0 ? reviewSlashCommand ?? turn.userText : null;
         const fallbackAssistant =
           segments.length === 0 && turn.assistantText ? turn.assistantText : null;
 
@@ -121,17 +123,40 @@ export default function MobileMessageStream({
             key={turn.turnId}
             className={`cdx-mobile-turn ${turn.isStreaming ? "is-streaming" : ""}`}
           >
-            {userDisplayText ? (
+            {fallbackUser ? (
               <section className="cdx-mobile-msg cdx-mobile-msg--user">
                 <header className="cdx-mobile-msg-head">
                   <span>You</span>
                 </header>
-                <pre className="cdx-turn-body">{userDisplayText}</pre>
+                <pre className="cdx-turn-body">{fallbackUser}</pre>
               </section>
             ) : null}
 
             {segments.map((segment, index) => {
               const key = `${turn.turnId}-seg-${index}`;
+              if (segment.kind === "user") {
+                // The leading user message is the original prompt; subsequent
+                // user segments are steers injected mid-turn — flag them so
+                // the bubble can label itself.
+                const isFirstUser =
+                  segments.findIndex((s) => s.kind === "user") === index;
+                // If this is the first user message and we have a review
+                // slash command, prefer the original full command text.
+                const displayText =
+                  isFirstUser && reviewSlashCommand ? reviewSlashCommand : segment.text;
+                return (
+                  <section
+                    key={key}
+                    className={`cdx-mobile-msg cdx-mobile-msg--user ${segment.isSteer ? "is-steer" : ""}`}
+                    data-testid={segment.isSteer ? "mobile-user-steer" : "mobile-user-message"}
+                  >
+                    <header className="cdx-mobile-msg-head">
+                      <span>{segment.isSteer ? "You · steered" : "You"}</span>
+                    </header>
+                    <pre className="cdx-turn-body">{displayText}</pre>
+                  </section>
+                );
+              }
               if (segment.kind === "assistant") {
                 const isLastAssistant = index === lastAssistantIndex;
                 return (
@@ -201,7 +226,7 @@ export default function MobileMessageStream({
               </section>
             ) : null}
 
-            {segments.length === 0 && !fallbackAssistant ? (
+            {segments.every((s) => s.kind === "user") && !fallbackAssistant ? (
               <p className="cdx-helper">
                 {turn.isStreaming ? "Codex is responding..." : "Waiting for response..."}
               </p>
