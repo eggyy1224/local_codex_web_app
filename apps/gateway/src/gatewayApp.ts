@@ -145,7 +145,7 @@ export function createGatewayBootstrapConfigFromEnv(
   env: NodeJS.ProcessEnv = process.env,
 ): GatewayBootstrapConfig {
   const host = env.HOST ?? "127.0.0.1";
-  const port = Number(env.PORT ?? 8787);
+  const port = Number(env.PORT ?? 8795);
   const defaultWebOrigin = env.WEB_ORIGIN ?? "http://127.0.0.1:3000";
   const corsAllowlist = (env.CORS_ALLOWLIST ?? defaultWebOrigin)
     .split(",")

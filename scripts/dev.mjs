@@ -3,7 +3,7 @@
 import { spawn } from "node:child_process";
 import os from "node:os";
 
-const gatewayPort = process.env.PORT ?? "8787";
+const gatewayPort = process.env.PORT ?? "8795";
 const webPort = process.env.WEB_PORT ?? "3000";
 
 function isPrivateIpv4(address) {

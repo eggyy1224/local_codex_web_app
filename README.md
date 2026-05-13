@@ -115,10 +115,10 @@ pnpm exec playwright install
 | 變數 | 預設值 | 說明 |
 | --- | --- | --- |
 | `HOST` | `0.0.0.0` | Gateway bind host（dev 腳本預設，方便同網段手機測試） |
-| `PORT` | `8787` | Gateway port |
+| `PORT` | `8795` | Gateway port |
 | `WEB_PORT` | `3000` | Next.js port（也用來生成 CORS allowlist） |
 | `LCWA_PUBLIC_HOST` | 自動偵測 | 優先指定公開可達主機位址（覆蓋自動選擇） |
-| `NEXT_PUBLIC_GATEWAY_URL` | `http://<preferred-host>:8787` | 前端連線 Gateway URL |
+| `NEXT_PUBLIC_GATEWAY_URL` | `http://<preferred-host>:8795` | 前端連線 Gateway URL |
 | `CORS_ALLOWLIST` | 自動生成 | 包含 localhost/127.0.0.1 與可達 IPv4 清單 |
 | `LCWA_DEV_DRY_RUN` | 無 | 設 `1` 時只輸出 env 計算結果，不實際啟動服務 |
 
