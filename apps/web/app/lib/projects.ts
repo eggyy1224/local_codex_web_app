@@ -12,13 +12,52 @@ function parseLatestMs(iso: string): number {
   return Number.isFinite(ms) ? ms : 0;
 }
 
+function projectKeyParts(key: string): string[] {
+  return key
+    .replace(/\\/g, "/")
+    .replace(/\/+$/, "")
+    .split("/")
+    .filter(Boolean);
+}
+
 export function projectLabelFromKey(key: string): string {
   if (!key || key === "unknown") {
     return "Unassigned";
   }
-  const normalized = key.replace(/\\/g, "/").replace(/\/+$/, "");
-  const parts = normalized.split("/").filter(Boolean);
-  return parts[parts.length - 1] ?? normalized;
+  const parts = projectKeyParts(key);
+  return parts[parts.length - 1] ?? key;
+}
+
+function disambiguateGroupLabels(groups: ProjectGroup[]): void {
+  // When two project keys share the same trailing segment (e.g. a worktree of
+  // a repo carrying the same folder name), tack on the next parent segment(s)
+  // until each label is unique. Reads "name (·parent)" so the user can still
+  // tell which is which.
+  const byLabel = new Map<string, ProjectGroup[]>();
+  for (const group of groups) {
+    const list = byLabel.get(group.label) ?? [];
+    list.push(group);
+    byLabel.set(group.label, list);
+  }
+  for (const list of byLabel.values()) {
+    if (list.length <= 1) continue;
+    const partsByGroup = list.map((group) => projectKeyParts(group.key));
+    let depth = 1;
+    while (depth < 8) {
+      const candidates = list.map((group, idx) => {
+        const parts = partsByGroup[idx];
+        const slice = parts.slice(Math.max(0, parts.length - 1 - depth), parts.length);
+        return slice.join("/");
+      });
+      if (new Set(candidates).size === candidates.length) {
+        for (let i = 0; i < list.length; i += 1) {
+          list[i].label = candidates[i];
+        }
+        break;
+      }
+      depth += 1;
+    }
+  }
 }
 
 export function groupThreadsByProject(threads: ThreadListItem[]): ProjectGroup[] {
@@ -54,6 +93,8 @@ export function groupThreadsByProject(threads: ThreadListItem[]): ProjectGroup[]
     }
     return b.latestMs - a.latestMs;
   });
+
+  disambiguateGroupLabels(groups);
 
   return groups;
 }

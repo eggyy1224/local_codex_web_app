@@ -40,4 +40,29 @@ describe("projects helpers", () => {
     expect(projectLabelFromKey("/Users/me/repo-name")).toBe("repo-name");
     expect(projectLabelFromKey("unknown")).toBe("Unassigned");
   });
+
+  it("disambiguates duplicate group labels by walking back into parent segments", () => {
+    // The real-world case: a repo and a Codex worktree both end in the same
+    // folder name. Each group must still be distinguishable in the switcher.
+    const groups = groupThreadsByProject([
+      thread({
+        id: "t1",
+        projectKey: "/Users/me/Documents/local_codex_web_app",
+        lastActiveAt: "2026-01-02T00:00:00.000Z",
+      }),
+      thread({
+        id: "t2",
+        projectKey: "/Users/me/.codex/worktrees/8cf5/local_codex_web_app",
+        lastActiveAt: "2026-01-01T00:00:00.000Z",
+      }),
+    ]);
+    const labels = groups.map((group) => group.label).sort();
+    // Both labels must be unique and at minimum carry the disambiguating parent.
+    expect(labels).toEqual(
+      [
+        "Documents/local_codex_web_app",
+        "8cf5/local_codex_web_app",
+      ].sort(),
+    );
+  });
 });
