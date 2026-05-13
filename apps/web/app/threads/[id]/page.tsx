@@ -2103,7 +2103,15 @@ export default function ThreadPage({ params }: Props) {
           onServiceTierChange={(tier) => {
             void gatewayConfig.writeValue({ keyPath: "service_tier", value: tier });
           }}
-          onSectionChange={setControlSheetSection}
+          onSectionChange={(section) => {
+            setControlSheetSection(section);
+            // Advanced tab pins controls (Stop/Retry/Cancel) at the bottom of
+            // the form — at half-snap they fall below the viewport and become
+            // unreachable. Auto-expand to full when the user switches in.
+            if (section === "advanced") {
+              setControlSheetSnap("full");
+            }
+          }}
           onSnapChange={setControlSheetSnap}
           onClose={closeControlSheet}
           onDraggingChange={setIsDraggingSheet}
