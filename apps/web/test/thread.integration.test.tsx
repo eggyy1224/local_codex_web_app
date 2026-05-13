@@ -184,7 +184,7 @@ describe("Thread page integration", () => {
     expect(screen.getByTestId("timeline")).toBeInTheDocument();
   });
 
-  it("shows desktop thinking state while turn submission is in flight", async () => {
+  it("optimistically renders the user message + thinking pill while turn submission is in flight", async () => {
     vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
     let releaseTurnRequest: (() => void) | null = null;
     const turnRequestGate = new Promise<void>((resolve) => {
@@ -248,17 +248,34 @@ describe("Thread page integration", () => {
     fireEvent.change(screen.getByTestId("turn-input"), { target: { value: "run long request" } });
     fireEvent.click(screen.getByTestId("turn-submit"));
 
+    // While the POST is in flight: pill + placeholder show (no real turns
+    // yet) AND the user's text is already rendered optimistically so the
+    // screen isn't blank during a slow request.
     await waitFor(() => {
       expect(screen.getByTestId("desktop-thinking-pill")).toHaveTextContent("Preparing request");
       expect(screen.getByTestId("desktop-thinking-placeholder")).toBeInTheDocument();
       expect(screen.getByTestId("turn-submit")).toBeDisabled();
+      expect(
+        screen.getByText("run long request", { selector: ".cdx-turn-body" }),
+      ).toBeInTheDocument();
     });
 
     releaseTurnRequest?.();
 
+    // After POST returns: `submitting` flips false so the "Preparing request"
+    // pill drops, and the desktop-thinking-placeholder hides because the
+    // optimistic turn is excluded from the placeholder's "no real turns"
+    // guard. The optimistic user bubble stays until the matching SSE
+    // user_message arrives (not fired in this test — that's a separate path).
     await waitFor(() => {
-      expect(screen.queryByTestId("desktop-thinking-pill")).not.toBeInTheDocument();
+      const pill = screen.queryByTestId("desktop-thinking-pill");
+      if (pill) {
+        expect(pill).not.toHaveTextContent("Preparing request");
+      }
       expect(screen.queryByTestId("desktop-thinking-placeholder")).not.toBeInTheDocument();
+      expect(
+        screen.getByText("run long request", { selector: ".cdx-turn-body" }),
+      ).toBeInTheDocument();
     });
   });
 
@@ -3743,7 +3760,7 @@ describe("Thread page integration", () => {
     expect(screen.getByRole("button", { name: "Implement this plan" })).toBeInTheDocument();
   });
 
-  it("desktop shows plan-ready CTA from live turn/plan/updated event", async () => {
+  it("desktop renders turn/plan/updated as a Codex tasks progress card (not the Plan ready CTA)", async () => {
     vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
     searchParamsValue = new URLSearchParams("mode=plan");
 
@@ -3819,8 +3836,15 @@ describe("Thread page integration", () => {
       },
     });
 
-    await screen.findByText("Plan ready");
-    expect(screen.getByText(/Evaluate scope/, { selector: ".cdx-turn-body--plan" })).toBeInTheDocument();
+    // turn/plan/updated is Codex's in-flight progress checklist, NOT a
+    // proposed plan. It must render as the neutral "Codex tasks" card and
+    // must not show the "Implement this plan" CTA — clicking that used to
+    // steer the conversation with already-completed task content.
+    const progressCard = await screen.findByTestId("turn-progress-card");
+    expect(within(progressCard).getByText("Codex tasks")).toBeInTheDocument();
+    expect(within(progressCard).getByText(/Evaluate scope/)).toBeInTheDocument();
+    expect(screen.queryByText("Plan ready")).not.toBeInTheDocument();
+    expect(screen.queryByText("Implement this plan")).not.toBeInTheDocument();
   });
 
   it("mobile proposed plan CTA opens sheet and confirms implement", async () => {

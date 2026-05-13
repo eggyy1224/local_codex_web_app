@@ -118,10 +118,12 @@ export default function MobileMessageStream({
         const fallbackAssistant =
           segments.length === 0 && turn.assistantText ? turn.assistantText : null;
 
+        const isPending = turn.turnId.startsWith("pending-");
         return (
           <article
             key={turn.turnId}
-            className={`cdx-mobile-turn ${turn.isStreaming ? "is-streaming" : ""}`}
+            className={`cdx-mobile-turn ${turn.isStreaming ? "is-streaming" : ""} ${isPending ? "is-pending" : ""}`}
+            data-testid={isPending ? "mobile-pending-turn" : undefined}
           >
             {fallbackUser ? (
               <section className="cdx-mobile-msg cdx-mobile-msg--user">
@@ -228,20 +230,26 @@ export default function MobileMessageStream({
 
             {segments.every((s) => s.kind === "user") && !fallbackAssistant ? (
               <p className="cdx-helper">
-                {turn.isStreaming ? "Codex is responding..." : "Waiting for response..."}
+                {isPending
+                  ? "Sending…"
+                  : turn.isStreaming
+                    ? "Codex is responding..."
+                    : "Waiting for response..."}
               </p>
             ) : null}
 
-            {renderTurnActions ? renderTurnActions(turn.turnId) : null}
+            {!isPending && renderTurnActions ? renderTurnActions(turn.turnId) : null}
 
-            <button
-              type="button"
-              className="cdx-mobile-inline-btn cdx-mobile-detail-btn"
-              data-testid={`mobile-message-details-open-${turn.turnId}`}
-              onClick={() => onOpenMessageDetails(turn.turnId)}
-            >
-              Message details · {statusLabel(turn.status)} · {formatTimestamp(turn.startedAt)}
-            </button>
+            {!isPending ? (
+              <button
+                type="button"
+                className="cdx-mobile-inline-btn cdx-mobile-detail-btn"
+                data-testid={`mobile-message-details-open-${turn.turnId}`}
+                onClick={() => onOpenMessageDetails(turn.turnId)}
+              >
+                Message details · {statusLabel(turn.status)} · {formatTimestamp(turn.startedAt)}
+              </button>
+            ) : null}
           </article>
         );
       })}

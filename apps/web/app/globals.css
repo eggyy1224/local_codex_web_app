@@ -940,6 +940,35 @@ textarea {
   background: rgba(23, 34, 52, 0.58);
 }
 
+/* Codex tasks (turn/plan/updated progress checklist). Distinct from the
+ * blue plan-ready CTA — this is informational, not actionable. Uses a
+ * muted neutral palette so users don't reach for a non-existent button. */
+.cdx-turn-progress-card {
+  border-color: rgba(255, 255, 255, 0.12);
+  background: rgba(28, 28, 32, 0.6);
+}
+
+.cdx-turn-progress-card .cdx-turn-body--plan {
+  border-color: rgba(255, 255, 255, 0.1);
+  background: rgba(18, 18, 22, 0.65);
+}
+
+.cdx-turn-progress-card .cdx-message-role {
+  color: rgba(255, 255, 255, 0.66);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+/* Optimistic pending turn (between submit and SSE confirmation). */
+.cdx-mobile-turn.is-pending {
+  opacity: 0.62;
+}
+
+.cdx-mobile-turn.is-pending .cdx-mobile-msg--user {
+  outline: 1px dashed rgba(255, 255, 255, 0.12);
+}
+
 .cdx-turn-body--plan {
   margin-top: 2px;
   padding: 10px 11px;

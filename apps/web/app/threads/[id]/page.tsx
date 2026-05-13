@@ -53,6 +53,7 @@ import {
   statusLabel,
   timelineItemFromGatewayEvent,
   truncateText,
+  type ConversationTurn,
 } from "../../lib/thread-logic";
 import {
   applySlashSuggestion,
@@ -331,6 +332,14 @@ export default function ThreadPage({ params }: Props) {
   const [permissionMode, setPermissionMode] = useState<TurnPermissionMode>("local");
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  // Optimistic in-flight turn: from the moment the user hits send until the
+  // server's turn/started + user_message events arrive over SSE. Without this
+  // the mobile UI sat blank for 0.5–3s with no feedback.
+  const [pendingNewTurn, setPendingNewTurn] = useState<{
+    id: string;
+    userText: string;
+    startedAt: string;
+  } | null>(null);
   const [pendingApprovals, setPendingApprovals] = useState<Record<string, PendingApprovalCard>>({});
   const [pendingInteractions, setPendingInteractions] = useState<
     Record<string, PendingInteractionCard>
@@ -577,6 +586,7 @@ export default function ThreadPage({ params }: Props) {
     setControlError(null);
     setSubmitError(null);
     setSubmitting(false);
+    setPendingNewTurn(null);
     setDesktopDockTab("questions");
     setDesktopQuestionDrafts({});
     setDismissedPlanReadyByTurn({});
@@ -1082,20 +1092,18 @@ export default function ThreadPage({ params }: Props) {
     [pendingInteractions],
   );
   const planReadyByTurnId = useMemo(() => {
-    const planUpdatedByTurnId = new Map<string, string>();
-    for (const item of allTimelineItems) {
-      if (item.rawType !== "turn/plan/updated" || !item.turnId || !item.text) {
-        continue;
-      }
-      planUpdatedByTurnId.set(item.turnId, item.text);
-    }
-
+    // ONLY a real <proposed_plan> tag (in the assistant message or thinking)
+    // means "I'm proposing a plan, please approve to implement". The
+    // turn/plan/updated event is Codex's own in-flight todo tracking — it
+    // belongs in turnProgressByTurnId, NOT here. Treating progress as a
+    // proposal means clicking "Implement this plan" steers the conversation
+    // with "Implement this plan: [completed] step1, [inProgress] step2 …"
+    // which asks Codex to redo work it's currently doing.
     const result: Record<string, string> = {};
     for (const turn of allConversationTurns) {
       const plan =
         proposedPlanFromText(turn.assistantText) ??
         proposedPlanFromText(turn.thinkingText) ??
-        planUpdatedByTurnId.get(turn.turnId) ??
         null;
       if (!plan) {
         continue;
@@ -1103,34 +1111,114 @@ export default function ThreadPage({ params }: Props) {
       result[turn.turnId] = plan;
     }
     return result;
-  }, [allConversationTurns, allTimelineItems]);
+  }, [allConversationTurns]);
+
+  // Per-turn in-flight task checklist (latest snapshot of turn/plan/updated).
+  // Rendered as a non-actionable progress box — distinct from a Plan-ready
+  // CTA. Updated live as Codex marks items completed.
+  const turnProgressByTurnId = useMemo(() => {
+    const result: Record<string, string> = {};
+    for (const item of allTimelineItems) {
+      if (item.rawType !== "turn/plan/updated" || !item.turnId || !item.text) {
+        continue;
+      }
+      // Latest update wins (allTimelineItems is ts-sorted).
+      result[item.turnId] = item.text;
+    }
+    return result;
+  }, [allTimelineItems]);
   const visibleConversationTurns = useMemo(() => {
     const latestTurns = showAllTurns ? allConversationTurns : allConversationTurns.slice(-120);
-    if (showAllTurns) {
-      return latestTurns;
-    }
+    const base = showAllTurns
+      ? latestTurns
+      : [
+          ...allConversationTurns.filter(
+            (turn) =>
+              Boolean(planReadyByTurnId[turn.turnId]) &&
+              !dismissedPlanReadyByTurn[turn.turnId] &&
+              !latestTurns.some((candidate) => candidate.turnId === turn.turnId),
+          ),
+          ...latestTurns,
+        ];
 
-    const pinnedTurns = allConversationTurns.filter(
-      (turn) =>
-        Boolean(planReadyByTurnId[turn.turnId]) &&
-        !dismissedPlanReadyByTurn[turn.turnId] &&
-        !latestTurns.some((candidate) => candidate.turnId === turn.turnId),
+    if (!pendingNewTurn) {
+      return base;
+    }
+    // Drop the optimistic bubble once the gateway's user_message item lands
+    // — the real turn now carries the same text and we don't want a duplicate.
+    const pendingMatchesReal = base.some(
+      (turn) => turn.isStreaming && turn.userText === pendingNewTurn.userText,
     );
-    return [...pinnedTurns, ...latestTurns];
-  }, [allConversationTurns, dismissedPlanReadyByTurn, planReadyByTurnId, showAllTurns]);
+    if (pendingMatchesReal) {
+      return base;
+    }
+    const optimisticTurn: ConversationTurn = {
+      turnId: pendingNewTurn.id,
+      startedAt: pendingNewTurn.startedAt,
+      completedAt: null,
+      status: "inProgress",
+      isStreaming: true,
+      userText: pendingNewTurn.userText,
+      assistantText: null,
+      thinkingText: null,
+      toolCalls: [],
+      toolResults: [],
+      details: [],
+      segments: [
+        {
+          kind: "user",
+          ts: pendingNewTurn.startedAt,
+          text: pendingNewTurn.userText,
+          isSteer: false,
+        },
+      ],
+    };
+    return [...base, optimisticTurn];
+  }, [allConversationTurns, dismissedPlanReadyByTurn, pendingNewTurn, planReadyByTurnId, showAllTurns]);
+
+  // Clear the optimistic turn as soon as a real SSE user_message with the
+  // same text arrives for this thread.
+  useEffect(() => {
+    if (!pendingNewTurn) return;
+    const matched = allTimelineItems.some(
+      (item) =>
+        item.type === "userMessage" &&
+        item.text === pendingNewTurn.userText &&
+        item.ts > pendingNewTurn.startedAt,
+    );
+    if (matched) {
+      setPendingNewTurn(null);
+    }
+  }, [allTimelineItems, pendingNewTurn]);
+
+  // Defensive timeout — if the SSE event never arrives (network, gateway
+  // hiccup), clear after 30s so the bubble doesn't ghost.
+  useEffect(() => {
+    if (!pendingNewTurn) return;
+    const handle = setTimeout(() => {
+      setPendingNewTurn((prev) => (prev?.id === pendingNewTurn.id ? null : prev));
+    }, 30000);
+    return () => clearTimeout(handle);
+  }, [pendingNewTurn]);
   const hiddenTimelineCount = Math.max(0, allConversationTurns.length - visibleConversationTurns.length);
   const pendingActionCount = pendingApprovalList.length + pendingInteractionList.length;
   const latestStreamingTurn = useMemo(() => {
     for (let index = visibleConversationTurns.length - 1; index >= 0; index -= 1) {
       const candidate = visibleConversationTurns[index];
-      if (candidate?.isStreaming) {
+      // The optimistic pending turn flags itself as streaming so the bubble
+      // renders, but it isn't a real running turn — exclude it so steer /
+      // interrupt / Stop button only fire against real SSE-confirmed turns.
+      if (candidate?.isStreaming && !candidate.turnId.startsWith("pending-")) {
         return candidate;
       }
     }
     return null;
   }, [visibleConversationTurns]);
   const streamingTurnCount = useMemo(
-    () => visibleConversationTurns.filter((turn) => turn.isStreaming).length,
+    () =>
+      visibleConversationTurns.filter(
+        (turn) => turn.isStreaming && !turn.turnId.startsWith("pending-"),
+      ).length,
     [visibleConversationTurns],
   );
   const isThinkingActive = submitting || streamingTurnCount > 0;
@@ -1621,6 +1709,14 @@ export default function ThreadPage({ params }: Props) {
       const requestThreadId = threadId;
       setSubmitting(true);
       setSubmitError(null);
+      // Optimistic: render the user bubble + "Codex is working…" indicator
+      // synchronously, without waiting for the POST round-trip and SSE.
+      const pendingId = `pending-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      setPendingNewTurn({
+        id: pendingId,
+        userText: text,
+        startedAt: new Date().toISOString(),
+      });
 
       try {
         const modeForTurn = modeOverride ?? collaborationMode;
@@ -1683,6 +1779,9 @@ export default function ThreadPage({ params }: Props) {
         if (activeThreadIdRef.current === requestThreadId) {
           setSubmitError(submitErr instanceof Error ? submitErr.message : "submit failed");
         }
+        // On submit failure, drop the optimistic bubble — otherwise it would
+        // sit there forever pretending the turn is in flight.
+        setPendingNewTurn((prev) => (prev?.id === pendingId ? null : prev));
         return false;
       } finally {
         if (activeThreadIdRef.current === requestThreadId) {
@@ -2044,38 +2143,56 @@ export default function ThreadPage({ params }: Props) {
             onOpenMessageDetails={openMessageDetails}
             renderTurnActions={(turnId) => {
               const planText = planReadyByTurnId[turnId];
-              if (!planText || dismissedPlanReadyByTurn[turnId]) {
-                return null;
-              }
+              const progressText = turnProgressByTurnId[turnId];
+              const showPlan = planText && !dismissedPlanReadyByTurn[turnId];
               return (
-                <section className="cdx-message cdx-message--detail cdx-plan-ready-card">
-                  <div className="cdx-message-meta">
-                    <strong className="cdx-message-role">Plan ready</strong>
-                  </div>
-                  <pre className="cdx-turn-body cdx-turn-body--plan">{truncateText(planText, 4000)}</pre>
-                  <div className="cdx-inline-actions">
-                    <button
-                      type="button"
-                      className="cdx-toolbar-btn cdx-toolbar-btn--positive"
-                      onClick={() => openImplementDialog(turnId, planText)}
+                <>
+                  {progressText ? (
+                    <section
+                      className="cdx-message cdx-message--detail cdx-turn-progress-card"
+                      data-testid="turn-progress-card"
                     >
-                      Implement this plan
-                    </button>
-                    <button
-                      type="button"
-                      className="cdx-toolbar-btn"
-                      onClick={() => keepPlanning(turnId)}
-                    >
-                      Keep planning
-                    </button>
-                  </div>
-                </section>
+                      <div className="cdx-message-meta">
+                        <strong className="cdx-message-role">Codex tasks</strong>
+                      </div>
+                      <pre className="cdx-turn-body cdx-turn-body--plan">
+                        {truncateText(progressText, 4000)}
+                      </pre>
+                    </section>
+                  ) : null}
+                  {showPlan ? (
+                    <section className="cdx-message cdx-message--detail cdx-plan-ready-card">
+                      <div className="cdx-message-meta">
+                        <strong className="cdx-message-role">Plan ready</strong>
+                      </div>
+                      <pre className="cdx-turn-body cdx-turn-body--plan">
+                        {truncateText(planText, 4000)}
+                      </pre>
+                      <div className="cdx-inline-actions">
+                        <button
+                          type="button"
+                          className="cdx-toolbar-btn cdx-toolbar-btn--positive"
+                          onClick={() => openImplementDialog(turnId, planText)}
+                        >
+                          Implement this plan
+                        </button>
+                        <button
+                          type="button"
+                          className="cdx-toolbar-btn"
+                          onClick={() => keepPlanning(turnId)}
+                        >
+                          Keep planning
+                        </button>
+                      </div>
+                    </section>
+                  ) : null}
+                </>
               );
             }}
           />
         </main>
 
-        {runningTurnId ? (
+        {runningTurnId || pendingNewTurn || submitting ? (
           <div
             className="cdx-mobile-running-indicator"
             data-testid="mobile-running-indicator"
@@ -2459,7 +2576,10 @@ export default function ThreadPage({ params }: Props) {
             ref={timelineRef}
             onScroll={handleTimelineScroll}
           >
-            {isThinkingActive && visibleConversationTurns.length === 0 ? (
+            {isThinkingActive &&
+            visibleConversationTurns.filter(
+              (turn) => !turn.turnId.startsWith("pending-"),
+            ).length === 0 ? (
               <section
                 className="cdx-thinking-placeholder cdx-thinking-placeholder--global"
                 aria-live="polite"
@@ -2623,6 +2743,19 @@ export default function ThreadPage({ params }: Props) {
                           })}
                         </div>
                       </details>
+                    ) : null}
+                    {turnProgressByTurnId[turn.turnId] ? (
+                      <section
+                        className="cdx-message cdx-message--detail cdx-turn-progress-card"
+                        data-testid="turn-progress-card"
+                      >
+                        <div className="cdx-message-meta">
+                          <strong className="cdx-message-role">Codex tasks</strong>
+                        </div>
+                        <pre className="cdx-turn-body cdx-turn-body--plan">
+                          {truncateText(turnProgressByTurnId[turn.turnId], 4000)}
+                        </pre>
+                      </section>
                     ) : null}
                     {planReadyByTurnId[turn.turnId] && !dismissedPlanReadyByTurn[turn.turnId] ? (
                       <section className="cdx-message cdx-message--detail cdx-plan-ready-card">
