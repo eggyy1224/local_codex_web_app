@@ -354,6 +354,35 @@ describe("gateway integration routes", () => {
     }
   });
 
+  it("POST /api/threads/:id/turns maps auto permission mode to auto reviewer", async () => {
+    const ctx = await createTestContext();
+    try {
+      ctx.stub.handlers.set("turn/start", (params) => {
+        expect(params).toMatchObject({
+          threadId: "thread-1",
+          approvalPolicy: "on-request",
+          approvalsReviewer: "auto_review",
+          sandboxPolicy: { type: "workspaceWrite", networkAccess: false },
+        });
+        return { turn: { id: "turn-auto" } };
+      });
+
+      const res = await ctx.app.inject({
+        method: "POST",
+        url: "/api/threads/thread-1/turns",
+        payload: {
+          input: [{ type: "text", text: "run with auto review" }],
+          options: { permissionMode: "auto" },
+        },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({ turnId: "turn-auto" });
+    } finally {
+      await ctx.close();
+    }
+  });
+
   it("POST /api/threads/:id/turns auto-injects skill/mention items from $tokens", async () => {
     const ctx = await createTestContext();
     try {

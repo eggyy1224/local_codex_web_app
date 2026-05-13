@@ -123,7 +123,7 @@ export type TurnStartOptions = {
   collaborationMode?: "plan" | "default";
 };
 
-export type TurnPermissionMode = "local" | "full-access";
+export type TurnPermissionMode = "local" | "auto" | "full-access";
 
 export type ModelReasoningEffortOption = {
   effort: string;

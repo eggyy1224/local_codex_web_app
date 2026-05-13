@@ -690,7 +690,7 @@ export default function ThreadPage({ params }: Props) {
 
   useEffect(() => {
     const saved = window.localStorage.getItem(PERMISSION_MODE_STORAGE_KEY);
-    if (saved === "local" || saved === "full-access") {
+    if (saved === "local" || saved === "auto" || saved === "full-access") {
       setPermissionMode(saved);
     }
     const savedModel = window.localStorage.getItem(MODEL_STORAGE_KEY);
@@ -3164,12 +3164,13 @@ export default function ThreadPage({ params }: Props) {
                     value={permissionMode}
                     onChange={(event) => {
                       const next = event.target.value;
-                      if (next === "local" || next === "full-access") {
+                      if (next === "local" || next === "auto" || next === "full-access") {
                         setPermissionMode(next);
                       }
                     }}
                   >
                     <option value="local">Local (on-request)</option>
+                    <option value="auto">Auto review</option>
                     <option value="full-access">Full access (never)</option>
                   </select>
                 </label>

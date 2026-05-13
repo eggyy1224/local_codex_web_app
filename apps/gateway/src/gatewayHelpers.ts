@@ -67,6 +67,16 @@ export function permissionModeToTurnStartParams(
       },
     };
   }
+  if (mode === "auto") {
+    return {
+      approvalPolicy: "on-request",
+      approvalsReviewer: "auto_review",
+      sandboxPolicy: {
+        type: "workspaceWrite",
+        networkAccess: false,
+      },
+    };
+  }
   return {};
 }
 

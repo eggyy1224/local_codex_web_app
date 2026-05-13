@@ -26,10 +26,16 @@ describe("statusFromRaw", () => {
 });
 
 describe("permissionModeToTurnStartParams", () => {
-  it("maps full-access and local modes", () => {
+  it("maps full-access, auto, and local modes", () => {
     expect(permissionModeToTurnStartParams("full-access")).toEqual({
       approvalPolicy: "never",
       sandboxPolicy: { type: "dangerFullAccess" },
+    });
+
+    expect(permissionModeToTurnStartParams("auto")).toEqual({
+      approvalPolicy: "on-request",
+      approvalsReviewer: "auto_review",
+      sandboxPolicy: { type: "workspaceWrite", networkAccess: false },
     });
 
     expect(permissionModeToTurnStartParams("local")).toEqual({
