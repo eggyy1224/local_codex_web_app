@@ -72,6 +72,11 @@ import MobileThreadSwitcherOverlay, {
   type MobileThreadSwitcherGroup,
 } from "./MobileThreadSwitcherOverlay";
 import TerminalDock from "./TerminalDock";
+import InteractionQuestionForm, {
+  answersForInteractionQuestions,
+  updateInteractionQuestionDrafts,
+  type InteractionQuestionDrafts,
+} from "./InteractionQuestionForm";
 
 type ConnectionState = "connecting" | "connected" | "reconnecting" | "lagging";
 
@@ -379,9 +384,9 @@ export default function ThreadPage({ params }: Props) {
     Record<string, boolean>
   >({});
   const [desktopDockTab, setDesktopDockTab] = useState<"questions" | "approvals">("questions");
-  const [desktopQuestionDrafts, setDesktopQuestionDrafts] = useState<
-    Record<string, Record<string, { selected: string | null; other: string; freeform: string }>>
-  >({});
+  const [desktopQuestionDrafts, setDesktopQuestionDrafts] = useState<InteractionQuestionDrafts>(
+    {},
+  );
   const [implementDialogOpen, setImplementDialogOpen] = useState(false);
   const [implementDraft, setImplementDraft] = useState("");
   const [implementTargetTurnId, setImplementTargetTurnId] = useState<string | null>(null);
@@ -1346,24 +1351,11 @@ export default function ThreadPage({ params }: Props) {
     (
       interactionId: string,
       questionId: string,
-      updater: (prev: { selected: string | null; other: string; freeform: string }) => {
-        selected: string | null;
-        other: string;
-        freeform: string;
-      },
+      updater: Parameters<typeof updateInteractionQuestionDrafts>[3],
     ) => {
-      setDesktopQuestionDrafts((prev) => {
-        const interaction = prev[interactionId] ?? {};
-        const current = interaction[questionId] ?? { selected: null, other: "", freeform: "" };
-        const nextQuestion = updater(current);
-        return {
-          ...prev,
-          [interactionId]: {
-            ...interaction,
-            [questionId]: nextQuestion,
-          },
-        };
-      });
+      setDesktopQuestionDrafts((prev) =>
+        updateInteractionQuestionDrafts(prev, interactionId, questionId, updater),
+      );
     },
     [],
   );
@@ -1372,27 +1364,11 @@ export default function ThreadPage({ params }: Props) {
     (
       interaction: PendingInteractionCard,
     ): InteractionRespondRequest["answers"] | null => {
-      const draft = desktopQuestionDrafts[interaction.interactionId] ?? {};
-      const result: InteractionRespondRequest["answers"] = {};
-      for (const question of interaction.questions) {
-        const questionDraft = draft[question.id] ?? { selected: null, other: "", freeform: "" };
-        const answers: string[] = [];
-        if (question.options && question.options.length > 0) {
-          if (questionDraft.selected && questionDraft.selected.trim().length > 0) {
-            answers.push(questionDraft.selected.trim());
-          }
-        } else if (questionDraft.freeform.trim().length > 0) {
-          answers.push(questionDraft.freeform.trim());
-        }
-        if (question.isOther && questionDraft.other.trim().length > 0) {
-          answers.push(questionDraft.other.trim());
-        }
-        if (answers.length === 0) {
-          return null;
-        }
-        result[question.id] = { answers };
-      }
-      return result;
+      return answersForInteractionQuestions(
+        desktopQuestionDrafts,
+        interaction.interactionId,
+        interaction.questions,
+      );
     },
     [desktopQuestionDrafts],
   );
@@ -2827,76 +2803,13 @@ export default function ThreadPage({ params }: Props) {
                       <strong>Questions Required</strong>
                       <span className="cdx-status is-pending">pending</span>
                     </div>
-                    <div className="cdx-mobile-sheet-form">
-                      {activeInteraction.questions.map((question) => {
-                        const current =
-                          desktopQuestionDrafts[activeInteraction.interactionId]?.[question.id] ?? {
-                            selected: null,
-                            other: "",
-                            freeform: "",
-                          };
-                        return (
-                          <div key={`${activeInteraction.interactionId}-${question.id}`} className="cdx-mobile-sheet-field">
-                            <span>{question.header}</span>
-                            <p className="cdx-helper">{question.question}</p>
-                            {question.options && question.options.length > 0 ? (
-                              <div className="cdx-mobile-sheet-block">
-                                {question.options.map((option) => (
-                                  <label key={option.label} className="cdx-option-row">
-                                    <input
-                                      type="radio"
-                                      name={`desktop-question-${activeInteraction.interactionId}-${question.id}`}
-                                      aria-label={`${option.label} - ${option.description}`}
-                                      checked={current.selected === option.label}
-                                      onChange={(event) => {
-                                        updateDesktopQuestionDraft(
-                                          activeInteraction.interactionId,
-                                          question.id,
-                                          (prev) => ({
-                                            ...prev,
-                                            selected: event.target.checked ? option.label : null,
-                                          }),
-                                        );
-                                      }}
-                                    />
-                                    <span className="cdx-option-text">
-                                      <span className="cdx-option-title">{option.label}</span>
-                                      <span className="cdx-option-desc">{option.description}</span>
-                                    </span>
-                                  </label>
-                                ))}
-                              </div>
-                            ) : (
-                              <input
-                                type={question.isSecret ? "password" : "text"}
-                                value={current.freeform}
-                                onChange={(event) => {
-                                  updateDesktopQuestionDraft(
-                                    activeInteraction.interactionId,
-                                    question.id,
-                                    (prev) => ({ ...prev, freeform: event.target.value }),
-                                  );
-                                }}
-                              />
-                            )}
-                            {question.isOther ? (
-                              <input
-                                type={question.isSecret ? "password" : "text"}
-                                value={current.other}
-                                placeholder="Other"
-                                onChange={(event) => {
-                                  updateDesktopQuestionDraft(
-                                    activeInteraction.interactionId,
-                                    question.id,
-                                    (prev) => ({ ...prev, other: event.target.value }),
-                                  );
-                                }}
-                              />
-                            ) : null}
-                          </div>
-                        );
-                      })}
-                    </div>
+                    <InteractionQuestionForm
+                      interactionId={activeInteraction.interactionId}
+                      namePrefix="desktop"
+                      questions={activeInteraction.questions}
+                      drafts={desktopQuestionDrafts}
+                      onDraftChange={updateDesktopQuestionDraft}
+                    />
                     <button
                       type="button"
                       data-testid="interaction-submit"

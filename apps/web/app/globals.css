@@ -2003,17 +2003,20 @@ textarea {
   padding: 12px;
 }
 
-.cdx-mobile-sheet-block {
+.cdx-mobile-sheet-block,
+.cdx-interaction-question-block {
   display: grid;
   gap: 8px;
 }
 
-.cdx-mobile-sheet-form {
+.cdx-mobile-sheet-form,
+.cdx-interaction-question-form {
   display: grid;
   gap: 10px;
 }
 
-.cdx-mobile-sheet-field {
+.cdx-mobile-sheet-field,
+.cdx-interaction-question-field {
   display: grid;
   gap: 6px;
   font-size: 12px;
@@ -2072,6 +2075,7 @@ textarea {
 }
 
 .cdx-mobile-sheet-field input:not([type="checkbox"]):not([type="radio"]),
+.cdx-interaction-question-field input:not([type="checkbox"]):not([type="radio"]),
 .cdx-implement-dialog textarea,
 .cdx-mobile-implement-sheet textarea {
   width: 100%;
