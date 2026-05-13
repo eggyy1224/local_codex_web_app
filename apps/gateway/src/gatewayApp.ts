@@ -137,6 +137,7 @@ export type GatewayAppConfig = {
   bodyLimit?: number;
   websocketMaxPayload?: number;
   startAppServerOnBoot?: boolean;
+  terminalEnabled?: boolean;
 };
 
 export type GatewayBootstrapConfig = {
@@ -151,6 +152,14 @@ export type GatewayAppDeps = {
   threadContextResolver?: ThreadContextResolver;
   terminalManager?: TerminalManager;
 };
+
+function envFlagEnabled(value: string | undefined): boolean {
+  if (value === undefined) {
+    return true;
+  }
+  const normalized = value.trim().toLowerCase();
+  return normalized !== "0" && normalized !== "false" && normalized !== "off";
+}
 
 export function createGatewayBootstrapConfigFromEnv(
   env: NodeJS.ProcessEnv = process.env,
@@ -172,6 +181,7 @@ export function createGatewayBootstrapConfigFromEnv(
       bodyLimit: 1024 * 1024,
       websocketMaxPayload: 1024 * 128,
       startAppServerOnBoot: true,
+      terminalEnabled: envFlagEnabled(env.TERMINAL_DOCK_ENABLED),
     },
   };
 }
@@ -207,6 +217,7 @@ export async function createGatewayApp(
 
   const appServer = deps.appServer;
   const db = deps.db ?? gatewayDb;
+  const terminalEnabled = config.terminalEnabled ?? true;
   const subscribers = new Map<string, Set<(event: GatewayEvent) => void>>();
   const activeTurnByThread = new Map<string, string>();
   const threadContextResolver =
@@ -216,12 +227,14 @@ export async function createGatewayApp(
       logger: app.log,
     });
   const terminalManager =
-    deps.terminalManager ??
-    new TerminalManager({
-      maxSessions: 5,
-      ttlMs: 30 * 60 * 1000,
-      logger: app.log,
-    });
+    terminalEnabled
+      ? deps.terminalManager ??
+        new TerminalManager({
+          maxSessions: 5,
+          ttlMs: 30 * 60 * 1000,
+          logger: app.log,
+        })
+      : null;
   const lastTurnInputByThread = new Map<
     string,
     {
@@ -751,6 +764,21 @@ function terminalError(message: string, code?: string): TerminalServerMessage {
     message,
     ...(code ? { code } : {}),
   };
+}
+
+function auditTerminalEvent(
+  action: string,
+  threadId: string | null,
+  metadata: Record<string, unknown>,
+): void {
+  db.insertAuditLog({
+    ts: new Date().toISOString(),
+    actor: "user",
+    action,
+    threadId,
+    turnId: null,
+    metadata,
+  });
 }
 
 function parseTerminalClientMessage(raw: unknown): TerminalClientMessage | null {
@@ -1381,13 +1409,58 @@ app.get("/api/terminal/ws", { websocket: true }, (ws, request) => {
     ws.send(JSON.stringify(message));
   };
 
+  const sendAndClose = (
+    message: TerminalServerMessage,
+    closeCode: number,
+    closeReason: string,
+  ): void => {
+    // Handler may run before the WebSocket upgrade has fully completed on the
+    // client side (e.g. fastify's injectWS test transport). Defer send until
+    // the next tick so the client can attach listeners, and defer close again
+    // so the framed message is flushed before the close handshake begins.
+    setImmediate(() => {
+      send(message);
+      setImmediate(() => {
+        ws.close(closeCode, closeReason);
+      });
+    });
+  };
+
   if (!isAllowedWsOrigin(origin)) {
-    send(terminalError("origin not allowed", "TERMINAL_WS_ORIGIN_DENIED"));
-    ws.close(1008, "origin not allowed");
+    auditTerminalEvent("terminal.origin_denied", null, { origin: origin ?? null });
+    sendAndClose(
+      terminalError("origin not allowed", "TERMINAL_WS_ORIGIN_DENIED"),
+      1008,
+      "origin not allowed",
+    );
+    return;
+  }
+
+  if (!terminalEnabled || !terminalManager) {
+    auditTerminalEvent("terminal.disabled", null, { origin: origin ?? null });
+    sendAndClose(
+      terminalError("terminal dock is disabled", "TERMINAL_WS_DISABLED"),
+      1008,
+      "terminal disabled",
+    );
     return;
   }
 
   const client = { send };
+  let openedThreadId: string | null = null;
+  let openedMetadata: Record<string, unknown> | null = null;
+  let closeAudited = false;
+
+  const auditClose = (reason: string): void => {
+    if (!openedThreadId || closeAudited) {
+      return;
+    }
+    closeAudited = true;
+    auditTerminalEvent("terminal.closed", openedThreadId, {
+      ...(openedMetadata ?? {}),
+      reason,
+    });
+  };
 
   ws.on(
     "message",
@@ -1419,17 +1492,31 @@ app.get("/api/terminal/ws", { websocket: true }, (ws, request) => {
         }
         void (async () => {
           try {
+            auditClose("reopened");
             const projected = db.getProjectedThread(message.threadId);
             const context = await threadContextResolver.resolveThreadContext(
               message.threadId,
               projected?.projectKey,
             );
             terminalManager.openClient(client, message.threadId, context);
+            openedThreadId = message.threadId;
+            openedMetadata = {
+              origin: origin ?? null,
+              cwd: context.resolvedCwd,
+              source: context.source,
+              isFallback: context.isFallback,
+            };
+            closeAudited = false;
+            auditTerminalEvent("terminal.opened", message.threadId, openedMetadata);
             if (!context.isFallback && context.cwd) {
               db.updateThreadProjectKey(message.threadId, normalizeProjectKey(context.cwd));
               threadContextResolver.invalidate(message.threadId);
             }
           } catch (error) {
+            auditTerminalEvent("terminal.open_failed", message.threadId, {
+              origin: origin ?? null,
+              error: error instanceof Error ? error.message : String(error),
+            });
             send(
               terminalError(
                 error instanceof Error ? error.message : "failed to open terminal",
@@ -1466,12 +1553,14 @@ app.get("/api/terminal/ws", { websocket: true }, (ws, request) => {
 
       if (message.type === "terminal/close") {
         terminalManager.closeClient(client);
+        auditClose("client_message");
       }
     },
   );
 
   ws.on("close", () => {
     terminalManager.onClientDisconnect(client);
+    auditClose("socket_closed");
   });
 });
 
@@ -2115,7 +2204,7 @@ app.post("/api/threads/:id/control", async (request): Promise<ThreadControlRespo
 });
 
 app.addHook("onClose", async () => {
-  terminalManager.destroy();
+  terminalManager?.destroy();
 });
   return app;
 }

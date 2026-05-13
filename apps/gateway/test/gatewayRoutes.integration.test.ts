@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import type { FuzzyFileSearchResponse } from "@lcwa/shared-types";
 import type { GatewayAppServerPort } from "../src/appServerPort.js";
 import { createGatewayDb } from "../src/db.js";
-import { createGatewayApp } from "../src/gatewayApp.js";
+import { createGatewayApp, type GatewayAppConfig, type GatewayAppDeps } from "../src/gatewayApp.js";
 
 class StubAppServer extends EventEmitter implements GatewayAppServerPort {
   isConnected = true;
@@ -37,7 +37,34 @@ class StubAppServer extends EventEmitter implements GatewayAppServerPort {
   }
 }
 
-async function createTestContext() {
+type InjectedWs = {
+  on(event: "message", listener: (data: Buffer) => void): void;
+  once(event: "message", listener: (data: Buffer) => void): void;
+  once(event: "error", listener: (error: Error) => void): void;
+  send(data: string): void;
+  terminate(): void;
+};
+
+async function readWsJson(ws: InjectedWs): Promise<unknown> {
+  return await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error("timed out waiting for websocket message"));
+    }, 1_000);
+    ws.once("message", (data) => {
+      clearTimeout(timer);
+      resolve(JSON.parse(data.toString()) as unknown);
+    });
+    ws.once("error", (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
+  });
+}
+
+async function createTestContext(options: {
+  appConfig?: Partial<GatewayAppConfig>;
+  deps?: Partial<Omit<GatewayAppDeps, "appServer" | "db">>;
+} = {}) {
   const tmpDir = mkdtempSync(path.join(os.tmpdir(), "lcwa-gateway-test-"));
   const db = createGatewayDb({ dbPath: path.join(tmpDir, "index.db") });
   const stub = new StubAppServer();
@@ -45,10 +72,12 @@ async function createTestContext() {
     {
       appServer: stub,
       db,
+      ...options.deps,
     },
     {
       corsAllowlist: ["http://127.0.0.1:3000"],
       startAppServerOnBoot: false,
+      ...options.appConfig,
     },
   );
 
@@ -1476,6 +1505,136 @@ describe("gateway integration routes", () => {
 
       expect(text).toContain("event: heartbeat");
       controller.abort();
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  it("terminal websocket can be disabled by feature flag and records an audit event", async () => {
+    const ctx = await createTestContext({ appConfig: { terminalEnabled: false } });
+    try {
+      await ctx.app.ready();
+      const ws = (await (
+        ctx.app as typeof ctx.app & {
+          injectWS: (
+            path: string,
+            upgradeContext?: { headers?: Record<string, string> },
+          ) => Promise<InjectedWs>;
+        }
+      ).injectWS("/api/terminal/ws", {
+        headers: { origin: "http://127.0.0.1:3000" },
+      })) as InjectedWs;
+
+      expect(await readWsJson(ws)).toEqual({
+        type: "terminal/error",
+        message: "terminal dock is disabled",
+        code: "TERMINAL_WS_DISABLED",
+      });
+      ws.terminate();
+
+      const rows = ctx.db.sqlite
+        .prepare("SELECT action, thread_id, metadata_json FROM audit_log ORDER BY id ASC")
+        .all() as Array<{ action: string; thread_id: string | null; metadata_json: string }>;
+      expect(rows).toEqual([
+        {
+          action: "terminal.disabled",
+          thread_id: null,
+          metadata_json: JSON.stringify({ origin: "http://127.0.0.1:3000" }),
+        },
+      ]);
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  it("terminal websocket audits open and close lifecycle", async () => {
+    const opened: Array<{ threadId: string }> = [];
+    const terminalManager = {
+      openClient(client: { send: (message: unknown) => void }, threadId: string) {
+        opened.push({ threadId });
+        client.send({ type: "terminal/ready", sessionId: "terminal-test", threadId });
+      },
+      closeClient() {
+        // no-op
+      },
+      onClientDisconnect() {
+        // no-op
+      },
+      writeInput() {
+        return true;
+      },
+      resize() {
+        return true;
+      },
+      setCwd() {
+        return true;
+      },
+      destroy() {
+        // no-op
+      },
+    } as unknown as NonNullable<GatewayAppDeps["terminalManager"]>;
+    const threadContextResolver = {
+      async resolveThreadContext(threadId: string) {
+        return {
+          threadId,
+          cwd: "/tmp/project-a",
+          resolvedCwd: "/tmp/project-a",
+          isFallback: false,
+          source: "projection" as const,
+        };
+      },
+      invalidate() {
+        // no-op
+      },
+    } as unknown as NonNullable<GatewayAppDeps["threadContextResolver"]>;
+    const ctx = await createTestContext({
+      deps: { terminalManager, threadContextResolver },
+    });
+    try {
+      await ctx.app.ready();
+      const ws = (await (
+        ctx.app as typeof ctx.app & {
+          injectWS: (
+            path: string,
+            upgradeContext?: { headers?: Record<string, string> },
+          ) => Promise<InjectedWs>;
+        }
+      ).injectWS("/api/terminal/ws", {
+        headers: { origin: "http://127.0.0.1:3000" },
+      })) as InjectedWs;
+
+      ws.send(JSON.stringify({ type: "terminal/open", threadId: "thread-terminal" }));
+      expect(await readWsJson(ws)).toEqual({
+        type: "terminal/ready",
+        sessionId: "terminal-test",
+        threadId: "thread-terminal",
+      });
+      expect(opened).toEqual([{ threadId: "thread-terminal" }]);
+
+      ws.send(JSON.stringify({ type: "terminal/close" }));
+      await new Promise((resolve) => setImmediate(resolve));
+      ws.terminate();
+
+      const rows = ctx.db.sqlite
+        .prepare("SELECT action, thread_id, metadata_json FROM audit_log ORDER BY id ASC")
+        .all() as Array<{ action: string; thread_id: string; metadata_json: string }>;
+      expect(rows.map((row) => ({ action: row.action, threadId: row.thread_id }))).toEqual([
+        { action: "terminal.opened", threadId: "thread-terminal" },
+        { action: "terminal.closed", threadId: "thread-terminal" },
+      ]);
+      expect(JSON.parse(rows[0]!.metadata_json)).toEqual({
+        origin: "http://127.0.0.1:3000",
+        cwd: "/tmp/project-a",
+        source: "projection",
+        isFallback: false,
+      });
+      expect(JSON.parse(rows[1]!.metadata_json)).toEqual({
+        origin: "http://127.0.0.1:3000",
+        cwd: "/tmp/project-a",
+        source: "projection",
+        isFallback: false,
+        reason: "client_message",
+      });
     } finally {
       await ctx.close();
     }
