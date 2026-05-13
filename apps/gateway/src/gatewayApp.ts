@@ -15,17 +15,27 @@ import type {
   InteractionType,
   CreateTurnRequest,
   CreateTurnResponse,
+  ForkThreadRequest,
+  ForkThreadResponse,
+  FuzzyFileMatch,
+  FuzzyFileSearchResponse,
   GatewayConfigResponse,
   GatewayConfigSnapshot,
   GatewayConfigValueWriteRequest,
   GatewayConfigValueWriteResponse,
   GatewayEvent,
   HealthResponse,
+  InterruptTurnRequest,
+  InterruptTurnResponse,
+  RollbackThreadRequest,
+  RollbackThreadResponse,
   ServiceTier,
   ModelOption,
   ModelsResponse,
   PendingApprovalsResponse,
   PendingInteractionsResponse,
+  SteerTurnRequest,
+  SteerTurnResponse,
   TerminalClientMessage,
   TerminalServerMessage,
   ThreadDetailResponse,
@@ -1854,6 +1864,190 @@ app.post("/api/config/value", async (request): Promise<GatewayConfigValueWriteRe
     filePath: pickString(result.filePath),
     version: pickString(result.version),
   };
+});
+
+app.post("/api/threads/:id/steer", async (request): Promise<SteerTurnResponse> => {
+  const params = request.params as { id: string };
+  const body = (request.body ?? {}) as SteerTurnRequest;
+
+  if (typeof body.expectedTurnId !== "string" || body.expectedTurnId.length === 0) {
+    const err = new Error("expectedTurnId required") as Error & { statusCode?: number };
+    err.statusCode = 400;
+    throw err;
+  }
+  if (!Array.isArray(body.input) || body.input.length === 0) {
+    const err = new Error("input is required") as Error & { statusCode?: number };
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const result = (await appServer.request("turn/steer", {
+    threadId: params.id,
+    expectedTurnId: body.expectedTurnId,
+    input: body.input,
+  })) as { turnId?: unknown };
+
+  const turnId = readString(result.turnId);
+  if (!turnId) {
+    const err = new Error("turn/steer response missing turnId") as Error & {
+      statusCode?: number;
+    };
+    err.statusCode = 502;
+    throw err;
+  }
+  return { turnId };
+});
+
+app.post(
+  "/api/threads/:id/interrupt",
+  async (request): Promise<InterruptTurnResponse> => {
+    const params = request.params as { id: string };
+    const body = (request.body ?? {}) as InterruptTurnRequest;
+
+    if (typeof body.turnId !== "string" || body.turnId.length === 0) {
+      const err = new Error("turnId required") as Error & { statusCode?: number };
+      err.statusCode = 400;
+      throw err;
+    }
+
+    await appServer.request("turn/interrupt", {
+      threadId: params.id,
+      turnId: body.turnId,
+    });
+
+    return { ok: true };
+  },
+);
+
+app.post("/api/threads/:id/fork", async (request): Promise<ForkThreadResponse> => {
+  const params = request.params as { id: string };
+  const body = (request.body ?? {}) as ForkThreadRequest;
+
+  const rpcParams: Record<string, unknown> = { threadId: params.id };
+  if (typeof body.model === "string") {
+    rpcParams.model = body.model;
+  }
+  if (body.serviceTier === "fast" || body.serviceTier === "flex" || body.serviceTier === null) {
+    rpcParams.serviceTier = body.serviceTier;
+  }
+  if (typeof body.approvalPolicy === "string") {
+    rpcParams.approvalPolicy = body.approvalPolicy;
+  }
+  if (typeof body.cwd === "string") {
+    rpcParams.cwd = body.cwd;
+  }
+
+  const result = (await appServer.request("thread/fork", rpcParams)) as {
+    thread?: { id?: unknown };
+  };
+  const threadId = readString(result.thread?.id);
+  if (!threadId) {
+    const err = new Error("thread/fork response missing thread.id") as Error & {
+      statusCode?: number;
+    };
+    err.statusCode = 502;
+    throw err;
+  }
+  return { threadId };
+});
+
+app.post(
+  "/api/threads/:id/rollback",
+  async (request): Promise<RollbackThreadResponse> => {
+    const params = request.params as { id: string };
+    const body = (request.body ?? {}) as RollbackThreadRequest;
+
+    if (
+      typeof body.numTurns !== "number" ||
+      !Number.isFinite(body.numTurns) ||
+      !Number.isInteger(body.numTurns) ||
+      body.numTurns < 1
+    ) {
+      const err = new Error("numTurns must be an integer >= 1") as Error & {
+        statusCode?: number;
+      };
+      err.statusCode = 400;
+      throw err;
+    }
+
+    const result = (await appServer.request("thread/rollback", {
+      threadId: params.id,
+      numTurns: body.numTurns,
+    })) as { thread?: { id?: unknown } };
+    const threadId = readString(result.thread?.id);
+    if (!threadId) {
+      const err = new Error("thread/rollback response missing thread.id") as Error & {
+        statusCode?: number;
+      };
+      err.statusCode = 502;
+      throw err;
+    }
+    return { threadId };
+  },
+);
+
+const FUZZY_FILE_SEARCH_LIMIT = 50;
+
+app.get("/api/files/search", async (request): Promise<FuzzyFileSearchResponse> => {
+  const query = request.query as { roots?: string; query?: string };
+  const roots = (query.roots ?? "")
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+  const queryString = typeof query.query === "string" ? query.query : "";
+
+  if (roots.length === 0) {
+    const err = new Error("roots is required") as Error & { statusCode?: number };
+    err.statusCode = 400;
+    throw err;
+  }
+  if (queryString.length === 0) {
+    const err = new Error("query is required") as Error & { statusCode?: number };
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const result = (await appServer.request("fuzzyFileSearch", {
+    roots,
+    query: queryString,
+  })) as { data?: unknown };
+
+  const raw = Array.isArray(result.data) ? result.data : [];
+  const data: FuzzyFileMatch[] = [];
+  for (const entry of raw) {
+    if (data.length >= FUZZY_FILE_SEARCH_LIMIT) {
+      break;
+    }
+    const record = asRecord(entry);
+    if (!record) {
+      continue;
+    }
+    const root = readString(record.root);
+    const filePath = readString(record.path);
+    const fileName = readString(record.file_name) ?? readString(record.fileName);
+    const matchType = readString(record.match_type) ?? readString(record.matchType);
+    const score = typeof record.score === "number" ? record.score : null;
+    const indicesRaw = Array.isArray(record.indices) ? record.indices : [];
+    if (!root || !filePath || !fileName || !matchType || score === null) {
+      continue;
+    }
+    const indices: number[] = [];
+    for (const idx of indicesRaw) {
+      if (typeof idx === "number" && Number.isFinite(idx)) {
+        indices.push(idx);
+      }
+    }
+    data.push({
+      root,
+      path: filePath,
+      fileName,
+      score,
+      matchType,
+      indices,
+    });
+  }
+
+  return { data };
 });
 
 app.post("/api/threads/:id/control", async (request): Promise<ThreadControlResponse> => {

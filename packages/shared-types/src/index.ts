@@ -318,6 +318,55 @@ export type ThreadControlResponse = {
   appliedToTurnId?: string;
 };
 
+export type SteerTurnRequest = {
+  expectedTurnId: string;
+  input: UserInputItem[];
+};
+
+export type SteerTurnResponse = {
+  turnId: string;
+};
+
+export type InterruptTurnRequest = {
+  turnId: string;
+};
+
+export type InterruptTurnResponse = {
+  ok: true;
+};
+
+export type ForkThreadRequest = {
+  model?: string;
+  serviceTier?: ServiceTier | null;
+  approvalPolicy?: string;
+  cwd?: string;
+};
+
+export type ForkThreadResponse = {
+  threadId: string;
+};
+
+export type RollbackThreadRequest = {
+  numTurns: number;
+};
+
+export type RollbackThreadResponse = {
+  threadId: string;
+};
+
+export type FuzzyFileMatch = {
+  root: string;
+  path: string;
+  fileName: string;
+  score: number;
+  matchType: string;
+  indices: number[];
+};
+
+export type FuzzyFileSearchResponse = {
+  data: FuzzyFileMatch[];
+};
+
 export type GatewayEvent = {
   seq: number;
   serverTs: string;

@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { EventEmitter } from "node:events";
 import { describe, expect, it } from "vitest";
+import type { FuzzyFileSearchResponse } from "@lcwa/shared-types";
 import type { GatewayAppServerPort } from "../src/appServerPort.js";
 import { createGatewayDb } from "../src/db.js";
 import { createGatewayApp } from "../src/gatewayApp.js";
@@ -1473,6 +1474,221 @@ describe("gateway integration routes", () => {
         method: "POST",
         url: "/api/config/value",
         payload: { value: "flex" },
+      });
+      expect(res.statusCode).toBe(400);
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  it("POST /api/threads/:id/steer forwards turn/steer params and returns turnId", async () => {
+    const ctx = await createTestContext();
+    try {
+      let captured: unknown = null;
+      ctx.stub.handlers.set("turn/steer", (params) => {
+        captured = params;
+        return { turnId: "turn-steered" };
+      });
+
+      const res = await ctx.app.inject({
+        method: "POST",
+        url: "/api/threads/thread-1/steer",
+        payload: {
+          expectedTurnId: "turn-existing",
+          input: [{ type: "text", text: "actually do this" }],
+        },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({ turnId: "turn-steered" });
+      expect(captured).toEqual({
+        threadId: "thread-1",
+        expectedTurnId: "turn-existing",
+        input: [{ type: "text", text: "actually do this" }],
+      });
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  it("POST /api/threads/:id/steer rejects missing expectedTurnId with 400", async () => {
+    const ctx = await createTestContext();
+    try {
+      const res = await ctx.app.inject({
+        method: "POST",
+        url: "/api/threads/thread-1/steer",
+        payload: {
+          input: [{ type: "text", text: "no expected" }],
+        },
+      });
+      expect(res.statusCode).toBe(400);
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  it("POST /api/threads/:id/interrupt forwards turn/interrupt with turnId", async () => {
+    const ctx = await createTestContext();
+    try {
+      let captured: unknown = null;
+      ctx.stub.handlers.set("turn/interrupt", (params) => {
+        captured = params;
+        return {};
+      });
+
+      const res = await ctx.app.inject({
+        method: "POST",
+        url: "/api/threads/thread-1/interrupt",
+        payload: { turnId: "turn-active" },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({ ok: true });
+      expect(captured).toEqual({ threadId: "thread-1", turnId: "turn-active" });
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  it("POST /api/threads/:id/interrupt rejects missing turnId with 400", async () => {
+    const ctx = await createTestContext();
+    try {
+      const res = await ctx.app.inject({
+        method: "POST",
+        url: "/api/threads/thread-1/interrupt",
+        payload: {},
+      });
+      expect(res.statusCode).toBe(400);
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  it("POST /api/threads/:id/fork forwards optional fields and returns new threadId", async () => {
+    const ctx = await createTestContext();
+    try {
+      let captured: unknown = null;
+      ctx.stub.handlers.set("thread/fork", (params) => {
+        captured = params;
+        return { thread: { id: "t-forked" } };
+      });
+
+      const res = await ctx.app.inject({
+        method: "POST",
+        url: "/api/threads/source-thread/fork",
+        payload: {
+          model: "gpt-5-codex",
+          serviceTier: "flex",
+          approvalPolicy: "never",
+          cwd: "/tmp/work",
+        },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({ threadId: "t-forked" });
+      expect(captured).toEqual({
+        threadId: "source-thread",
+        model: "gpt-5-codex",
+        serviceTier: "flex",
+        approvalPolicy: "never",
+        cwd: "/tmp/work",
+      });
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  it("POST /api/threads/:id/fork returns 502 when app-server response lacks thread.id", async () => {
+    const ctx = await createTestContext();
+    try {
+      ctx.stub.handlers.set("thread/fork", () => ({}));
+      const res = await ctx.app.inject({
+        method: "POST",
+        url: "/api/threads/source-thread/fork",
+        payload: {},
+      });
+      expect(res.statusCode).toBe(502);
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  it("POST /api/threads/:id/rollback forwards numTurns and returns threadId", async () => {
+    const ctx = await createTestContext();
+    try {
+      let captured: unknown = null;
+      ctx.stub.handlers.set("thread/rollback", (params) => {
+        captured = params;
+        return { thread: { id: "thread-after-rollback" } };
+      });
+      const res = await ctx.app.inject({
+        method: "POST",
+        url: "/api/threads/thread-1/rollback",
+        payload: { numTurns: 3 },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({ threadId: "thread-after-rollback" });
+      expect(captured).toEqual({ threadId: "thread-1", numTurns: 3 });
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  it("POST /api/threads/:id/rollback rejects numTurns < 1 with 400", async () => {
+    const ctx = await createTestContext();
+    try {
+      const res = await ctx.app.inject({
+        method: "POST",
+        url: "/api/threads/thread-1/rollback",
+        payload: { numTurns: 0 },
+      });
+      expect(res.statusCode).toBe(400);
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  it("GET /api/files/search forwards roots/query, maps snake_case, and caps at 50", async () => {
+    const ctx = await createTestContext();
+    try {
+      let captured: unknown = null;
+      ctx.stub.handlers.set("fuzzyFileSearch", (params) => {
+        captured = params;
+        const oversized = Array.from({ length: 60 }, (_, i) => ({
+          root: "/tmp/a",
+          path: `/tmp/a/file-${i}.ts`,
+          file_name: `file-${i}.ts`,
+          score: 90 - i,
+          match_type: "filename",
+          indices: [0, 1, 2],
+        }));
+        return { data: oversized };
+      });
+
+      const res = await ctx.app.inject({
+        method: "GET",
+        url: "/api/files/search?roots=/tmp/a,/tmp/b&query=file",
+      });
+      expect(res.statusCode).toBe(200);
+      expect(captured).toEqual({ roots: ["/tmp/a", "/tmp/b"], query: "file" });
+      const body = res.json() as FuzzyFileSearchResponse;
+      expect(body.data).toHaveLength(50);
+      expect(body.data[0]).toEqual({
+        root: "/tmp/a",
+        path: "/tmp/a/file-0.ts",
+        fileName: "file-0.ts",
+        score: 90,
+        matchType: "filename",
+        indices: [0, 1, 2],
+      });
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  it("GET /api/files/search rejects empty roots with 400", async () => {
+    const ctx = await createTestContext();
+    try {
+      const res = await ctx.app.inject({
+        method: "GET",
+        url: "/api/files/search?roots=&query=file",
       });
       expect(res.statusCode).toBe(400);
     } finally {
