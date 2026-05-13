@@ -3,6 +3,8 @@ import { cleanup } from "@testing-library/react";
 import { afterAll, afterEach, beforeAll, vi } from "vitest";
 import { server } from "./test/msw/server";
 
+process.env.NEXT_PUBLIC_GATEWAY_URL = "http://127.0.0.1:8795";
+
 beforeAll(() => {
   server.listen({ onUnhandledRequest: "error" });
 });

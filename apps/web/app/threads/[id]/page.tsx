@@ -343,6 +343,9 @@ export default function ThreadPage({ params }: Props) {
   const statusQueryHandledRef = useRef(false);
   const initialThreadReadyRef = useRef(false);
   const previousThreadIdRef = useRef("");
+  const activeThreadIdRef = useRef("");
+  const resolvedApprovalIdsRef = useRef<Set<string>>(new Set());
+  const resolvedInteractionIdsRef = useRef<Set<string>>(new Set());
   const [threadId, setThreadId] = useState<string>("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -507,8 +510,20 @@ export default function ThreadPage({ params }: Props) {
   );
 
   useEffect(() => {
-    params.then((value) => setThreadId(value.id));
+    let cancelled = false;
+    params.then((value) => {
+      if (!cancelled) {
+        setThreadId(value.id);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [params]);
+
+  useEffect(() => {
+    activeThreadIdRef.current = threadId;
+  }, [threadId]);
 
   useEffect(() => {
     if (!threadId) {
@@ -526,8 +541,18 @@ export default function ThreadPage({ params }: Props) {
     }
 
     previousThreadIdRef.current = threadId;
+    resolvedApprovalIdsRef.current = new Set();
+    resolvedInteractionIdsRef.current = new Set();
     modeInitializedRef.current = false;
     statusQueryHandledRef.current = false;
+    setLoading(true);
+    setError(null);
+    setDetail(null);
+    setEvents([]);
+    setLastSeq(0);
+    setTimelineItems([]);
+    setConnectionState("connecting");
+    setLastEventAtMs(Date.now());
     setLatestTokenUsage(null);
     setStatusBanner(null);
     setIsControlSheetOpen(false);
@@ -535,8 +560,16 @@ export default function ThreadPage({ params }: Props) {
     setSheetDragOffsetY(0);
     setIsMessageDetailsOpen(false);
     setActiveMessageId(null);
+    setPendingApprovals({});
     setPendingInteractions({});
+    setApprovalBusy(null);
+    setApprovalError(null);
+    setInteractionBusy(null);
     setInteractionError(null);
+    setControlBusy(null);
+    setControlError(null);
+    setSubmitError(null);
+    setSubmitting(false);
     setDesktopDockTab("questions");
     setDesktopQuestionDrafts({});
     setDismissedPlanReadyByTurn({});
@@ -797,14 +830,34 @@ export default function ThreadPage({ params }: Props) {
           setThreadListLoading(false);
           setThreadList(threadListResult.data);
           setThreadContext(context);
-          setPendingApprovals(() =>
-            Object.fromEntries(pending.data.map((item) => [item.approvalId, item])),
-          );
-          setPendingInteractions(() =>
-            Object.fromEntries(
-              pendingInteractionsResult.data.map((item) => [item.interactionId, item]),
-            ),
-          );
+          setPendingApprovals((prev) => {
+            const next: Record<string, PendingApprovalCard> = {};
+            for (const item of pending.data) {
+              if (!resolvedApprovalIdsRef.current.has(item.approvalId)) {
+                next[item.approvalId] = item;
+              }
+            }
+            for (const [approvalId, item] of Object.entries(prev)) {
+              if (!resolvedApprovalIdsRef.current.has(approvalId)) {
+                next[approvalId] = item;
+              }
+            }
+            return next;
+          });
+          setPendingInteractions((prev) => {
+            const next: Record<string, PendingInteractionCard> = {};
+            for (const item of pendingInteractionsResult.data) {
+              if (!resolvedInteractionIdsRef.current.has(item.interactionId)) {
+                next[item.interactionId] = item;
+              }
+            }
+            for (const [interactionId, item] of Object.entries(prev)) {
+              if (!resolvedInteractionIdsRef.current.has(interactionId)) {
+                next[interactionId] = item;
+              }
+            }
+            return next;
+          });
           setTimelineItems(timeline.data);
           setLoading(false);
           setError(null);
@@ -830,7 +883,7 @@ export default function ThreadPage({ params }: Props) {
       return;
     }
 
-    let currentSince = lastSeq;
+    let currentSince = 0;
     let es: EventSource | null = null;
     let stopped = false;
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
@@ -855,6 +908,9 @@ export default function ThreadPage({ params }: Props) {
 
       es.addEventListener("gateway", (event) => {
         const payload = JSON.parse((event as MessageEvent).data) as GatewayEvent;
+        if (stopped || payload.threadId !== threadId) {
+          return;
+        }
         if (payload.seq <= currentSince) {
           return;
         }
@@ -873,6 +929,7 @@ export default function ThreadPage({ params }: Props) {
           const decisionPayload = asRecord(payload.payload);
           const approvalId = readString(decisionPayload, "approvalId");
           if (approvalId) {
+            resolvedApprovalIdsRef.current.add(approvalId);
             setPendingApprovals((prev) => {
               if (!prev[approvalId]) {
                 return prev;
@@ -889,6 +946,7 @@ export default function ThreadPage({ params }: Props) {
           const interactionPayload = asRecord(payload.payload);
           const interactionId = readString(interactionPayload, "interactionId");
           if (interactionId) {
+            resolvedInteractionIdsRef.current.add(interactionId);
             setPendingInteractions((prev) => {
               if (!prev[interactionId]) {
                 return prev;
@@ -1331,12 +1389,13 @@ export default function ThreadPage({ params }: Props) {
       return;
     }
 
+    const requestThreadId = threadId;
     setApprovalBusy(approvalId);
     setApprovalError(null);
 
     try {
       const res = await fetch(
-        `${gatewayUrl}/api/threads/${threadId}/approvals/${approvalId}`,
+        `${gatewayUrl}/api/threads/${requestThreadId}/approvals/${approvalId}`,
         {
           method: "POST",
           headers: {
@@ -1352,6 +1411,11 @@ export default function ThreadPage({ params }: Props) {
         throw new Error(`approval http ${res.status}`);
       }
 
+      if (activeThreadIdRef.current !== requestThreadId) {
+        return;
+      }
+
+      resolvedApprovalIdsRef.current.add(approvalId);
       setPendingApprovals((prev) => {
         if (!prev[approvalId]) {
           return prev;
@@ -1361,11 +1425,15 @@ export default function ThreadPage({ params }: Props) {
         return next;
       });
     } catch (approvalErr) {
-      setApprovalError(
-        approvalErr instanceof Error ? approvalErr.message : "approval failed",
-      );
+      if (activeThreadIdRef.current === requestThreadId) {
+        setApprovalError(
+          approvalErr instanceof Error ? approvalErr.message : "approval failed",
+        );
+      }
     } finally {
-      setApprovalBusy(null);
+      if (activeThreadIdRef.current === requestThreadId) {
+        setApprovalBusy(null);
+      }
     }
   }
 
@@ -1377,11 +1445,12 @@ export default function ThreadPage({ params }: Props) {
       return;
     }
 
+    const requestThreadId = threadId;
     setInteractionBusy(interactionId);
     setInteractionError(null);
     try {
       const res = await fetch(
-        `${gatewayUrl}/api/threads/${threadId}/interactions/${interactionId}/respond`,
+        `${gatewayUrl}/api/threads/${requestThreadId}/interactions/${interactionId}/respond`,
         {
           method: "POST",
           headers: {
@@ -1395,6 +1464,10 @@ export default function ThreadPage({ params }: Props) {
       if (!res.ok) {
         throw new Error(`interaction http ${res.status}`);
       }
+      if (activeThreadIdRef.current !== requestThreadId) {
+        return;
+      }
+      resolvedInteractionIdsRef.current.add(interactionId);
       setPendingInteractions((prev) => {
         if (!prev[interactionId]) {
           return prev;
@@ -1404,11 +1477,15 @@ export default function ThreadPage({ params }: Props) {
         return next;
       });
     } catch (interactionErr) {
-      setInteractionError(
-        interactionErr instanceof Error ? interactionErr.message : "interaction failed",
-      );
+      if (activeThreadIdRef.current === requestThreadId) {
+        setInteractionError(
+          interactionErr instanceof Error ? interactionErr.message : "interaction failed",
+        );
+      }
     } finally {
-      setInteractionBusy(null);
+      if (activeThreadIdRef.current === requestThreadId) {
+        setInteractionBusy(null);
+      }
     }
   }
 
@@ -1417,11 +1494,12 @@ export default function ThreadPage({ params }: Props) {
       return;
     }
 
+    const requestThreadId = threadId;
     setControlBusy(action);
     setControlError(null);
 
     try {
-      const res = await fetch(`${gatewayUrl}/api/threads/${threadId}/control`, {
+      const res = await fetch(`${gatewayUrl}/api/threads/${requestThreadId}/control`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -1435,9 +1513,13 @@ export default function ThreadPage({ params }: Props) {
         throw new Error(`control http ${res.status}`);
       }
     } catch (controlErr) {
-      setControlError(controlErr instanceof Error ? controlErr.message : "control failed");
+      if (activeThreadIdRef.current === requestThreadId) {
+        setControlError(controlErr instanceof Error ? controlErr.message : "control failed");
+      }
     } finally {
-      setControlBusy(null);
+      if (activeThreadIdRef.current === requestThreadId) {
+        setControlBusy(null);
+      }
     }
   }, [controlBusy, threadId]);
 
@@ -1553,6 +1635,7 @@ export default function ThreadPage({ params }: Props) {
         return false;
       }
 
+      const requestThreadId = threadId;
       setSubmitting(true);
       setSubmitError(null);
 
@@ -1576,7 +1659,7 @@ export default function ThreadPage({ params }: Props) {
           options.collaborationMode = "plan";
         }
 
-        const res = await fetch(`${gatewayUrl}/api/threads/${threadId}/turns`, {
+        const res = await fetch(`${gatewayUrl}/api/threads/${requestThreadId}/turns`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -1593,15 +1676,22 @@ export default function ThreadPage({ params }: Props) {
         }
 
         const payload = (await res.json()) as CreateTurnResponse;
+        if (activeThreadIdRef.current !== requestThreadId) {
+          return false;
+        }
         if (payload.warnings?.includes("plan_mode_fallback")) {
           setSubmitError("Plan mode unavailable on this app-server; sent in default mode.");
         }
         return true;
       } catch (submitErr) {
-        setSubmitError(submitErr instanceof Error ? submitErr.message : "submit failed");
+        if (activeThreadIdRef.current === requestThreadId) {
+          setSubmitError(submitErr instanceof Error ? submitErr.message : "submit failed");
+        }
         return false;
       } finally {
-        setSubmitting(false);
+        if (activeThreadIdRef.current === requestThreadId) {
+          setSubmitting(false);
+        }
       }
     },
     [activeProjectKey, collaborationMode, model, permissionMode, thinkingEffort, submitting, threadId],
@@ -1612,6 +1702,7 @@ export default function ThreadPage({ params }: Props) {
       if (!threadId || submitting) {
         return false;
       }
+      const requestThreadId = threadId;
       setSubmitting(true);
       setSubmitError(null);
       try {
@@ -1619,7 +1710,7 @@ export default function ThreadPage({ params }: Props) {
           instructions && instructions.trim().length > 0
             ? { instructions: instructions.trim() }
             : {};
-        const res = await fetch(`${gatewayUrl}/api/threads/${threadId}/review`, {
+        const res = await fetch(`${gatewayUrl}/api/threads/${requestThreadId}/review`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -1631,12 +1722,19 @@ export default function ThreadPage({ params }: Props) {
           throw new Error(body?.message ?? `review http ${res.status}`);
         }
         await res.json() as CreateReviewResponse;
+        if (activeThreadIdRef.current !== requestThreadId) {
+          return false;
+        }
         return true;
       } catch (reviewErr) {
-        setSubmitError(reviewErr instanceof Error ? reviewErr.message : "review failed");
+        if (activeThreadIdRef.current === requestThreadId) {
+          setSubmitError(reviewErr instanceof Error ? reviewErr.message : "review failed");
+        }
         return false;
       } finally {
-        setSubmitting(false);
+        if (activeThreadIdRef.current === requestThreadId) {
+          setSubmitting(false);
+        }
       }
     },
     [submitting, threadId],
@@ -1646,6 +1744,7 @@ export default function ThreadPage({ params }: Props) {
     if (!threadId) {
       return false;
     }
+    const requestThreadId = threadId;
     setSubmitError(null);
     try {
       const rateLimitRes = await fetch(`${gatewayUrl}/api/account/rate-limits`);
@@ -1668,10 +1767,15 @@ export default function ThreadPage({ params }: Props) {
           formatRateLimitStatus(rateLimitPayload),
         ],
       };
+      if (activeThreadIdRef.current !== requestThreadId) {
+        return false;
+      }
       setStatusBanner(banner);
       return true;
     } catch (statusErr) {
-      setSubmitError(statusErr instanceof Error ? statusErr.message : "status failed");
+      if (activeThreadIdRef.current === requestThreadId) {
+        setSubmitError(statusErr instanceof Error ? statusErr.message : "status failed");
+      }
       return false;
     }
   }, [latestTokenUsage, threadId]);

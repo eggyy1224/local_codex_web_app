@@ -852,6 +852,395 @@ describe("Thread page integration", () => {
     await screen.findByText("Reconnecting");
   });
 
+  it("clears thread-scoped UI state and ignores stale SSE events after switching threads", async () => {
+    vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+    MockEventSource.instances.length = 0;
+
+    let releaseThread2Load: () => void = () => {};
+    const thread2LoadGate = new Promise<void>((resolve) => {
+      releaseThread2Load = resolve;
+    });
+
+    server.use(
+      http.get("http://127.0.0.1:8795/api/threads/:id", async ({ params }) => {
+        const id = String(params.id);
+        if (id === "thread-2") {
+          await thread2LoadGate;
+        }
+        return HttpResponse.json({
+          thread: {
+            id,
+            title: id === "thread-2" ? "Second Thread" : "First Thread",
+            preview: "Preview",
+            status: "idle",
+            createdAt: null,
+            updatedAt: null,
+          },
+          turns: [],
+          nextCursor: null,
+        });
+      }),
+      http.get("http://127.0.0.1:8795/api/threads/:id/approvals/pending", async ({ params }) => {
+        const id = String(params.id);
+        if (id === "thread-2") {
+          await thread2LoadGate;
+        }
+        return HttpResponse.json({
+          data:
+            id === "thread-1"
+              ? [
+                  {
+                    approvalId: "ap-old",
+                    threadId: "thread-1",
+                    turnId: "turn-1",
+                    itemId: null,
+                    type: "commandExecution",
+                    status: "pending",
+                    reason: "Old approval",
+                    commandPreview: "npm test",
+                    fileChangePreview: null,
+                    createdAt: "2026-01-01T00:00:00.000Z",
+                    resolvedAt: null,
+                  },
+                ]
+              : [],
+        });
+      }),
+      http.get("http://127.0.0.1:8795/api/threads", () =>
+        HttpResponse.json({
+          data: [
+            {
+              id: "thread-1",
+              projectKey: "/tmp/project",
+              title: "First Thread",
+              preview: "Preview",
+              status: "idle",
+              lastActiveAt: "2026-01-01T00:00:00.000Z",
+              archived: false,
+              waitingApprovalCount: 1,
+              errorCount: 0,
+            },
+            {
+              id: "thread-2",
+              projectKey: "/tmp/project",
+              title: "Second Thread",
+              preview: "Preview",
+              status: "idle",
+              lastActiveAt: "2026-01-01T00:00:01.000Z",
+              archived: false,
+              waitingApprovalCount: 0,
+              errorCount: 0,
+            },
+          ],
+          nextCursor: null,
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/timeline", async ({ params }) => {
+        const id = String(params.id);
+        if (id === "thread-2") {
+          await thread2LoadGate;
+        }
+        return HttpResponse.json({
+          data:
+            id === "thread-1"
+              ? [
+                  {
+                    id: "timeline-old",
+                    ts: "2026-01-01T00:00:00.000Z",
+                    turnId: "turn-1",
+                    type: "assistantMessage",
+                    title: "Assistant",
+                    text: "Old assistant text",
+                    rawType: "agentMessage",
+                    toolName: null,
+                    callId: null,
+                  },
+                ]
+              : [],
+        });
+      }),
+      http.get("http://127.0.0.1:8795/api/threads/:id/context", async ({ params }) => {
+        const id = String(params.id);
+        if (id === "thread-2") {
+          await thread2LoadGate;
+        }
+        return HttpResponse.json({
+          threadId: id,
+          cwd: "/tmp/project",
+          resolvedCwd: "/tmp/project",
+          isFallback: false,
+          source: "projection",
+        });
+      }),
+      http.get("http://127.0.0.1:8795/api/models", () => HttpResponse.json({ data: [] })),
+    );
+
+    const { rerender } = render(<ThreadPage params={Promise.resolve({ id: "thread-1" })} />);
+
+    await screen.findByText("Old approval");
+    await screen.findByText("Old assistant text");
+    await waitFor(() => {
+      expect(MockEventSource.instances.length).toBe(1);
+    });
+    const firstEventSource = MockEventSource.instances[0];
+
+    pathnameValue = "/threads/thread-2";
+    rerender(<ThreadPage params={Promise.resolve({ id: "thread-2" })} />);
+
+    await waitFor(() => {
+      expect(screen.queryByText("Old approval")).not.toBeInTheDocument();
+      expect(screen.queryByText("Old assistant text")).not.toBeInTheDocument();
+      expect(screen.getByTestId("event-cursor")).toHaveTextContent("0");
+    });
+    await waitFor(() => {
+      expect(MockEventSource.instances.length).toBe(2);
+    });
+    expect(MockEventSource.instances[1]?.url).toContain("/api/threads/thread-2/events?since=0");
+
+    firstEventSource.emit("gateway", {
+      seq: 99,
+      serverTs: "2026-01-01T00:00:02.000Z",
+      threadId: "thread-1",
+      turnId: "turn-stale",
+      kind: "approval",
+      name: "item/commandExecution/requestApproval",
+      payload: {
+        approvalId: "ap-stale",
+        approvalType: "commandExecution",
+        reason: "Stale old-thread approval",
+        command: "npm test",
+      },
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(screen.queryByText("Stale old-thread approval")).not.toBeInTheDocument();
+    expect(screen.getByTestId("event-cursor")).toHaveTextContent("0");
+
+    releaseThread2Load();
+    await screen.findByText("Second Thread");
+  });
+
+  it("merges delayed pending snapshots without losing newer SSE pending state", async () => {
+    vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+    MockEventSource.instances.length = 0;
+
+    let releasePendingSnapshot: () => void = () => {};
+    const pendingSnapshotGate = new Promise<void>((resolve) => {
+      releasePendingSnapshot = resolve;
+    });
+
+    server.use(
+      http.get("http://127.0.0.1:8795/api/threads/:id", ({ params }) =>
+        HttpResponse.json({
+          thread: {
+            id: String(params.id),
+            title: "Main Thread",
+            preview: "Preview",
+            status: "idle",
+            createdAt: null,
+            updatedAt: null,
+          },
+          turns: [],
+          nextCursor: null,
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/approvals/pending", async () => {
+        await pendingSnapshotGate;
+        return HttpResponse.json({
+          data: [
+            {
+              approvalId: "ap-resolved-before-snapshot",
+              threadId: "thread-1",
+              turnId: "turn-1",
+              itemId: null,
+              type: "commandExecution",
+              status: "pending",
+              reason: "Stale snapshot approval",
+              commandPreview: "npm test",
+              fileChangePreview: null,
+              createdAt: "2026-01-01T00:00:00.000Z",
+              resolvedAt: null,
+            },
+          ],
+        });
+      }),
+      http.get("http://127.0.0.1:8795/api/threads/:id/interactions/pending", async () => {
+        await pendingSnapshotGate;
+        return HttpResponse.json({ data: [] });
+      }),
+      http.get("http://127.0.0.1:8795/api/threads", () => HttpResponse.json({ data: [], nextCursor: null })),
+      http.get("http://127.0.0.1:8795/api/threads/:id/timeline", () => HttpResponse.json({ data: [] })),
+      http.get("http://127.0.0.1:8795/api/threads/:id/context", () =>
+        HttpResponse.json({
+          threadId: "thread-1",
+          cwd: "/tmp/project",
+          resolvedCwd: "/tmp/project",
+          isFallback: false,
+          source: "projection",
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/models", () => HttpResponse.json({ data: [] })),
+    );
+
+    render(<ThreadPage params={Promise.resolve({ id: "thread-1" })} />);
+
+    await waitFor(() => {
+      expect(MockEventSource.instances.length).toBeGreaterThan(0);
+    });
+    const es = MockEventSource.instances.at(-1);
+    if (!es) {
+      throw new Error("missing EventSource instance");
+    }
+
+    es.emit("gateway", {
+      seq: 1,
+      serverTs: "2026-01-01T00:00:01.000Z",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      kind: "approval",
+      name: "item/commandExecution/requestApproval",
+      payload: {
+        approvalId: "ap-live-before-snapshot",
+        approvalType: "commandExecution",
+        reason: "Live approval",
+        command: "pnpm test",
+      },
+    });
+    es.emit("gateway", {
+      seq: 2,
+      serverTs: "2026-01-01T00:00:02.000Z",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      kind: "approval",
+      name: "approval/decision",
+      payload: {
+        approvalId: "ap-resolved-before-snapshot",
+        decision: "allow",
+      },
+    });
+
+    await screen.findByText("Live approval");
+    releasePendingSnapshot();
+
+    await waitFor(() => {
+      expect(screen.getByText("Live approval")).toBeInTheDocument();
+      expect(screen.queryByText("Stale snapshot approval")).not.toBeInTheDocument();
+      expect(screen.getByText(/Pending approval: 1/)).toBeInTheDocument();
+    });
+  });
+
+  it("ignores in-flight approval responses after switching threads", async () => {
+    vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+
+    let releaseApprovalResponse: () => void = () => {};
+    const approvalResponseGate = new Promise<void>((resolve) => {
+      releaseApprovalResponse = resolve;
+    });
+
+    server.use(
+      http.get("http://127.0.0.1:8795/api/threads/:id", ({ params }) => {
+        const id = String(params.id);
+        return HttpResponse.json({
+          thread: {
+            id,
+            title: id === "thread-2" ? "Second Thread" : "First Thread",
+            preview: "Preview",
+            status: "idle",
+            createdAt: null,
+            updatedAt: null,
+          },
+          turns: [],
+          nextCursor: null,
+        });
+      }),
+      http.get("http://127.0.0.1:8795/api/threads/:id/approvals/pending", ({ params }) => {
+        const id = String(params.id);
+        return HttpResponse.json({
+          data: [
+            {
+              approvalId: "shared-approval-id",
+              threadId: id,
+              turnId: id === "thread-2" ? "turn-2" : "turn-1",
+              itemId: null,
+              type: "commandExecution",
+              status: "pending",
+              reason: id === "thread-2" ? "New thread approval" : "Old thread approval",
+              commandPreview: "npm test",
+              fileChangePreview: null,
+              createdAt: "2026-01-01T00:00:00.000Z",
+              resolvedAt: null,
+            },
+          ],
+        });
+      }),
+      http.get("http://127.0.0.1:8795/api/threads/:id/interactions/pending", () =>
+        HttpResponse.json({ data: [] }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads", () =>
+        HttpResponse.json({
+          data: [
+            {
+              id: "thread-1",
+              projectKey: "/tmp/project",
+              title: "First Thread",
+              preview: "Preview",
+              status: "idle",
+              lastActiveAt: "2026-01-01T00:00:00.000Z",
+              archived: false,
+              waitingApprovalCount: 1,
+              errorCount: 0,
+            },
+            {
+              id: "thread-2",
+              projectKey: "/tmp/project",
+              title: "Second Thread",
+              preview: "Preview",
+              status: "idle",
+              lastActiveAt: "2026-01-01T00:00:01.000Z",
+              archived: false,
+              waitingApprovalCount: 1,
+              errorCount: 0,
+            },
+          ],
+          nextCursor: null,
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/timeline", () => HttpResponse.json({ data: [] })),
+      http.get("http://127.0.0.1:8795/api/threads/:id/context", ({ params }) =>
+        HttpResponse.json({
+          threadId: String(params.id),
+          cwd: "/tmp/project",
+          resolvedCwd: "/tmp/project",
+          isFallback: false,
+          source: "projection",
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/models", () => HttpResponse.json({ data: [] })),
+      http.post("http://127.0.0.1:8795/api/threads/thread-1/approvals/shared-approval-id", async () => {
+        await approvalResponseGate;
+        return HttpResponse.json({ ok: true });
+      }),
+    );
+
+    const { rerender } = render(<ThreadPage params={Promise.resolve({ id: "thread-1" })} />);
+
+    await screen.findByText("Old thread approval");
+    fireEvent.click(screen.getByTestId("approval-allow"));
+
+    pathnameValue = "/threads/thread-2";
+    rerender(<ThreadPage params={Promise.resolve({ id: "thread-2" })} />);
+
+    await screen.findByText(/Approvals \(1\)/);
+    fireEvent.click(screen.getByText(/Approvals \(1\)/));
+    await screen.findByText("New thread approval");
+    releaseApprovalResponse();
+
+    await waitFor(() => {
+      expect(screen.getByText("New thread approval")).toBeInTheDocument();
+      expect(screen.getByText(/Pending approval: 1/)).toBeInTheDocument();
+    });
+  });
+
   it("supports /plan slash command and Shift+Tab mode toggle", async () => {
     vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
     const turnCalls: Array<unknown> = [];
