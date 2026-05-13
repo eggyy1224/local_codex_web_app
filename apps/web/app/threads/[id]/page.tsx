@@ -1491,6 +1491,45 @@ export default function ThreadPage({ params }: Props) {
     }
   }
 
+  const steerRunningTurn = useCallback(
+    async (expectedTurnId: string, text: string): Promise<boolean> => {
+      const trimmed = text.trim();
+      if (!threadId || !expectedTurnId || trimmed.length === 0 || submitting) {
+        return false;
+      }
+      const requestThreadId = threadId;
+      setSubmitting(true);
+      setSubmitError(null);
+      try {
+        const res = await fetch(
+          `${gatewayUrl}/api/threads/${requestThreadId}/steer`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              expectedTurnId,
+              input: [{ type: "text", text: trimmed }],
+            }),
+          },
+        );
+        if (!res.ok) {
+          throw new Error(`steer http ${res.status}`);
+        }
+        return true;
+      } catch (err) {
+        if (activeThreadIdRef.current === requestThreadId) {
+          setSubmitError(err instanceof Error ? err.message : "steer failed");
+        }
+        return false;
+      } finally {
+        if (activeThreadIdRef.current === requestThreadId) {
+          setSubmitting(false);
+        }
+      }
+    },
+    [submitting, threadId],
+  );
+
   const interruptRunningTurn = useCallback(async (turnId: string): Promise<void> => {
     if (!threadId || !turnId || controlBusy) {
       return;
@@ -2184,13 +2223,29 @@ export default function ThreadPage({ params }: Props) {
           slashMenuOpen={slashMenuOpen}
           slashSuggestions={slashSuggestions}
           activeSlashIndex={activeSlashIndex}
+          steerActive={runningTurnId !== null}
           onPromptChange={(value) => {
             setPrompt(value);
             setSlashMenuDismissed(false);
           }}
           onPromptKeyDown={handlePromptKeyDown}
           onApplySlash={applyPromptSlash}
-          onSend={() => void sendTurn()}
+          onSend={() => {
+            const trimmed = prompt.trim();
+            if (trimmed.length === 0) {
+              return;
+            }
+            if (runningTurnId) {
+              void (async () => {
+                const ok = await steerRunningTurn(runningTurnId, trimmed);
+                if (ok) {
+                  setPrompt("");
+                }
+              })();
+              return;
+            }
+            void sendTurn();
+          }}
           onOpenControls={() => openControlSheet("settings", "half")}
           onSwipeOpenControls={() => openControlSheet("controls", "full")}
         />

@@ -1429,6 +1429,20 @@ textarea {
   opacity: 0.45;
 }
 
+.cdx-mobile-composer-shell.is-steer .cdx-mobile-composer {
+  border-color: rgba(122, 162, 247, 0.55);
+  background: rgba(28, 32, 44, 0.95);
+}
+
+.cdx-mobile-send-btn--steer {
+  background: rgba(122, 162, 247, 0.95);
+  color: rgba(8, 12, 24, 0.95);
+}
+
+.cdx-mobile-send-btn--steer:disabled {
+  background: rgba(122, 162, 247, 0.5);
+}
+
 .cdx-mobile-slash-menu {
   margin: 0 6px 8px;
   border: 1px solid var(--border-soft);

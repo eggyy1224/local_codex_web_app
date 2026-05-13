@@ -435,6 +435,124 @@ describe("Thread page integration", () => {
     });
   });
 
+  it("mobile composer steers via /steer instead of /turns while a turn is running", async () => {
+    setMobileViewport(true);
+    vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+
+    const steerCalls: Array<{ threadId: string; body: unknown }> = [];
+    let turnsCalled = false;
+
+    server.use(
+      http.get("http://127.0.0.1:8795/api/threads/:id", ({ params }) =>
+        HttpResponse.json({
+          thread: {
+            id: String(params.id),
+            title: "Steer Thread",
+            preview: "",
+            status: "active",
+            createdAt: null,
+            updatedAt: null,
+          },
+          turns: [
+            {
+              id: "turn-running",
+              status: "inProgress",
+              startedAt: null,
+              completedAt: null,
+              error: null,
+              items: [],
+            },
+          ],
+          nextCursor: null,
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/approvals/pending", () =>
+        HttpResponse.json({ data: [] }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads", () =>
+        HttpResponse.json({ data: [], nextCursor: null }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/timeline", () =>
+        HttpResponse.json({
+          data: [
+            {
+              id: "tl-start",
+              ts: "2026-05-13T10:00:00.000Z",
+              turnId: "turn-running",
+              type: "status",
+              title: "Turn started",
+              text: null,
+              rawType: "turn/started",
+              toolName: null,
+              callId: null,
+            },
+            {
+              id: "tl-delta",
+              ts: "2026-05-13T10:00:01.000Z",
+              turnId: "turn-running",
+              type: "assistantMessage",
+              title: "Codex",
+              text: "running…",
+              rawType: "item/agentMessage/delta",
+              toolName: null,
+              callId: null,
+            },
+          ],
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/context", () =>
+        HttpResponse.json({
+          threadId: "thread-1",
+          cwd: "/tmp/project",
+          resolvedCwd: "/tmp/project",
+          isFallback: false,
+          source: "projection",
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/models", () => HttpResponse.json({ data: [] })),
+      http.post(
+        "http://127.0.0.1:8795/api/threads/:id/steer",
+        async ({ params, request }) => {
+          steerCalls.push({ threadId: String(params.id), body: await request.json() });
+          return HttpResponse.json({ turnId: "turn-running" });
+        },
+      ),
+      http.post("http://127.0.0.1:8795/api/threads/:id/turns", () => {
+        turnsCalled = true;
+        return HttpResponse.json({ turnId: "should-not-fire" });
+      }),
+    );
+
+    render(<ThreadPage params={Promise.resolve({ id: "thread-1" })} />);
+
+    // Wait for streaming-derived steer mode to engage.
+    await waitFor(() => {
+      const composer = screen.getByTestId("mobile-composer-dock");
+      expect(composer).toHaveAttribute("data-mode", "steer");
+    });
+    const input = screen.getByTestId("turn-input");
+    expect(input).toHaveAttribute("placeholder", expect.stringMatching(/Steer/i));
+
+    fireEvent.change(input, { target: { value: "change direction please" } });
+    fireEvent.click(screen.getByTestId("turn-submit"));
+
+    await waitFor(() => {
+      expect(steerCalls).toHaveLength(1);
+    });
+    expect(steerCalls[0]).toEqual({
+      threadId: "thread-1",
+      body: {
+        expectedTurnId: "turn-running",
+        input: [{ type: "text", text: "change direction please" }],
+      },
+    });
+    expect(turnsCalled).toBe(false);
+    // Composer should clear after a successful steer.
+    await waitFor(() => {
+      expect((screen.getByTestId("turn-input") as HTMLTextAreaElement).value).toBe("");
+    });
+  });
+
   it("mobile topbar shows Stop button during a streaming turn and posts to /interrupt", async () => {
     setMobileViewport(true);
     vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);

@@ -17,6 +17,7 @@ type MobileComposerDockProps = {
   slashMenuOpen: boolean;
   slashSuggestions: SlashSuggestion[];
   activeSlashIndex: number;
+  steerActive: boolean;
   onPromptChange: (value: string) => void;
   onPromptKeyDown: (event: ReactKeyboardEvent<HTMLTextAreaElement>) => void;
   onApplySlash: (command: KnownSlashCommand) => void;
@@ -35,6 +36,7 @@ export default function MobileComposerDock({
   slashMenuOpen,
   slashSuggestions,
   activeSlashIndex,
+  steerActive,
   onPromptChange,
   onPromptKeyDown,
   onApplySlash,
@@ -68,8 +70,16 @@ export default function MobileComposerDock({
     }
   };
 
+  const placeholder = steerActive
+    ? "Steer the running turn…"
+    : "Ask Codex anything, / for commands";
+
   return (
-    <section className="cdx-mobile-composer-shell" data-testid="mobile-composer-dock">
+    <section
+      className={`cdx-mobile-composer-shell ${steerActive ? "is-steer" : ""}`}
+      data-testid="mobile-composer-dock"
+      data-mode={steerActive ? "steer" : "idle"}
+    >
       <div
         className="cdx-mobile-composer-swipe-handle"
         data-testid="mobile-composer-swipe-handle"
@@ -119,17 +129,18 @@ export default function MobileComposerDock({
           value={prompt}
           onChange={(event) => onPromptChange(event.target.value)}
           onKeyDown={onPromptKeyDown}
-          placeholder="Ask Codex anything, / for commands"
+          placeholder={placeholder}
           rows={1}
         />
         <button
           type="button"
-          className="cdx-mobile-send-btn"
+          className={`cdx-mobile-send-btn ${steerActive ? "cdx-mobile-send-btn--steer" : ""}`}
           data-testid="turn-submit"
           onClick={onSend}
           disabled={submitting || !canSend}
+          aria-label={steerActive ? "Steer running turn" : "Send turn"}
         >
-          {submitting ? "..." : "↑"}
+          {submitting ? "..." : steerActive ? "↪" : "↑"}
         </button>
       </div>
     </section>
