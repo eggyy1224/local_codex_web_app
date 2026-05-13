@@ -32,6 +32,21 @@ type TerminalManagerOptions = {
   logger?: FastifyBaseLogger;
 };
 
+export type TerminalSessionEndedReason =
+  | "exit"
+  | "expired"
+  | "evicted"
+  | "destroyed"
+  | "client_closed";
+
+export type TerminalSessionEndedEvent = {
+  threadId: string;
+  reason: TerminalSessionEndedReason;
+  detail?: string;
+};
+
+export type TerminalSessionEndedListener = (event: TerminalSessionEndedEvent) => void;
+
 const DEFAULT_COLS = 120;
 const DEFAULT_ROWS = 32;
 const PRUNE_INTERVAL_MS = 60_000;
@@ -101,6 +116,7 @@ export class TerminalManager {
   private readonly ttlMs: number;
   private readonly logger?: FastifyBaseLogger;
   private readonly pruneTimer: NodeJS.Timeout;
+  private sessionEndedListener: TerminalSessionEndedListener | null = null;
 
   constructor(options: TerminalManagerOptions) {
     this.maxSessions = options.maxSessions;
@@ -113,11 +129,29 @@ export class TerminalManager {
     this.pruneTimer.unref();
   }
 
+  setSessionEndedListener(listener: TerminalSessionEndedListener | null): void {
+    this.sessionEndedListener = listener;
+  }
+
+  private emitSessionEnded(event: TerminalSessionEndedEvent): void {
+    if (!this.sessionEndedListener) {
+      return;
+    }
+    try {
+      this.sessionEndedListener(event);
+    } catch (error) {
+      this.logger?.warn(
+        { err: error instanceof Error ? error.message : String(error) },
+        "terminal session-ended listener threw",
+      );
+    }
+  }
+
   destroy(): void {
     clearInterval(this.pruneTimer);
     const threadIds = Array.from(this.sessionsByThreadId.keys());
     for (const threadId of threadIds) {
-      this.killSession(threadId, "terminal manager destroyed");
+      this.killSession(threadId, "terminal manager destroyed", "destroyed");
     }
   }
 
@@ -244,9 +278,10 @@ export class TerminalManager {
     });
 
     ptyProcess.onExit(({ exitCode, signal }) => {
+      const detail = `code=${exitCode}, signal=${signal}`;
       this.broadcast(session, {
         type: "terminal/error",
-        message: `terminal exited (code=${exitCode}, signal=${signal})`,
+        message: `terminal exited (${detail})`,
         code: "TERMINAL_EXIT",
       });
       this.broadcast(session, {
@@ -263,6 +298,7 @@ export class TerminalManager {
       }
       this.sessionsByThreadId.delete(threadId);
       session.clients.clear();
+      this.emitSessionEnded({ threadId, reason: "exit", detail });
     });
 
     this.logger?.info({ threadId, shell, cwd }, "terminal session created");
@@ -308,7 +344,7 @@ export class TerminalManager {
       if (now - session.lastActivityAt < this.ttlMs) {
         continue;
       }
-      this.killSession(threadId, "terminal session expired");
+      this.killSession(threadId, "terminal session expired", "expired");
     }
 
     if (this.sessionsByThreadId.size <= this.maxSessions) {
@@ -330,11 +366,15 @@ export class TerminalManager {
       if (!victim) {
         break;
       }
-      this.killSession(victim.threadId, "terminal session evicted");
+      this.killSession(victim.threadId, "terminal session evicted", "evicted");
     }
   }
 
-  private killSession(threadId: string, reason: string): void {
+  private killSession(
+    threadId: string,
+    reason: string,
+    endedReason: TerminalSessionEndedReason,
+  ): void {
     const session = this.sessionsByThreadId.get(threadId);
     if (!session) {
       return;
@@ -361,5 +401,6 @@ export class TerminalManager {
     session.clients.clear();
     session.process.kill();
     this.logger?.info({ threadId, reason }, "terminal session killed");
+    this.emitSessionEnded({ threadId, reason: endedReason, detail: reason });
   }
 }

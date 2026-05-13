@@ -1640,6 +1640,171 @@ describe("gateway integration routes", () => {
     }
   });
 
+  it("terminal websocket records session_ended audit when manager kills a session", async () => {
+    type EndedListener = (event: {
+      threadId: string;
+      reason: "exit" | "expired" | "evicted" | "destroyed" | "client_closed";
+      detail?: string;
+    }) => void;
+    let endedListener: EndedListener | null = null;
+    const terminalManager = {
+      openClient(client: { send: (message: unknown) => void }, threadId: string) {
+        client.send({ type: "terminal/ready", sessionId: "terminal-killed", threadId });
+      },
+      closeClient() {
+        // no-op
+      },
+      onClientDisconnect() {
+        // no-op
+      },
+      writeInput() {
+        return true;
+      },
+      resize() {
+        return true;
+      },
+      setCwd() {
+        return true;
+      },
+      destroy() {
+        // no-op
+      },
+      setSessionEndedListener(listener: EndedListener | null) {
+        endedListener = listener;
+      },
+    } as unknown as NonNullable<GatewayAppDeps["terminalManager"]>;
+    const threadContextResolver = {
+      async resolveThreadContext(threadId: string) {
+        return {
+          threadId,
+          cwd: "/tmp/project-b",
+          resolvedCwd: "/tmp/project-b",
+          isFallback: false,
+          source: "projection" as const,
+        };
+      },
+      invalidate() {
+        // no-op
+      },
+    } as unknown as NonNullable<GatewayAppDeps["threadContextResolver"]>;
+    const ctx = await createTestContext({
+      deps: { terminalManager, threadContextResolver },
+    });
+    try {
+      await ctx.app.ready();
+      const ws = (await (
+        ctx.app as typeof ctx.app & {
+          injectWS: (
+            path: string,
+            upgradeContext?: { headers?: Record<string, string> },
+          ) => Promise<InjectedWs>;
+        }
+      ).injectWS("/api/terminal/ws", {
+        headers: { origin: "http://127.0.0.1:3000" },
+      })) as InjectedWs;
+
+      ws.send(JSON.stringify({ type: "terminal/open", threadId: "thread-killed" }));
+      expect(await readWsJson(ws)).toEqual({
+        type: "terminal/ready",
+        sessionId: "terminal-killed",
+        threadId: "thread-killed",
+      });
+
+      // Simulate the manager killing the session out-of-band (idle prune,
+      // eviction, pty exit, or manager destroy).
+      expect(endedListener).not.toBeNull();
+      endedListener!({ threadId: "thread-killed", reason: "expired", detail: "ttl elapsed" });
+      ws.terminate();
+
+      const rows = ctx.db.sqlite
+        .prepare("SELECT action, thread_id, metadata_json FROM audit_log ORDER BY id ASC")
+        .all() as Array<{ action: string; thread_id: string; metadata_json: string }>;
+      const actions = rows.map((row) => row.action);
+      expect(actions).toContain("terminal.opened");
+      const sessionEnded = rows.find((row) => row.action === "terminal.session_ended");
+      expect(sessionEnded).toBeTruthy();
+      expect(sessionEnded!.thread_id).toBe("thread-killed");
+      expect(JSON.parse(sessionEnded!.metadata_json)).toEqual({
+        origin: "http://127.0.0.1:3000",
+        cwd: "/tmp/project-b",
+        source: "projection",
+        isFallback: false,
+        reason: "expired",
+        detail: "ttl elapsed",
+      });
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  it("terminal websocket audits open_failed when resolveThreadContext throws", async () => {
+    const terminalManager = {
+      openClient() {
+        throw new Error("should not be called");
+      },
+      closeClient() {},
+      onClientDisconnect() {},
+      writeInput() {
+        return true;
+      },
+      resize() {
+        return true;
+      },
+      setCwd() {
+        return true;
+      },
+      destroy() {},
+      setSessionEndedListener() {},
+    } as unknown as NonNullable<GatewayAppDeps["terminalManager"]>;
+    const threadContextResolver = {
+      async resolveThreadContext() {
+        throw new Error("project not found");
+      },
+      invalidate() {},
+    } as unknown as NonNullable<GatewayAppDeps["threadContextResolver"]>;
+    const ctx = await createTestContext({
+      deps: { terminalManager, threadContextResolver },
+    });
+    try {
+      await ctx.app.ready();
+      const ws = (await (
+        ctx.app as typeof ctx.app & {
+          injectWS: (
+            path: string,
+            upgradeContext?: { headers?: Record<string, string> },
+          ) => Promise<InjectedWs>;
+        }
+      ).injectWS("/api/terminal/ws", {
+        headers: { origin: "http://127.0.0.1:3000" },
+      })) as InjectedWs;
+
+      ws.send(JSON.stringify({ type: "terminal/open", threadId: "thread-broken" }));
+      expect(await readWsJson(ws)).toEqual({
+        type: "terminal/error",
+        message: "project not found",
+        code: "TERMINAL_WS_OPEN_FAILED",
+      });
+      ws.terminate();
+
+      const rows = ctx.db.sqlite
+        .prepare("SELECT action, thread_id, metadata_json FROM audit_log ORDER BY id ASC")
+        .all() as Array<{ action: string; thread_id: string; metadata_json: string }>;
+      expect(rows).toEqual([
+        {
+          action: "terminal.open_failed",
+          thread_id: "thread-broken",
+          metadata_json: JSON.stringify({
+            origin: "http://127.0.0.1:3000",
+            stage: "resolveContext",
+            error: "project not found",
+          }),
+        },
+      ]);
+    } finally {
+      await ctx.close();
+    }
+  });
+
   it("GET /api/config maps service_tier/model/reasoning_effort from config/read", async () => {
     const ctx = await createTestContext();
     try {

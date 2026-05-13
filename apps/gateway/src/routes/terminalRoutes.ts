@@ -4,7 +4,10 @@ import type {
   TerminalServerMessage,
 } from "@lcwa/shared-types";
 import type { GatewayDbPort } from "../db.js";
-import { TerminalManager } from "../terminalManager.js";
+import {
+  TerminalManager,
+  type TerminalSessionEndedEvent,
+} from "../terminalManager.js";
 import { ThreadContextResolver, normalizeProjectKey } from "../threadContext.js";
 
 export type TerminalRoutesDeps = {
@@ -119,6 +122,24 @@ export function registerTerminalRoutes(
     });
   };
 
+  // Track metadata per opened terminal so server-side session deaths
+  // (idle prune, eviction, pty exit, manager destroy) can be audited
+  // with the same context the open-side recorded. The route is the only
+  // owner of audit semantics; the manager just notifies us.
+  const sessionMetadataByThread = new Map<string, Record<string, unknown>>();
+
+  if (terminalManager && typeof terminalManager.setSessionEndedListener === "function") {
+    terminalManager.setSessionEndedListener((event: TerminalSessionEndedEvent) => {
+      const metadata = sessionMetadataByThread.get(event.threadId) ?? {};
+      sessionMetadataByThread.delete(event.threadId);
+      auditTerminalEvent("terminal.session_ended", event.threadId, {
+        ...metadata,
+        reason: event.reason,
+        ...(event.detail ? { detail: event.detail } : {}),
+      });
+    });
+  }
+
   app.get("/api/terminal/ws", { websocket: true }, (ws, request) => {
     const origin =
       typeof request.headers.origin === "string" ? request.headers.origin : undefined;
@@ -212,30 +233,19 @@ export function registerTerminalRoutes(
             return;
           }
           void (async () => {
+            // Stage 1: resolve thread context. Failure here is "open_failed"
+            // because nothing has been attached yet.
+            const projected = db.getProjectedThread(message.threadId);
+            let context;
             try {
-              auditClose("reopened");
-              const projected = db.getProjectedThread(message.threadId);
-              const context = await threadContextResolver.resolveThreadContext(
+              context = await threadContextResolver.resolveThreadContext(
                 message.threadId,
                 projected?.projectKey,
               );
-              terminalManager.openClient(client, message.threadId, context);
-              openedThreadId = message.threadId;
-              openedMetadata = {
-                origin: origin ?? null,
-                cwd: context.resolvedCwd,
-                source: context.source,
-                isFallback: context.isFallback,
-              };
-              closeAudited = false;
-              auditTerminalEvent("terminal.opened", message.threadId, openedMetadata);
-              if (!context.isFallback && context.cwd) {
-                db.updateThreadProjectKey(message.threadId, normalizeProjectKey(context.cwd));
-                threadContextResolver.invalidate(message.threadId);
-              }
             } catch (error) {
               auditTerminalEvent("terminal.open_failed", message.threadId, {
                 origin: origin ?? null,
+                stage: "resolveContext",
                 error: error instanceof Error ? error.message : String(error),
               });
               send(
@@ -244,6 +254,61 @@ export function registerTerminalRoutes(
                   "TERMINAL_WS_OPEN_FAILED",
                 ),
               );
+              return;
+            }
+
+            // Stage 2: attach to the terminal session. Failure here is also
+            // "open_failed" — context was resolved but the pty/manager rejected.
+            try {
+              terminalManager.openClient(client, message.threadId, context);
+            } catch (error) {
+              auditTerminalEvent("terminal.open_failed", message.threadId, {
+                origin: origin ?? null,
+                stage: "openClient",
+                cwd: context.resolvedCwd,
+                source: context.source,
+                isFallback: context.isFallback,
+                error: error instanceof Error ? error.message : String(error),
+              });
+              send(
+                terminalError(
+                  error instanceof Error ? error.message : "failed to open terminal",
+                  "TERMINAL_WS_OPEN_FAILED",
+                ),
+              );
+              return;
+            }
+
+            // openClient succeeded — only NOW is the prior attachment (if any)
+            // truly closed. Audit the reopen, then record the new session.
+            auditClose("reopened");
+            openedThreadId = message.threadId;
+            openedMetadata = {
+              origin: origin ?? null,
+              cwd: context.resolvedCwd,
+              source: context.source,
+              isFallback: context.isFallback,
+            };
+            closeAudited = false;
+            sessionMetadataByThread.set(message.threadId, openedMetadata);
+            auditTerminalEvent("terminal.opened", message.threadId, openedMetadata);
+
+            // Stage 3: best-effort projection housekeeping. Failure here does
+            // NOT roll the open back — the terminal is already attached and
+            // usable. Log but do not audit as open_failed.
+            if (!context.isFallback && context.cwd) {
+              try {
+                db.updateThreadProjectKey(message.threadId, normalizeProjectKey(context.cwd));
+                threadContextResolver.invalidate(message.threadId);
+              } catch (error) {
+                app.log.warn(
+                  {
+                    err: error instanceof Error ? error.message : String(error),
+                    threadId: message.threadId,
+                  },
+                  "terminal projection update failed after open",
+                );
+              }
             }
           })();
           return;
