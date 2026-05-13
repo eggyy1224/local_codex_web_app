@@ -52,7 +52,7 @@ export default function MobileMessageStream({
           className="cdx-mobile-inline-btn"
           onClick={() => onToggleShowAll(!showAllTurns)}
         >
-          {showAllTurns ? "Show fewer turns" : `${hiddenCount} earlier turns`}
+          {showAllTurns ? "Show fewer turns" : `Show ${hiddenCount} earlier turns`}
         </button>
       ) : null}
 
@@ -72,7 +72,7 @@ export default function MobileMessageStream({
                 <header className="cdx-mobile-msg-head">
                   <span>You</span>
                 </header>
-                <pre className="cdx-turn-body">{truncateText(userDisplayText, 9000)}</pre>
+                <pre className="cdx-turn-body">{userDisplayText}</pre>
               </section>
             ) : null}
 
@@ -94,7 +94,7 @@ export default function MobileMessageStream({
                   </div>
                 </header>
                 <pre className="cdx-turn-body">
-                  {truncateText(turn.assistantText, 9000)}
+                  {turn.assistantText}
                   {turn.isStreaming ? <span className="cdx-stream-cursor" aria-hidden="true" /> : null}
                 </pre>
               </section>

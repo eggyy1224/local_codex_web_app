@@ -861,6 +861,82 @@ describe("Thread page integration", () => {
     expect(questionsTab).toHaveClass("is-active");
   });
 
+  it("mobile renders the full primary user and assistant messages", async () => {
+    setMobileViewport(true);
+    vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+    const longUserText = `${"u".repeat(9100)}USER_TAIL_VISIBLE`;
+    const longAssistantText = `${"a".repeat(9100)}ASSISTANT_TAIL_VISIBLE`;
+
+    server.use(
+      http.get("http://127.0.0.1:8795/api/threads/:id", ({ params }) =>
+        HttpResponse.json({
+          thread: {
+            id: String(params.id),
+            title: "Long Mobile Thread",
+            preview: "",
+            status: "idle",
+            createdAt: null,
+            updatedAt: null,
+          },
+          turns: [],
+          nextCursor: null,
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/approvals/pending", () =>
+        HttpResponse.json({ data: [] }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/interactions/pending", () =>
+        HttpResponse.json({ data: [] }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads", () =>
+        HttpResponse.json({ data: [], nextCursor: null }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/timeline", () =>
+        HttpResponse.json({
+          data: [
+            {
+              id: "timeline-user",
+              ts: "2026-01-01T00:00:00.000Z",
+              turnId: "turn-long",
+              type: "userMessage",
+              title: "User",
+              text: longUserText,
+              rawType: "userMessage",
+              toolName: null,
+              callId: null,
+            },
+            {
+              id: "timeline-assistant",
+              ts: "2026-01-01T00:00:01.000Z",
+              turnId: "turn-long",
+              type: "assistantMessage",
+              title: "Assistant",
+              text: longAssistantText,
+              rawType: "agentMessage",
+              toolName: null,
+              callId: null,
+            },
+          ],
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/context", () =>
+        HttpResponse.json({
+          threadId: "thread-1",
+          cwd: "/tmp/project",
+          resolvedCwd: "/tmp/project",
+          isFallback: false,
+          source: "projection",
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/models", () => HttpResponse.json({ data: [] })),
+    );
+
+    render(<ThreadPage params={Promise.resolve({ id: "thread-1" })} />);
+
+    expect(await screen.findByText((content) => content.includes("USER_TAIL_VISIBLE"))).toBeInTheDocument();
+    expect(screen.getByText((content) => content.includes("ASSISTANT_TAIL_VISIBLE"))).toBeInTheDocument();
+  });
+
   it("mobile composer @-mention queries fuzzy file search and inserts the picked path", async () => {
     setMobileViewport(true);
     vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
