@@ -349,6 +349,87 @@ describe("Thread page integration", () => {
     });
   });
 
+  it("mobile settings tab toggles service tier via /api/config/value", async () => {
+    setMobileViewport(true);
+    vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+
+    let currentTier: "fast" | "flex" = "fast";
+    let writeBody: unknown = null;
+
+    server.use(
+      http.get("http://127.0.0.1:8795/api/config", () =>
+        HttpResponse.json({
+          config: { serviceTier: currentTier, model: null, reasoningEffort: null },
+          filePath: null,
+          version: null,
+        }),
+      ),
+      http.post("http://127.0.0.1:8795/api/config/value", async ({ request }) => {
+        const body = (await request.json()) as { keyPath: string; value: string };
+        writeBody = body;
+        if (body.keyPath === "service_tier" && (body.value === "fast" || body.value === "flex")) {
+          currentTier = body.value;
+        }
+        return HttpResponse.json({ status: "ok", filePath: null, version: null });
+      }),
+      http.get("http://127.0.0.1:8795/api/threads/:id", ({ params }) =>
+        HttpResponse.json({
+          thread: {
+            id: String(params.id),
+            title: "Tier Thread",
+            preview: "",
+            status: "idle",
+            createdAt: null,
+            updatedAt: null,
+          },
+          turns: [],
+          nextCursor: null,
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/approvals/pending", () =>
+        HttpResponse.json({ data: [] }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads", () =>
+        HttpResponse.json({ data: [], nextCursor: null }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/timeline", () =>
+        HttpResponse.json({ data: [] }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/context", () =>
+        HttpResponse.json({
+          threadId: "thread-1",
+          cwd: "/tmp/project",
+          resolvedCwd: "/tmp/project",
+          isFallback: false,
+          source: "projection",
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/models", () => HttpResponse.json({ data: [] })),
+    );
+
+    render(<ThreadPage params={Promise.resolve({ id: "thread-1" })} />);
+
+    fireEvent.click(await screen.findByTestId("mobile-topbar-control-toggle"));
+    await screen.findByTestId("mobile-control-sheet");
+    fireEvent.click(screen.getByTestId("mobile-control-tab-settings"));
+
+    const fastBtn = await screen.findByTestId("mobile-service-tier-fast");
+    const flexBtn = screen.getByTestId("mobile-service-tier-flex");
+    await waitFor(() => {
+      expect(fastBtn).toHaveAttribute("aria-checked", "true");
+      expect(flexBtn).toHaveAttribute("aria-checked", "false");
+    });
+
+    fireEvent.click(flexBtn);
+
+    await waitFor(() => {
+      expect(writeBody).toEqual({ keyPath: "service_tier", value: "flex" });
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("mobile-service-tier-flex")).toHaveAttribute("aria-checked", "true");
+    });
+  });
+
   it("keeps mobile topbar interactive after timeline scroll", async () => {
     setMobileViewport(true);
     vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);

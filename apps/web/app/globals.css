@@ -1532,6 +1532,47 @@ textarea {
   padding: 0 10px;
 }
 
+.cdx-mobile-segmented {
+  display: inline-grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  gap: 0;
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+  padding: 3px;
+  background: rgba(20, 20, 20, 0.92);
+  width: max-content;
+  min-width: 160px;
+}
+
+.cdx-mobile-segmented-item {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 500;
+  padding: 6px 14px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background-color 150ms ease, color 150ms ease;
+}
+
+.cdx-mobile-segmented-item.is-active {
+  background: rgba(244, 244, 244, 0.95);
+  color: rgba(10, 10, 10, 0.95);
+  cursor: default;
+}
+
+.cdx-mobile-segmented-item:not(.is-active):active {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text);
+}
+
+.cdx-mobile-segmented-item:disabled:not(.is-active) {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .cdx-mobile-sheet-field input:not([type="checkbox"]):not([type="radio"]),
 .cdx-implement-dialog textarea,
 .cdx-mobile-implement-sheet textarea {

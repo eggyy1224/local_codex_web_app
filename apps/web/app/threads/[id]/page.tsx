@@ -35,6 +35,7 @@ import type {
   TurnPermissionMode,
 } from "@lcwa/shared-types";
 import { resolveGatewayUrl } from "../../lib/gateway-url";
+import { useGatewayConfig } from "../../lib/use-gateway-config";
 import {
   DEFAULT_MODEL,
   FALLBACK_MODEL_OPTIONS,
@@ -389,6 +390,7 @@ export default function ThreadPage({ params }: Props) {
   const [terminalOpen, setTerminalOpen] = useState(false);
   const [terminalWidth, setTerminalWidth] = useState(420);
   const [isMobileViewport, setIsMobileViewport] = useState(false);
+  const gatewayConfig = useGatewayConfig();
   const [isCompactViewport, setIsCompactViewport] = useState(false);
   const [showAllTurns, setShowAllTurns] = useState(false);
   const [latestTokenUsage, setLatestTokenUsage] = useState<ThreadTokenUsageSummary | null>(null);
@@ -2177,6 +2179,11 @@ export default function ThreadPage({ params }: Props) {
           thinkingEffort={thinkingEffort}
           thinkingEffortOptions={thinkingEffortOptions}
           permissionMode={permissionMode}
+          serviceTier={gatewayConfig.config?.serviceTier ?? null}
+          serviceTierBusy={gatewayConfig.status === "writing"}
+          onServiceTierChange={(tier) => {
+            void gatewayConfig.writeValue({ keyPath: "service_tier", value: tier });
+          }}
           onSectionChange={setControlSheetSection}
           onSnapChange={setControlSheetSnap}
           onClose={closeControlSheet}
