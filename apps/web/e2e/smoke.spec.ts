@@ -1,5 +1,14 @@
 import { expect, test } from "@playwright/test";
 
+const gatewayPort = process.env.PLAYWRIGHT_GATEWAY_PORT ?? "8877";
+const gatewayUrl = `http://127.0.0.1:${gatewayPort}`;
+
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript((url) => {
+    window.localStorage.setItem("lcwa.gatewayUrl.v1", url);
+  }, gatewayUrl);
+});
+
 test("desktop smoke: home -> new thread -> send turn -> timeline render", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop");
 
@@ -42,6 +51,19 @@ test("mobile smoke: chat-first thread flow + sheet controls", async ({ page }, t
 
   await page.goto("/");
   await expect(page.getByText("Gateway connected")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Let's build" })).toBeVisible();
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const homeMain = document.querySelector(".cdx-main--home");
+        const sidebar = document.querySelector(".cdx-workspace--home .cdx-sidebar");
+        if (!(homeMain instanceof HTMLElement) || !(sidebar instanceof HTMLElement)) {
+          return false;
+        }
+        return homeMain.getBoundingClientRect().top < sidebar.getBoundingClientRect().top;
+      }),
+    )
+    .toBe(true);
 
   await page.getByRole("button", { name: "New thread" }).first().click();
   await expect(page).toHaveURL(/\/threads\//);

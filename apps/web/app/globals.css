@@ -1680,6 +1680,12 @@ textarea {
     grid-template-columns: 1fr;
   }
 
+  .cdx-workspace--home {
+    display: flex;
+    flex-direction: column;
+    overflow: auto;
+  }
+
   .cdx-workspace--thread.cdx-workspace--with-terminal {
     grid-template-columns: 1fr;
   }
@@ -1712,6 +1718,37 @@ textarea {
   .cdx-main {
     padding: 8px;
     gap: 10px;
+  }
+
+  .cdx-main--home {
+    order: 1;
+    flex: 0 0 auto;
+    overflow: visible;
+    grid-template-rows: auto auto;
+    padding-bottom: 12px;
+  }
+
+  .cdx-workspace--home .cdx-sidebar {
+    order: 2;
+    flex: 0 0 auto;
+    max-height: none;
+    overflow: visible;
+    border-bottom: 0;
+    padding: 4px 8px 16px;
+  }
+
+  .cdx-workspace--home .cdx-sidebar-actions {
+    display: none;
+  }
+
+  .cdx-workspace--home .cdx-sidebar-label {
+    margin-top: 6px;
+  }
+
+  .cdx-workspace--home .cdx-project-tree {
+    max-height: 42vh;
+    overflow: auto;
+    padding-bottom: env(safe-area-inset-bottom);
   }
 
   .cdx-status-row {

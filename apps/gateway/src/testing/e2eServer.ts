@@ -33,6 +33,7 @@ class StubAppServer extends EventEmitter implements GatewayAppServerPort {
   private turnSeq = 1;
   private approvalSeq = 100;
   private interactionSeq = 1_000;
+  private readonly pendingInteractionCompletions = new Map<string | number, () => void>();
 
   async start(): Promise<void> {
     // no-op
@@ -42,15 +43,21 @@ class StubAppServer extends EventEmitter implements GatewayAppServerPort {
     // no-op
   }
 
-  respond(): void {
-    // no-op
+  respond(id: string | number): void {
+    const complete = this.pendingInteractionCompletions.get(id);
+    if (!complete) {
+      return;
+    }
+    this.pendingInteractionCompletions.delete(id);
+    setTimeout(complete, 30);
   }
 
   async request<T = unknown>(method: string, params?: unknown): Promise<T> {
     if (method === "model/list") {
       return {
         data: [
-          { id: "gpt-5.3-codex", model: "gpt-5.3-codex", isDefault: true },
+          { id: "gpt-5.5", model: "gpt-5.5", displayName: "GPT-5.5", isDefault: true },
+          { id: "gpt-5.3-codex", model: "gpt-5.3-codex" },
           { id: "gpt-5-codex", model: "gpt-5-codex" },
         ],
         nextCursor: null,
@@ -166,33 +173,7 @@ class StubAppServer extends EventEmitter implements GatewayAppServerPort {
         },
       });
 
-      if (shouldEmitPlanFlow) {
-        const interactionId = this.interactionSeq++;
-        this.emit("message", {
-          id: interactionId,
-          method: "tool/requestUserInput",
-          params: {
-            threadId: thread.id,
-            turnId,
-            itemId: `item-${turnId}-question`,
-            questions: [
-              {
-                id: "deploy_target",
-                header: "Deploy target",
-                question: "Pick where to start rollout",
-                isOther: true,
-                isSecret: false,
-                options: [
-                  { label: "Staging", description: "safe environment" },
-                  { label: "Production", description: "live traffic" },
-                ],
-              },
-            ],
-          },
-        });
-      }
-
-      setTimeout(() => {
+      const completeTurn = () => {
         const assistantDelta = shouldEmitPlanFlow
           ? "Plan draft ready.\n<proposed_plan>1. Add interaction pipeline\n2. Build UI submit path\n3. Verify mobile + desktop</proposed_plan>"
           : `Echo: ${userText || "ok"}`;
@@ -221,7 +202,36 @@ class StubAppServer extends EventEmitter implements GatewayAppServerPort {
             },
           },
         });
-      }, 120);
+      };
+
+      if (shouldEmitPlanFlow) {
+        const interactionId = this.interactionSeq++;
+        this.pendingInteractionCompletions.set(interactionId, completeTurn);
+        this.emit("message", {
+          id: interactionId,
+          method: "tool/requestUserInput",
+          params: {
+            threadId: thread.id,
+            turnId,
+            itemId: `item-${turnId}-question`,
+            questions: [
+              {
+                id: "deploy_target",
+                header: "Deploy target",
+                question: "Pick where to start rollout",
+                isOther: true,
+                isSecret: false,
+                options: [
+                  { label: "Staging", description: "safe environment" },
+                  { label: "Production", description: "live traffic" },
+                ],
+              },
+            ],
+          },
+        });
+      } else {
+        setTimeout(completeTurn, 120);
+      }
 
       return {
         turn,
