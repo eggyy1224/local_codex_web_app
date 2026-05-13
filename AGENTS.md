@@ -15,9 +15,10 @@
 
 ## 3. 非目標（Non-goals）
 
-1. 不做 tmux/terminal 內嵌。
+1. 不做 tmux 內嵌。
 2. 不做自建聊天歷史資料庫（可做索引/快取，但不可取代 SSOT）。
 3. 不追求 IDE 等級編輯器（僅需 patch/diff 檢視能力）。
+4. Mobile 不以 terminal 為核心流程；手機版優先支援看 thread、送 prompt、approval、plan 與 auto-mode。
 
 ## 4. 架構硬性決策
 
@@ -42,6 +43,7 @@
 3. 限流、審計、錯誤追蹤與事件補流。
 4. 本機 session/history 的唯讀索引（列表/搜尋/摘要）。
 5. 認證授權/裝置管理在 Phase 2 導入（MVP 先依賴 Tailscale ACL）。
+6. Desktop terminal dock 屬受控的遠端工作站能力，必須經 Gateway 管理，不可繞過安全基線。
 
 ### 5.3 Web UI
 
@@ -49,6 +51,7 @@
 2. Timeline 視覺化（turn 分段 + event streaming）。
 3. Approval 互動（allow/deny）。
 4. 控制操作（stop/retry/cancel/fork/export 視能力映射）。
+5. Desktop 可提供 terminal dock，協助從遠端瀏覽器操作本機 Codex 工作環境；mobile 不要求提供 terminal 操作面。
 
 ## 6. 狀態模型（概念）
 
@@ -65,6 +68,7 @@
 4. MVP 可不做內層登入/token；Phase 2 必須補上裝置 token 與 revoke。
 5. 必須有 CORS allowlist、rate limit 與 request size 限制。
 6. 涉及 write/exec 的操作需清楚顯示並經 approval。
+7. Terminal dock 必須視為高風險能力：desktop-only、可被 feature flag 關閉、限制可信來源，並保留連線/啟動/關閉等審計事件。
 
 ## 8. 歷史與儲存原則
 
