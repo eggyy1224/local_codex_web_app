@@ -1179,6 +1179,21 @@ export default function ThreadPage({ params }: Props) {
   }, [allConversationTurns, dismissedPlanReadyByTurn, planReadyByTurnId, showAllTurns]);
   const hiddenTimelineCount = Math.max(0, allConversationTurns.length - visibleConversationTurns.length);
   const pendingActionCount = pendingApprovalList.length + pendingInteractionList.length;
+  const latestStreamingTurn = useMemo(() => {
+    for (let index = visibleConversationTurns.length - 1; index >= 0; index -= 1) {
+      const candidate = visibleConversationTurns[index];
+      if (candidate?.isStreaming) {
+        return candidate;
+      }
+    }
+    return null;
+  }, [visibleConversationTurns]);
+  const streamingTurnCount = useMemo(
+    () => visibleConversationTurns.filter((turn) => turn.isStreaming).length,
+    [visibleConversationTurns],
+  );
+  const isThinkingActive = submitting || streamingTurnCount > 0;
+  const runningTurnId = latestStreamingTurn?.turnId ?? null;
   const selectedModelLabel = useMemo(
     () => modelOptions.find((option) => option.value === model)?.label ?? model,
     [model, modelOptions],
@@ -1967,6 +1982,23 @@ export default function ThreadPage({ params }: Props) {
     }
   }
 
+  const submitComposer = useCallback((): void => {
+    const trimmed = prompt.trim();
+    if (trimmed.length === 0) {
+      return;
+    }
+    if (runningTurnId) {
+      void (async () => {
+        const ok = await steerRunningTurn(runningTurnId, trimmed);
+        if (ok) {
+          setPrompt("");
+        }
+      })();
+      return;
+    }
+    void sendTurn();
+  }, [prompt, runningTurnId, sendTurn, steerRunningTurn]);
+
   const handlePromptKeyDown = useCallback((event: ReactKeyboardEvent<HTMLTextAreaElement>) => {
     if (
       event.key === "Tab" &&
@@ -2045,13 +2077,13 @@ export default function ThreadPage({ params }: Props) {
       return;
     }
     event.preventDefault();
-    void sendTurn();
+    submitComposer();
   }, [
     activeSlashIndex,
     applyPromptSlash,
-    sendTurn,
     slashMenuOpen,
     slashSuggestions,
+    submitComposer,
     toggleCollaborationMode,
   ]);
 
@@ -2110,21 +2142,7 @@ export default function ThreadPage({ params }: Props) {
       hasThinking: Boolean(turn.thinkingText),
     };
   }, [activeMessageId, allConversationTurns]);
-  const latestStreamingTurn = useMemo(() => {
-    for (let index = visibleConversationTurns.length - 1; index >= 0; index -= 1) {
-      const candidate = visibleConversationTurns[index];
-      if (candidate?.isStreaming) {
-        return candidate;
-      }
-    }
-    return null;
-  }, [visibleConversationTurns]);
-  const streamingTurnCount = useMemo(
-    () => visibleConversationTurns.filter((turn) => turn.isStreaming).length,
-    [visibleConversationTurns],
-  );
-  const isThinkingActive = submitting || streamingTurnCount > 0;
-  const runningTurnId = latestStreamingTurn?.turnId ?? null;
+  // (moved above the callback definitions so submitComposer can read runningTurnId)
   const thinkingBannerText = submitting
     ? "Preparing request..."
     : latestStreamingTurn?.thinkingText
@@ -2230,22 +2248,7 @@ export default function ThreadPage({ params }: Props) {
           }}
           onPromptKeyDown={handlePromptKeyDown}
           onApplySlash={applyPromptSlash}
-          onSend={() => {
-            const trimmed = prompt.trim();
-            if (trimmed.length === 0) {
-              return;
-            }
-            if (runningTurnId) {
-              void (async () => {
-                const ok = await steerRunningTurn(runningTurnId, trimmed);
-                if (ok) {
-                  setPrompt("");
-                }
-              })();
-              return;
-            }
-            void sendTurn();
-          }}
+          onSend={submitComposer}
           onOpenControls={() => openControlSheet("settings", "half")}
           onSwipeOpenControls={() => openControlSheet("controls", "full")}
         />

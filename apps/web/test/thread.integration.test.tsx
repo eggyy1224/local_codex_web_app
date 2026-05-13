@@ -551,6 +551,104 @@ describe("Thread page integration", () => {
     await waitFor(() => {
       expect((screen.getByTestId("turn-input") as HTMLTextAreaElement).value).toBe("");
     });
+
+    // Enter-key path must route through steer too (caught by Codex review of 899bba3).
+    fireEvent.change(screen.getByTestId("turn-input"), { target: { value: "via enter key" } });
+    fireEvent.keyDown(screen.getByTestId("turn-input"), { key: "Enter" });
+    await waitFor(() => {
+      expect(steerCalls).toHaveLength(2);
+    });
+    expect(steerCalls[1].body).toEqual({
+      expectedTurnId: "turn-running",
+      input: [{ type: "text", text: "via enter key" }],
+    });
+    expect(turnsCalled).toBe(false);
+  });
+
+  it("mobile steer failure keeps the typed text in the composer", async () => {
+    setMobileViewport(true);
+    vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+
+    server.use(
+      http.get("http://127.0.0.1:8795/api/threads/:id", ({ params }) =>
+        HttpResponse.json({
+          thread: {
+            id: String(params.id),
+            title: "Steer Failure Thread",
+            preview: "",
+            status: "active",
+            createdAt: null,
+            updatedAt: null,
+          },
+          turns: [],
+          nextCursor: null,
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/approvals/pending", () =>
+        HttpResponse.json({ data: [] }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads", () =>
+        HttpResponse.json({ data: [], nextCursor: null }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/timeline", () =>
+        HttpResponse.json({
+          data: [
+            {
+              id: "tl-start",
+              ts: "2026-05-13T10:00:00.000Z",
+              turnId: "turn-running",
+              type: "status",
+              title: "Turn started",
+              text: null,
+              rawType: "turn/started",
+              toolName: null,
+              callId: null,
+            },
+            {
+              id: "tl-delta",
+              ts: "2026-05-13T10:00:01.000Z",
+              turnId: "turn-running",
+              type: "assistantMessage",
+              title: "Codex",
+              text: "running…",
+              rawType: "item/agentMessage/delta",
+              toolName: null,
+              callId: null,
+            },
+          ],
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/context", () =>
+        HttpResponse.json({
+          threadId: "thread-1",
+          cwd: "/tmp/project",
+          resolvedCwd: "/tmp/project",
+          isFallback: false,
+          source: "projection",
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/models", () => HttpResponse.json({ data: [] })),
+      http.post(
+        "http://127.0.0.1:8795/api/threads/:id/steer",
+        () => new HttpResponse("nope", { status: 500 }),
+      ),
+    );
+
+    render(<ThreadPage params={Promise.resolve({ id: "thread-1" })} />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("mobile-composer-dock")).toHaveAttribute("data-mode", "steer");
+    });
+
+    const input = screen.getByTestId("turn-input") as HTMLTextAreaElement;
+    fireEvent.change(input, { target: { value: "kept on error" } });
+    fireEvent.click(screen.getByTestId("turn-submit"));
+
+    // On a 500, the text must NOT be cleared so the user can retry.
+    await waitFor(() => {
+      expect(screen.getByText(/steer http 500/i)).toBeInTheDocument();
+    });
+    expect((screen.getByTestId("turn-input") as HTMLTextAreaElement).value).toBe("kept on error");
   });
 
   it("mobile topbar shows Stop button during a streaming turn and posts to /interrupt", async () => {
