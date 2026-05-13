@@ -1,0 +1,268 @@
+import { describe, expect, it } from "vitest";
+import type { AccountRateLimitsResponse, GatewayEvent } from "@lcwa/shared-types";
+import {
+  approvalFromEvent,
+  asRecord,
+  formatRateLimitStatus,
+  formatTimestamp,
+  interactionFromEvent,
+  isCollaborationModeKind,
+  readString,
+  THREAD_MODE_STORAGE_KEY_PREFIX,
+  threadModeStorageKey,
+  tokenUsageFromEvent,
+} from "../app/threads/[id]/thread-page-helpers";
+
+function gatewayEvent(partial: Partial<GatewayEvent>): GatewayEvent {
+  return {
+    seq: 1,
+    serverTs: "2026-01-01T00:00:00.000Z",
+    threadId: "thread-1",
+    turnId: "turn-1",
+    kind: "approval",
+    name: "item/commandExecution/requestApproval",
+    payload: null,
+    ...partial,
+  } as GatewayEvent;
+}
+
+describe("thread-page-helpers", () => {
+  describe("asRecord / readString", () => {
+    it("asRecord rejects non-objects and arrays passthrough as records", () => {
+      expect(asRecord(null)).toBeNull();
+      expect(asRecord(undefined)).toBeNull();
+      expect(asRecord("string")).toBeNull();
+      expect(asRecord(42)).toBeNull();
+      expect(asRecord({ a: 1 })).toEqual({ a: 1 });
+      // Arrays ARE objects in JS so asRecord lets them through — the caller is
+      // expected to follow up with an Array.isArray check where needed.
+      expect(asRecord([1, 2])).toEqual([1, 2]);
+    });
+
+    it("readString returns the value when it is a string, otherwise null", () => {
+      expect(readString({ a: "foo" }, "a")).toBe("foo");
+      expect(readString({ a: 1 }, "a")).toBeNull();
+      expect(readString({ a: null }, "a")).toBeNull();
+      expect(readString({ a: undefined }, "a")).toBeNull();
+      expect(readString(null, "a")).toBeNull();
+    });
+  });
+
+  describe("formatTimestamp", () => {
+    it("returns sentinel for null", () => {
+      expect(formatTimestamp(null)).toBe("No timestamp");
+    });
+
+    it("returns the raw value when not parseable as a date", () => {
+      expect(formatTimestamp("not-a-date")).toBe("not-a-date");
+    });
+
+    it("formats parseable ISO timestamps via toLocaleString", () => {
+      const result = formatTimestamp("2026-01-01T00:00:00.000Z");
+      expect(result).not.toBe("No timestamp");
+      expect(result).not.toBe("2026-01-01T00:00:00.000Z");
+    });
+  });
+
+  describe("isCollaborationModeKind", () => {
+    it("accepts plan and default, rejects anything else", () => {
+      expect(isCollaborationModeKind("plan")).toBe(true);
+      expect(isCollaborationModeKind("default")).toBe(true);
+      expect(isCollaborationModeKind("other")).toBe(false);
+      expect(isCollaborationModeKind(null)).toBe(false);
+    });
+  });
+
+  describe("threadModeStorageKey", () => {
+    it("combines the prefix with the thread id", () => {
+      expect(threadModeStorageKey("abc")).toBe(`${THREAD_MODE_STORAGE_KEY_PREFIX}.abc`);
+    });
+  });
+
+  describe("approvalFromEvent", () => {
+    it("returns null when payload has no approvalId", () => {
+      const event = gatewayEvent({ payload: { something: "else" } });
+      expect(approvalFromEvent(event)).toBeNull();
+    });
+
+    it("trusts explicit approvalType when it matches the union", () => {
+      const event = gatewayEvent({
+        name: "item/fileChange/requestApproval",
+        payload: {
+          approvalId: "a1",
+          approvalType: "commandExecution",
+          itemId: "i1",
+          reason: "needs root",
+          command: "rm -rf /",
+        },
+      });
+      const result = approvalFromEvent(event);
+      expect(result).toMatchObject({
+        approvalId: "a1",
+        threadId: "thread-1",
+        turnId: "turn-1",
+        itemId: "i1",
+        type: "commandExecution",
+        status: "pending",
+        reason: "needs root",
+        commandPreview: "rm -rf /",
+        resolvedAt: null,
+      });
+    });
+
+    it("falls back to the event name when approvalType is missing", () => {
+      const event = gatewayEvent({
+        name: "item/fileChange/requestApproval",
+        payload: {
+          approvalId: "a2",
+        },
+      });
+      expect(approvalFromEvent(event)?.type).toBe("fileChange");
+    });
+  });
+
+  describe("interactionFromEvent", () => {
+    it("returns null when questions is missing or not an array", () => {
+      expect(
+        interactionFromEvent(
+          gatewayEvent({
+            payload: { interactionId: "i1" },
+          }),
+        ),
+      ).toBeNull();
+    });
+
+    it("drops malformed question entries and keeps valid ones", () => {
+      const event = gatewayEvent({
+        name: "item/tool/requestUserInput",
+        kind: "interaction",
+        payload: {
+          interactionId: "i1",
+          itemId: "item-x",
+          questions: [
+            null,
+            { id: "q1", header: "h", question: "How?" },
+            { id: "q2", header: "h", question: "Why?", isOther: true, isSecret: true },
+            { /* missing id */ header: "h", question: "?" },
+            {
+              id: "q3",
+              header: "h",
+              question: "Pick",
+              options: [
+                { label: "a", description: "ad" },
+                { label: "b" /* missing description */ },
+              ],
+            },
+            {
+              id: "q4",
+              header: "h",
+              question: "Pick",
+              options: [], // empty array → normalized to null
+            },
+          ],
+        },
+      });
+      const result = interactionFromEvent(event);
+      expect(result).not.toBeNull();
+      expect(result!.questions.map((q) => q.id)).toEqual(["q1", "q2", "q3", "q4"]);
+      expect(result!.questions[1]).toMatchObject({ isOther: true, isSecret: true });
+      expect(result!.questions[2].options).toEqual([{ label: "a", description: "ad" }]);
+      expect(result!.questions[3].options).toBeNull();
+      expect(result!.itemId).toBe("item-x");
+      expect(result!.type).toBe("userInput");
+    });
+  });
+
+  describe("tokenUsageFromEvent", () => {
+    it("returns null for events that are not thread/tokenUsage/updated", () => {
+      const event = gatewayEvent({
+        name: "turn/completed",
+        kind: "turn",
+        payload: { tokenUsage: { total: { totalTokens: 1, inputTokens: 1, outputTokens: 0 } } },
+      });
+      expect(tokenUsageFromEvent(event)).toBeNull();
+    });
+
+    it("returns null when totals are not all numeric", () => {
+      const event = gatewayEvent({
+        name: "thread/tokenUsage/updated",
+        kind: "thread",
+        payload: {
+          tokenUsage: {
+            total: { totalTokens: "not-a-number", inputTokens: 1, outputTokens: 0 },
+          },
+        },
+      });
+      expect(tokenUsageFromEvent(event)).toBeNull();
+    });
+
+    it("extracts totals, turnId, and modelContextWindow", () => {
+      const event = gatewayEvent({
+        name: "thread/tokenUsage/updated",
+        kind: "thread",
+        payload: {
+          turnId: "turn-9",
+          tokenUsage: {
+            modelContextWindow: 1024,
+            total: { totalTokens: 30, inputTokens: 12, outputTokens: 18 },
+          },
+        },
+      });
+      expect(tokenUsageFromEvent(event)).toEqual({
+        threadId: "thread-1",
+        turnId: "turn-9",
+        totalTokens: 30,
+        inputTokens: 12,
+        outputTokens: 18,
+        modelContextWindow: 1024,
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      });
+    });
+
+    it("falls back to snake_case turn_id and tolerates a missing context window", () => {
+      const event = gatewayEvent({
+        name: "thread/tokenUsage/updated",
+        kind: "thread",
+        payload: {
+          turn_id: "turn-7",
+          tokenUsage: {
+            total: { totalTokens: 4, inputTokens: 2, outputTokens: 2 },
+          },
+        },
+      });
+      const result = tokenUsageFromEvent(event);
+      expect(result?.turnId).toBe("turn-7");
+      expect(result?.modelContextWindow).toBeNull();
+    });
+  });
+
+  describe("formatRateLimitStatus", () => {
+    it("reports unavailable when the response carries an error", () => {
+      const response: AccountRateLimitsResponse = {
+        rateLimits: null,
+        rateLimitsByLimitId: null,
+        error: "boom",
+      } as AccountRateLimitsResponse;
+      expect(formatRateLimitStatus(response)).toBe("rate limits: unavailable");
+    });
+
+    it("reports unavailable when the primary bucket is missing", () => {
+      const response = {
+        rateLimits: { limitName: "default", primary: null },
+      } as unknown as AccountRateLimitsResponse;
+      expect(formatRateLimitStatus(response)).toBe("rate limits: unavailable");
+    });
+
+    it("formats limitName + percent + reset time when present", () => {
+      const response = {
+        rateLimits: {
+          limitName: "weekly",
+          limitId: "weekly-1",
+          primary: { usedPercent: 42, resetsAt: 1_704_153_600 },
+        },
+      } as unknown as AccountRateLimitsResponse;
+      const result = formatRateLimitStatus(response);
+      expect(result.startsWith("rate limits: weekly 42% (reset ")).toBe(true);
+    });
+  });
+});
