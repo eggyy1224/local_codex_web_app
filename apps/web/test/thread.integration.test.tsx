@@ -435,6 +435,93 @@ describe("Thread page integration", () => {
     });
   });
 
+  it("mobile pending approval renders the foreground action layer and posts allow", async () => {
+    setMobileViewport(true);
+    vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+
+    const decisionCalls: Array<{ approvalId: string; body: unknown }> = [];
+    server.use(
+      http.get("http://127.0.0.1:8795/api/threads/:id", ({ params }) =>
+        HttpResponse.json({
+          thread: {
+            id: String(params.id),
+            title: "Approval Thread",
+            preview: "",
+            status: "idle",
+            createdAt: null,
+            updatedAt: null,
+          },
+          turns: [],
+          nextCursor: null,
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/approvals/pending", () =>
+        HttpResponse.json({
+          data: [
+            {
+              approvalId: "ap-fg-1",
+              threadId: "thread-1",
+              turnId: "turn-1",
+              itemId: null,
+              type: "commandExecution",
+              status: "pending",
+              reason: "Run database migration",
+              commandPreview: "pnpm migrate up",
+              fileChangePreview: null,
+              createdAt: "2026-01-01T00:00:00.000Z",
+              resolvedAt: null,
+            },
+          ],
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads", () =>
+        HttpResponse.json({ data: [], nextCursor: null }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/timeline", () =>
+        HttpResponse.json({ data: [] }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/context", () =>
+        HttpResponse.json({
+          threadId: "thread-1",
+          cwd: "/tmp/project",
+          resolvedCwd: "/tmp/project",
+          isFallback: false,
+          source: "projection",
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/models", () => HttpResponse.json({ data: [] })),
+      http.post(
+        "http://127.0.0.1:8795/api/threads/:id/approvals/:approvalId",
+        async ({ params, request }) => {
+          decisionCalls.push({
+            approvalId: String(params.approvalId),
+            body: await request.json(),
+          });
+          return HttpResponse.json({ ok: true });
+        },
+      ),
+    );
+
+    render(<ThreadPage params={Promise.resolve({ id: "thread-1" })} />);
+
+    const layer = await screen.findByTestId("mobile-action-layer");
+    expect(layer).toHaveAttribute("data-kind", "approval");
+    expect(layer).toHaveAttribute("data-approval-id", "ap-fg-1");
+    expect(layer).toHaveTextContent("Run command?");
+    expect(layer).toHaveTextContent("Run database migration");
+    expect(layer).toHaveTextContent("pnpm migrate up");
+
+    fireEvent.click(screen.getByTestId("mobile-action-allow"));
+
+    await waitFor(() => {
+      expect(decisionCalls).toHaveLength(1);
+    });
+    expect(decisionCalls[0]).toEqual({
+      approvalId: "ap-fg-1",
+      body: { decision: "allow" },
+    });
+  });
+
   it("mobile composer steers via /steer instead of /turns while a turn is running", async () => {
     setMobileViewport(true);
     vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);

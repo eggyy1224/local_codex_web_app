@@ -60,6 +60,7 @@ import {
   parseSlashCommand,
   type KnownSlashCommand,
 } from "../../lib/slash-commands";
+import MobileActionLayer from "./MobileActionLayer";
 import MobileChatTopBar from "./MobileChatTopBar";
 import MobileComposerDock from "./MobileComposerDock";
 import MobileControlSheet from "./MobileControlSheet";
@@ -2233,6 +2234,14 @@ export default function ThreadPage({ params }: Props) {
             }}
           />
         </main>
+
+        <MobileActionLayer
+          pendingApprovals={pendingApprovalList}
+          pendingInteractions={pendingInteractionList}
+          approvalBusy={approvalBusy}
+          onDecision={(approvalId, decision) => void decideApproval(approvalId, decision)}
+          onOpenQuestion={() => openControlSheet("questions", "full")}
+        />
 
         <MobileComposerDock
           prompt={prompt}
