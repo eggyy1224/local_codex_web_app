@@ -80,7 +80,7 @@ type Props = {
 type PendingApprovalCard = ApprovalView;
 type PendingInteractionCard = InteractionView;
 type CollaborationModeKind = "plan" | "default";
-type ControlSheetSection = "controls" | "settings" | "questions" | "approvals";
+type ControlSheetSection = "pending" | "advanced";
 type ControlSheetSnap = "half" | "full";
 type ThreadTokenUsageSummary = {
   threadId: string;
@@ -381,7 +381,7 @@ export default function ThreadPage({ params }: Props) {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [isThreadSwitcherOpen, setIsThreadSwitcherOpen] = useState(false);
   const [isControlSheetOpen, setIsControlSheetOpen] = useState(false);
-  const [controlSheetSection, setControlSheetSection] = useState<ControlSheetSection>("controls");
+  const [controlSheetSection, setControlSheetSection] = useState<ControlSheetSection>("advanced");
   const [controlSheetSnap, setControlSheetSnap] = useState<ControlSheetSnap>("half");
   const [isDraggingSheet, setIsDraggingSheet] = useState(false);
   const [sheetDragOffsetY, setSheetDragOffsetY] = useState(0);
@@ -1899,7 +1899,7 @@ export default function ThreadPage({ params }: Props) {
   }, []);
 
   const openControlSheet = useCallback(
-    (section: ControlSheetSection = "controls", snap: ControlSheetSnap = "half") => {
+    (section: ControlSheetSection = "advanced", snap: ControlSheetSnap = "half") => {
       setControlSheetSection(section);
       setControlSheetSnap(snap);
       setSheetDragOffsetY(0);
@@ -2164,11 +2164,9 @@ export default function ThreadPage({ params }: Props) {
           onOpenThreads={() => setIsThreadSwitcherOpen(true)}
           onOpenControls={() =>
             openControlSheet(
-              pendingInteractionList.length > 0
-                ? "questions"
-                : pendingApprovalList.length > 0
-                  ? "approvals"
-                  : "controls",
+              pendingInteractionList.length > 0 || pendingApprovalList.length > 0
+                ? "pending"
+                : "advanced",
               "half",
             )
           }
@@ -2240,7 +2238,7 @@ export default function ThreadPage({ params }: Props) {
           pendingInteractions={pendingInteractionList}
           approvalBusy={approvalBusy}
           onDecision={(approvalId, decision) => void decideApproval(approvalId, decision)}
-          onOpenQuestion={() => openControlSheet("questions", "full")}
+          onOpenQuestion={() => openControlSheet("pending", "full")}
         />
 
         <MobileComposerDock
@@ -2258,8 +2256,8 @@ export default function ThreadPage({ params }: Props) {
           onPromptKeyDown={handlePromptKeyDown}
           onApplySlash={applyPromptSlash}
           onSend={submitComposer}
-          onOpenControls={() => openControlSheet("settings", "half")}
-          onSwipeOpenControls={() => openControlSheet("controls", "full")}
+          onOpenControls={() => openControlSheet("advanced", "half")}
+          onSwipeOpenControls={() => openControlSheet("advanced", "full")}
         />
 
         <MobileControlSheet

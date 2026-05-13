@@ -412,7 +412,7 @@ describe("Thread page integration", () => {
 
     fireEvent.click(await screen.findByTestId("mobile-topbar-control-toggle"));
     await screen.findByTestId("mobile-control-sheet");
-    fireEvent.click(screen.getByTestId("mobile-control-tab-settings"));
+    fireEvent.click(screen.getByTestId("mobile-control-tab-advanced"));
 
     const fastBtn = await screen.findByTestId("mobile-service-tier-fast");
     const flexBtn = screen.getByTestId("mobile-service-tier-flex");
@@ -724,7 +724,7 @@ describe("Thread page integration", () => {
     // Tapping Answer opens the Questions tab in the sheet.
     fireEvent.click(screen.getByTestId("mobile-action-open-question"));
     await screen.findByTestId("mobile-control-sheet");
-    const questionsTab = screen.getByTestId("mobile-control-tab-questions");
+    const questionsTab = screen.getByTestId("mobile-control-tab-pending");
     expect(questionsTab).toHaveClass("is-active");
   });
 
@@ -1347,7 +1347,7 @@ describe("Thread page integration", () => {
 
     fireEvent.click(await screen.findByTestId("mobile-topbar-control-toggle"));
     await screen.findByTestId("mobile-control-sheet");
-    fireEvent.click(screen.getByTestId("mobile-control-tab-approvals"));
+    fireEvent.click(screen.getByTestId("mobile-control-tab-pending"));
 
     const allowButtons = screen.getAllByTestId("approval-allow");
     const denyButtons = screen.getAllByTestId("approval-deny");
@@ -2687,15 +2687,15 @@ describe("Thread page integration", () => {
     await screen.findByTestId("mobile-chat-topbar");
     fireEvent.click(screen.getByTestId("mobile-topbar-control-toggle"));
     const sheet = await screen.findByTestId("mobile-control-sheet");
-    expect(within(sheet).getByText("Questions (1)")).toBeInTheDocument();
-    fireEvent.click(within(sheet).getByTestId("mobile-control-tab-questions"));
+    expect(within(sheet).getByText("Pending (1)")).toBeInTheDocument();
+    fireEvent.click(within(sheet).getByTestId("mobile-control-tab-pending"));
 
     fireEvent.click(await within(sheet).findByLabelText("Staging - safe env"));
     fireEvent.click(within(sheet).getByTestId("interaction-submit"));
 
     await waitFor(() => {
       expect(interactionCalls).toHaveLength(1);
-      expect(within(sheet).getByText("Questions (0)")).toBeInTheDocument();
+      expect(within(sheet).getByText("Pending (0)")).toBeInTheDocument();
     });
   });
 
@@ -2786,7 +2786,7 @@ describe("Thread page integration", () => {
     await screen.findByTestId("mobile-chat-topbar");
     fireEvent.click(screen.getByTestId("mobile-topbar-control-toggle"));
     const sheet = await screen.findByTestId("mobile-control-sheet");
-    fireEvent.click(within(sheet).getByTestId("mobile-control-tab-questions"));
+    fireEvent.click(within(sheet).getByTestId("mobile-control-tab-pending"));
 
     const freeformInput = within(sheet).getByRole("textbox");
     fireEvent.change(freeformInput, { target: { value: "staging" } });
@@ -2794,7 +2794,7 @@ describe("Thread page integration", () => {
 
     await waitFor(() => {
       expect(interactionCalls).toHaveLength(1);
-      expect(within(sheet).getByText("Questions (0)")).toBeInTheDocument();
+      expect(within(sheet).getByText("Pending (0)")).toBeInTheDocument();
     });
     expect(interactionCalls[0]).toEqual({
       answers: {

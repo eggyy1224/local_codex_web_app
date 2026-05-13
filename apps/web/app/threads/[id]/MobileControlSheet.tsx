@@ -9,7 +9,7 @@ import type {
   TurnPermissionMode,
 } from "@lcwa/shared-types";
 
-type ControlSheetSection = "controls" | "settings" | "questions" | "approvals";
+type ControlSheetSection = "pending" | "advanced";
 type ControlSheetSnap = "half" | "full";
 
 type MobileApprovalItem = {
@@ -342,72 +342,24 @@ export default function MobileControlSheet({
         <nav className="cdx-mobile-sheet-tabs">
           <button
             type="button"
-            className={`cdx-mobile-sheet-tab ${section === "controls" ? "is-active" : ""}`}
-            data-testid="mobile-control-tab-controls"
-            onClick={() => onSectionChange("controls")}
+            className={`cdx-mobile-sheet-tab ${section === "pending" ? "is-active" : ""}`}
+            data-testid="mobile-control-tab-pending"
+            onClick={() => onSectionChange("pending")}
           >
-            Controls
+            Pending ({pendingInteractions.length + pendingApprovals.length})
           </button>
           <button
             type="button"
-            className={`cdx-mobile-sheet-tab ${section === "settings" ? "is-active" : ""}`}
-            data-testid="mobile-control-tab-settings"
-            onClick={() => onSectionChange("settings")}
+            className={`cdx-mobile-sheet-tab ${section === "advanced" ? "is-active" : ""}`}
+            data-testid="mobile-control-tab-advanced"
+            onClick={() => onSectionChange("advanced")}
           >
-            Settings
-          </button>
-          <button
-            type="button"
-            className={`cdx-mobile-sheet-tab ${section === "questions" ? "is-active" : ""}`}
-            data-testid="mobile-control-tab-questions"
-            onClick={() => onSectionChange("questions")}
-          >
-            Questions ({pendingInteractions.length})
-          </button>
-          <button
-            type="button"
-            className={`cdx-mobile-sheet-tab ${section === "approvals" ? "is-active" : ""}`}
-            data-testid="mobile-control-tab-approvals"
-            onClick={() => onSectionChange("approvals")}
-          >
-            Approvals ({pendingApprovals.length})
+            Advanced
           </button>
         </nav>
 
         <div className="cdx-mobile-sheet-body">
-          {section === "controls" ? (
-            <div className="cdx-mobile-sheet-block">
-              <button
-                type="button"
-                data-testid="control-stop"
-                className="cdx-toolbar-btn cdx-toolbar-btn--danger"
-                disabled={controlBusy !== null}
-                onClick={() => onControl("stop")}
-              >
-                {controlBusy === "stop" ? "Stopping..." : "Stop"}
-              </button>
-              <button
-                type="button"
-                data-testid="control-retry"
-                className="cdx-toolbar-btn cdx-toolbar-btn--positive"
-                disabled={controlBusy !== null}
-                onClick={() => onControl("retry")}
-              >
-                {controlBusy === "retry" ? "Retrying..." : "Retry"}
-              </button>
-              <button
-                type="button"
-                data-testid="control-cancel"
-                className="cdx-toolbar-btn"
-                disabled={controlBusy !== null}
-                onClick={() => onControl("cancel")}
-              >
-                {controlBusy === "cancel" ? "Cancelling..." : "Cancel"}
-              </button>
-            </div>
-          ) : null}
-
-          {section === "settings" ? (
+          {section === "advanced" ? (
             <div className="cdx-mobile-sheet-form">
               <div className="cdx-mobile-sheet-field" data-testid="mobile-service-tier-field">
                 <span>Speed</span>
@@ -480,12 +432,44 @@ export default function MobileControlSheet({
                   <option value="full-access">Full access (never)</option>
                 </select>
               </label>
+
+              <div className="cdx-mobile-sheet-block" data-testid="mobile-advanced-controls">
+                <button
+                  type="button"
+                  data-testid="control-stop"
+                  className="cdx-toolbar-btn cdx-toolbar-btn--danger"
+                  disabled={controlBusy !== null}
+                  onClick={() => onControl("stop")}
+                >
+                  {controlBusy === "stop" ? "Stopping..." : "Stop"}
+                </button>
+                <button
+                  type="button"
+                  data-testid="control-retry"
+                  className="cdx-toolbar-btn cdx-toolbar-btn--positive"
+                  disabled={controlBusy !== null}
+                  onClick={() => onControl("retry")}
+                >
+                  {controlBusy === "retry" ? "Retrying..." : "Retry"}
+                </button>
+                <button
+                  type="button"
+                  data-testid="control-cancel"
+                  className="cdx-toolbar-btn"
+                  disabled={controlBusy !== null}
+                  onClick={() => onControl("cancel")}
+                >
+                  {controlBusy === "cancel" ? "Cancelling..." : "Cancel"}
+                </button>
+              </div>
             </div>
           ) : null}
 
-          {section === "questions" ? (
-            <div className="cdx-mobile-approvals-list">
-              {pendingInteractions.length === 0 ? <p className="cdx-helper">No pending questions.</p> : null}
+          {section === "pending" ? (
+            <div className="cdx-mobile-approvals-list" data-testid="mobile-pending-list">
+              {pendingInteractions.length === 0 && pendingApprovals.length === 0 ? (
+                <p className="cdx-helper">No pending items.</p>
+              ) : null}
               {pendingInteractions.map((interaction) => {
                 const answers = answersForInteraction(interaction.interactionId, interaction.questions);
                 return (
@@ -583,12 +567,6 @@ export default function MobileControlSheet({
                   </article>
                 );
               })}
-            </div>
-          ) : null}
-
-          {section === "approvals" ? (
-            <div className="cdx-mobile-approvals-list">
-              {pendingApprovals.length === 0 ? <p className="cdx-helper">No pending approvals.</p> : null}
               {pendingApprovals.map((approval) => (
                 <article key={approval.approvalId} className="cdx-mobile-approval-item">
                   <div className="cdx-mobile-approval-head">

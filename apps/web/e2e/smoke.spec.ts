@@ -128,9 +128,9 @@ test("mobile smoke: chat-first thread flow + sheet controls", async ({ page }, t
 
   await page.getByTestId("mobile-topbar-control-toggle").click();
   await expect(page.getByTestId("mobile-control-sheet")).toBeVisible();
-  await page.getByTestId("mobile-control-tab-approvals").click();
+  await page.getByTestId("mobile-control-tab-pending").click();
   await page.getByTestId("approval-allow").first().click();
-  await page.getByTestId("mobile-control-tab-controls").click();
+  await page.getByTestId("mobile-control-tab-advanced").click();
 
   await page.getByTestId("control-stop").click();
 
@@ -192,7 +192,7 @@ test("mobile plan flow: answer questions tab then implement from sheet", async (
   await page.getByTestId("mobile-topbar-control-toggle").click();
   const sheet = page.getByTestId("mobile-control-sheet");
   await expect(sheet).toBeVisible();
-  await sheet.getByTestId("mobile-control-tab-questions").click();
+  await sheet.getByTestId("mobile-control-tab-pending").click();
   await sheet.getByLabel("Staging - safe environment").check();
   await sheet.getByTestId("interaction-submit").evaluate((node: HTMLElement) => {
     node.click();
