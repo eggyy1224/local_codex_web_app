@@ -8,7 +8,6 @@ import {
   useRef,
   useState,
   type CSSProperties,
-  type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
@@ -37,6 +36,7 @@ import type {
 import { resolveGatewayUrl } from "../../lib/gateway-url";
 import { useGatewayConfig } from "../../lib/use-gateway-config";
 import { applyFileMention, useFileMentionSearch } from "../../lib/use-file-mention-search";
+import { useComposerKeyboard } from "../../lib/use-composer-keyboard";
 import {
   DEFAULT_MODEL,
   FALLBACK_MODEL_OPTIONS,
@@ -2051,103 +2051,19 @@ export default function ThreadPage({ params }: Props) {
     void sendTurn();
   }, [prompt, runningTurnId, sendTurn, steerRunningTurn]);
 
-  const handlePromptKeyDown = useCallback((event: ReactKeyboardEvent<HTMLTextAreaElement>) => {
-    if (
-      event.key === "Tab" &&
-      event.shiftKey &&
-      !event.defaultPrevented &&
-      !event.nativeEvent.isComposing &&
-      !event.metaKey &&
-      !event.ctrlKey &&
-      !event.altKey
-    ) {
-      event.preventDefault();
-      toggleCollaborationMode();
-      return;
-    }
-    if (slashMenuOpen && event.key === "ArrowDown") {
-      event.preventDefault();
-      setActiveSlashIndex((prev) => (prev + 1) % slashSuggestions.length);
-      return;
-    }
-    if (slashMenuOpen && event.key === "ArrowUp") {
-      event.preventDefault();
-      setActiveSlashIndex(
-        (prev) => (prev - 1 + slashSuggestions.length) % slashSuggestions.length,
-      );
-      return;
-    }
-    if (
-      slashMenuOpen &&
-      event.key === "Enter" &&
-      !event.shiftKey &&
-      !event.defaultPrevented &&
-      !event.nativeEvent.isComposing &&
-      !event.metaKey &&
-      !event.ctrlKey &&
-      !event.altKey
-    ) {
-      event.preventDefault();
-      const selected = slashSuggestions[activeSlashIndex] ?? slashSuggestions[0];
-      if (selected) {
-        applyPromptSlash(selected.command);
-      }
-      return;
-    }
-    if (
-      slashMenuOpen &&
-      event.key === "Tab" &&
-      !event.shiftKey &&
-      !event.defaultPrevented &&
-      !event.nativeEvent.isComposing &&
-      !event.metaKey &&
-      !event.ctrlKey &&
-      !event.altKey
-    ) {
-      event.preventDefault();
-      const selected = slashSuggestions[activeSlashIndex] ?? slashSuggestions[0];
-      if (selected) {
-        applyPromptSlash(selected.command);
-      }
-      return;
-    }
-    if (slashMenuOpen && event.key === "Escape") {
-      event.preventDefault();
-      setSlashMenuDismissed(true);
-      return;
-    }
-    if (fileMentionOpen && event.key === "Escape") {
-      event.preventDefault();
-      setFileMentionDismissed(true);
-      return;
-    }
-    if (event.key !== "Enter" || event.shiftKey) {
-      return;
-    }
-    if (
-      event.defaultPrevented ||
-      event.nativeEvent.isComposing ||
-      event.metaKey ||
-      event.ctrlKey ||
-      event.altKey
-    ) {
-      return;
-    }
-    if (isMobileViewport) {
-      return;
-    }
-    event.preventDefault();
-    submitComposer();
-  }, [
+  const handlePromptKeyDown = useComposerKeyboard({
     activeSlashIndex,
-    applyPromptSlash,
-    fileMentionOpen,
     isMobileViewport,
     slashMenuOpen,
     slashSuggestions,
-    submitComposer,
-    toggleCollaborationMode,
-  ]);
+    setActiveSlashIndex,
+    onAcceptSlash: applyPromptSlash,
+    onDismissSlash: () => setSlashMenuDismissed(true),
+    onSubmit: submitComposer,
+    secondaryEscapeOpen: fileMentionOpen,
+    onSecondaryEscape: () => setFileMentionDismissed(true),
+    onShiftTab: toggleCollaborationMode,
+  });
 
   useEffect(() => {
     if (!threadId || statusQueryHandledRef.current) {

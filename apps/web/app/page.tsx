@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import type {
   CreateReviewRequest,
@@ -28,6 +28,7 @@ import {
   type KnownSlashCommand,
 } from "./lib/slash-commands";
 import { formatEffortLabel } from "./lib/thread-logic";
+import { useComposerKeyboard } from "./lib/use-composer-keyboard";
 
 type UiState = {
   loading: boolean;
@@ -410,6 +411,21 @@ export default function HomePage() {
     setActiveSlashIndex(0);
   }
 
+  const isMobileViewport = useCallback(
+    () => window.matchMedia("(max-width: 1024px)").matches,
+    [],
+  );
+  const handleComposerKeyDown = useComposerKeyboard({
+    activeSlashIndex,
+    isMobileViewport,
+    slashMenuOpen,
+    slashSuggestions,
+    setActiveSlashIndex,
+    onAcceptSlash: applyComposerSlash,
+    onDismissSlash: () => setSlashMenuDismissed(true),
+    onSubmit: () => void onSubmitComposer(),
+  });
+
   return (
     <div className={`cdx-app ${sidebarOpen ? "" : "cdx-app--sidebar-collapsed"}`}>
       <header className="cdx-topbar">
@@ -533,74 +549,7 @@ export default function HomePage() {
                 setComposerText(event.target.value);
                 setSlashMenuDismissed(false);
               }}
-              onKeyDown={(event) => {
-                if (slashMenuOpen && event.key === "ArrowDown") {
-                  event.preventDefault();
-                  setActiveSlashIndex((prev) => (prev + 1) % slashSuggestions.length);
-                  return;
-                }
-                if (slashMenuOpen && event.key === "ArrowUp") {
-                  event.preventDefault();
-                  setActiveSlashIndex(
-                    (prev) => (prev - 1 + slashSuggestions.length) % slashSuggestions.length,
-                  );
-                  return;
-                }
-                if (
-                  slashMenuOpen &&
-                  event.key === "Enter" &&
-                  !event.shiftKey &&
-                  !event.metaKey &&
-                  !event.ctrlKey &&
-                  !event.altKey &&
-                  !event.nativeEvent.isComposing
-                ) {
-                  event.preventDefault();
-                  const selected = slashSuggestions[activeSlashIndex] ?? slashSuggestions[0];
-                  if (selected) {
-                    applyComposerSlash(selected.command);
-                  }
-                  return;
-                }
-                if (
-                  slashMenuOpen &&
-                  event.key === "Tab" &&
-                  !event.shiftKey &&
-                  !event.metaKey &&
-                  !event.ctrlKey &&
-                  !event.altKey &&
-                  !event.nativeEvent.isComposing
-                ) {
-                  event.preventDefault();
-                  const selected = slashSuggestions[activeSlashIndex] ?? slashSuggestions[0];
-                  if (selected) {
-                    applyComposerSlash(selected.command);
-                  }
-                  return;
-                }
-                if (slashMenuOpen && event.key === "Escape") {
-                  event.preventDefault();
-                  setSlashMenuDismissed(true);
-                  return;
-                }
-                if (event.key !== "Enter" || event.shiftKey) {
-                  return;
-                }
-                if (
-                  event.defaultPrevented ||
-                  event.nativeEvent.isComposing ||
-                  event.metaKey ||
-                  event.ctrlKey ||
-                  event.altKey
-                ) {
-                  return;
-                }
-                if (window.matchMedia("(max-width: 1024px)").matches) {
-                  return;
-                }
-                event.preventDefault();
-                void onSubmitComposer();
-              }}
+              onKeyDown={handleComposerKeyDown}
               placeholder="Ask Codex anything, / for commands"
               rows={3}
             />
