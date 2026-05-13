@@ -1,5 +1,3 @@
-import { createReadStream } from "node:fs";
-import { createInterface } from "node:readline";
 import cors from "@fastify/cors";
 import websocket from "@fastify/websocket";
 import Fastify, { type FastifyInstance } from "fastify";
@@ -16,27 +14,14 @@ import {
   type ApprovalProjection,
   type InteractionProjection,
   type GatewayDbPort,
-  type ThreadProjection,
 } from "./db.js";
 import {
   approvalTypeFromMethod,
-  applyFilters,
-  asRecord,
-  isResumeNeeded,
   isUserInputRequestMethod,
   kindFromMethod,
-  permissionModeToTurnStartParams,
-  readString,
-  statusFromRaw,
-  toModelOption,
-  toThreadListItem,
-  type RawModel,
-  type RawThread,
-  type RawTurn,
 } from "./gatewayHelpers.js";
 import { TerminalManager } from "./terminalManager.js";
-import { parseTimelineItemsFromLines } from "./timelineParser.js";
-import { ThreadContextResolver, normalizeProjectKey } from "./threadContext.js";
+import { ThreadContextResolver } from "./threadContext.js";
 import { registerApprovalInteractionRoutes } from "./routes/approvalInteractionRoutes.js";
 import { registerConfigRoutes } from "./routes/configRoutes.js";
 import { registerMiscRoutes } from "./routes/miscRoutes.js";
