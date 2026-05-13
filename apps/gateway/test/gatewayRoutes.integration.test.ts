@@ -1408,4 +1408,75 @@ describe("gateway integration routes", () => {
       await ctx.close();
     }
   });
+
+  it("GET /api/config maps service_tier/model/reasoning_effort from config/read", async () => {
+    const ctx = await createTestContext();
+    try {
+      ctx.stub.handlers.set("config/read", () => ({
+        config: {
+          service_tier: "fast",
+          model: "gpt-5.5",
+          reasoning_effort: "medium",
+          unrelated: { ignored: true },
+        },
+        origins: {},
+      }));
+      const res = await ctx.app.inject({ method: "GET", url: "/api/config" });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({
+        config: { serviceTier: "fast", model: "gpt-5.5", reasoningEffort: "medium" },
+        filePath: null,
+        version: null,
+      });
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  it("POST /api/config/value forwards keyPath/value/mergeStrategy and returns status", async () => {
+    const ctx = await createTestContext();
+    try {
+      let captured: unknown = null;
+      ctx.stub.handlers.set("config/value/write", (params) => {
+        captured = params;
+        return {
+          status: "ok",
+          filePath: "/Users/x/.codex/config.toml",
+          version: "sha256:abc",
+        };
+      });
+      const res = await ctx.app.inject({
+        method: "POST",
+        url: "/api/config/value",
+        payload: { keyPath: "service_tier", value: "flex" },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({
+        status: "ok",
+        filePath: "/Users/x/.codex/config.toml",
+        version: "sha256:abc",
+      });
+      expect(captured).toMatchObject({
+        keyPath: "service_tier",
+        value: "flex",
+        mergeStrategy: "replace",
+      });
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  it("POST /api/config/value rejects missing keyPath with 400", async () => {
+    const ctx = await createTestContext();
+    try {
+      const res = await ctx.app.inject({
+        method: "POST",
+        url: "/api/config/value",
+        payload: { value: "flex" },
+      });
+      expect(res.statusCode).toBe(400);
+    } finally {
+      await ctx.close();
+    }
+  });
 });

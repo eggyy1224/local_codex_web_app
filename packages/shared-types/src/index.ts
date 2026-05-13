@@ -282,6 +282,33 @@ export type InteractionRespondResponse = {
   ok: true;
 };
 
+export type ServiceTier = "fast" | "flex";
+
+export type GatewayConfigSnapshot = {
+  serviceTier: ServiceTier | null;
+  model: string | null;
+  reasoningEffort: string | null;
+};
+
+export type GatewayConfigResponse = {
+  config: GatewayConfigSnapshot;
+  filePath: string | null;
+  version: string | null;
+};
+
+export type GatewayConfigValueWriteRequest = {
+  keyPath: string;
+  value: unknown;
+  mergeStrategy?: "replace" | "upsert";
+  expectedVersion?: string | null;
+};
+
+export type GatewayConfigValueWriteResponse = {
+  status: "ok" | "noop";
+  filePath: string | null;
+  version: string | null;
+};
+
 export type ThreadControlRequest = {
   action: "stop" | "retry" | "cancel";
 };
