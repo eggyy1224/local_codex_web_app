@@ -1752,8 +1752,21 @@ export default function ThreadPage({ params }: Props) {
           effort: thinkingEffort,
           permissionMode,
         };
-        if (activeProjectKey !== "unknown") {
-          options.cwd = activeProjectKey;
+        // Prefer the cwd the gateway resolved for THIS thread (from its
+        // session metadata) over the inferred activeProjectKey. When a thread
+        // was just created in a project that hasn't propagated into the global
+        // threadList yet, activeProjectKey falls back to whatever the most-
+        // recently-active project happens to be — which means the very first
+        // turn used to fire in the wrong cwd and Codex would chdir to the
+        // wrong project. threadContext.resolvedCwd is per-thread truth and
+        // doesn't suffer that race.
+        const turnCwd = threadContext?.resolvedCwd && !threadContext.isFallback
+          ? threadContext.resolvedCwd
+          : activeProjectKey !== "unknown"
+            ? activeProjectKey
+            : null;
+        if (turnCwd) {
+          options.cwd = turnCwd;
         }
         if (modeForTurn === "plan") {
           options.collaborationMode = "plan";
@@ -1794,7 +1807,7 @@ export default function ThreadPage({ params }: Props) {
         }
       }
     },
-    [activeProjectKey, collaborationMode, model, permissionMode, thinkingEffort, submitting, threadId],
+    [activeProjectKey, collaborationMode, model, permissionMode, thinkingEffort, submitting, threadId, threadContext],
   );
 
   const startReview = useCallback(

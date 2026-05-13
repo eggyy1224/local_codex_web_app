@@ -2819,6 +2819,94 @@ describe("Thread page integration", () => {
     });
   });
 
+  it("submitTurnText uses the thread's resolved cwd, not the global activeProjectKey fallback (regression)", async () => {
+    // Reproduces the user-reported bug: after pressing "+" in project B's
+    // group, the new thread was created in /repos/beta (correct), but the
+    // FIRST turn went to options.cwd = /repos/alpha because the new thread
+    // hadn't propagated into threadList yet and activeProjectKey fell back to
+    // the most-recently-active project. The fix is to prefer threadContext's
+    // per-thread resolvedCwd over the global fallback.
+    vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+    const turnCalls: Array<{ options?: { cwd?: string } }> = [];
+
+    server.use(
+      http.get("http://127.0.0.1:8795/api/threads/:id", ({ params }) =>
+        HttpResponse.json({
+          thread: {
+            id: String(params.id),
+            title: "Newly created beta thread",
+            preview: "",
+            status: "idle",
+            createdAt: null,
+            updatedAt: null,
+          },
+          turns: [],
+          nextCursor: null,
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/approvals/pending", () =>
+        HttpResponse.json({ data: [] }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/interactions/pending", () =>
+        HttpResponse.json({ data: [] }),
+      ),
+      // The thread list does NOT yet include thread-new — simulating the
+      // race window between create and list propagation.
+      http.get("http://127.0.0.1:8795/api/threads", () =>
+        HttpResponse.json({
+          data: [
+            {
+              id: "thread-alpha",
+              projectKey: "/repos/alpha",
+              title: "Alpha most-recent",
+              preview: "",
+              status: "idle",
+              lastActiveAt: "2026-01-05T00:00:00.000Z",
+              archived: false,
+              waitingApprovalCount: 0,
+              errorCount: 0,
+            },
+          ],
+          nextCursor: null,
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/timeline", () =>
+        HttpResponse.json({ data: [] }),
+      ),
+      // The per-thread context endpoint IS authoritative: gateway already
+      // recorded the new thread in /repos/beta because we POSTed cwd=/repos/beta.
+      http.get("http://127.0.0.1:8795/api/threads/:id/context", () =>
+        HttpResponse.json({
+          threadId: "thread-new",
+          cwd: "/repos/beta",
+          resolvedCwd: "/repos/beta",
+          isFallback: false,
+          source: "session_meta",
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/models", () => HttpResponse.json({ data: [] })),
+      http.post("http://127.0.0.1:8795/api/threads/:id/turns", async ({ request }) => {
+        turnCalls.push((await request.json()) as { options?: { cwd?: string } });
+        return HttpResponse.json({ turnId: "turn-1" });
+      }),
+    );
+
+    render(<ThreadPage params={Promise.resolve({ id: "thread-new" })} />);
+    // Wait for threadContext to be reflected in the cwd status pill so we
+    // know the fetch completed before we send the turn.
+    await screen.findByText(/cwd: \/repos\/beta/);
+    const textarea = screen.getByTestId("turn-input");
+    fireEvent.change(textarea, { target: { value: "!pwd" } });
+    fireEvent.keyDown(textarea, { key: "Enter" });
+
+    await waitFor(() => {
+      expect(turnCalls).toHaveLength(1);
+    });
+    // Must be the thread's own cwd from /context, NOT the activeProjectKey
+    // fallback (/repos/alpha).
+    expect(turnCalls[0].options?.cwd).toBe("/repos/beta");
+  });
+
   it("desktop questions flow: composer stays enabled and submits interaction answers", async () => {
     vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
     const interactionCalls: Array<unknown> = [];
