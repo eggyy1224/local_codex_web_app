@@ -2256,8 +2256,22 @@ export default function ThreadPage({ params }: Props) {
           onPromptKeyDown={handlePromptKeyDown}
           onApplySlash={applyPromptSlash}
           onSend={submitComposer}
-          onOpenControls={() => openControlSheet("advanced", "half")}
-          onSwipeOpenControls={() => openControlSheet("advanced", "full")}
+          onOpenControls={() =>
+            openControlSheet(
+              pendingInteractionList.length > 0 || pendingApprovalList.length > 0
+                ? "pending"
+                : "advanced",
+              "half",
+            )
+          }
+          onSwipeOpenControls={() =>
+            openControlSheet(
+              pendingInteractionList.length > 0 || pendingApprovalList.length > 0
+                ? "pending"
+                : "advanced",
+              "full",
+            )
+          }
         />
 
         <MobileControlSheet

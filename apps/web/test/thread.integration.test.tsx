@@ -522,6 +522,139 @@ describe("Thread page integration", () => {
     });
   });
 
+  it("mobile sheet defaults to Pending when topbar opens it with pending items", async () => {
+    setMobileViewport(true);
+    vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+
+    server.use(
+      http.get("http://127.0.0.1:8795/api/threads/:id", ({ params }) =>
+        HttpResponse.json({
+          thread: {
+            id: String(params.id),
+            title: "Default Open",
+            preview: "",
+            status: "idle",
+            createdAt: null,
+            updatedAt: null,
+          },
+          turns: [],
+          nextCursor: null,
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/approvals/pending", () =>
+        HttpResponse.json({
+          data: [
+            {
+              approvalId: "ap-default-open",
+              threadId: "thread-1",
+              turnId: "turn-1",
+              itemId: null,
+              type: "commandExecution",
+              status: "pending",
+              reason: "Reason",
+              commandPreview: "echo 1",
+              fileChangePreview: null,
+              createdAt: "2026-01-01T00:00:00.000Z",
+              resolvedAt: null,
+            },
+          ],
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads", () =>
+        HttpResponse.json({ data: [], nextCursor: null }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/timeline", () =>
+        HttpResponse.json({ data: [] }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/context", () =>
+        HttpResponse.json({
+          threadId: "thread-1",
+          cwd: "/tmp/project",
+          resolvedCwd: "/tmp/project",
+          isFallback: false,
+          source: "projection",
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/models", () => HttpResponse.json({ data: [] })),
+    );
+
+    render(<ThreadPage params={Promise.resolve({ id: "thread-1" })} />);
+    await screen.findByTestId("mobile-action-layer");
+
+    fireEvent.click(screen.getByTestId("mobile-topbar-control-toggle"));
+    const sheet = await screen.findByTestId("mobile-control-sheet");
+    expect(within(sheet).getByTestId("mobile-control-tab-pending")).toHaveClass("is-active");
+    expect(within(sheet).getByTestId("mobile-control-tab-advanced")).not.toHaveClass(
+      "is-active",
+    );
+    // The sheet's Pending body should be rendering the approval card too.
+    expect(within(sheet).getByTestId("approval-allow")).toBeInTheDocument();
+  });
+
+  it("mobile composer + button defaults to Pending when pending items exist", async () => {
+    setMobileViewport(true);
+    vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+
+    server.use(
+      http.get("http://127.0.0.1:8795/api/threads/:id", ({ params }) =>
+        HttpResponse.json({
+          thread: {
+            id: String(params.id),
+            title: "Composer Default",
+            preview: "",
+            status: "idle",
+            createdAt: null,
+            updatedAt: null,
+          },
+          turns: [],
+          nextCursor: null,
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/approvals/pending", () =>
+        HttpResponse.json({
+          data: [
+            {
+              approvalId: "ap-composer-open",
+              threadId: "thread-1",
+              turnId: "turn-1",
+              itemId: null,
+              type: "commandExecution",
+              status: "pending",
+              reason: "Run",
+              commandPreview: "echo 2",
+              fileChangePreview: null,
+              createdAt: "2026-01-01T00:00:00.000Z",
+              resolvedAt: null,
+            },
+          ],
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads", () =>
+        HttpResponse.json({ data: [], nextCursor: null }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/timeline", () =>
+        HttpResponse.json({ data: [] }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/context", () =>
+        HttpResponse.json({
+          threadId: "thread-1",
+          cwd: "/tmp/project",
+          resolvedCwd: "/tmp/project",
+          isFallback: false,
+          source: "projection",
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/models", () => HttpResponse.json({ data: [] })),
+    );
+
+    render(<ThreadPage params={Promise.resolve({ id: "thread-1" })} />);
+    await screen.findByTestId("mobile-action-layer");
+
+    fireEvent.click(screen.getByTestId("mobile-composer-control-toggle"));
+    const sheet = await screen.findByTestId("mobile-control-sheet");
+    expect(within(sheet).getByTestId("mobile-control-tab-pending")).toHaveClass("is-active");
+  });
+
   it("mobile action layer shows N-pending counter and reveals next approval after deny", async () => {
     setMobileViewport(true);
     vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
