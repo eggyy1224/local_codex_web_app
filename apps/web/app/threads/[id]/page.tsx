@@ -358,6 +358,7 @@ export default function ThreadPage({ params }: Props) {
   const [threadListLoading, setThreadListLoading] = useState(true);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [isThreadSwitcherOpen, setIsThreadSwitcherOpen] = useState(false);
+  const [switcherCollapsedGroups, setSwitcherCollapsedGroups] = useState<Set<string>>(() => new Set());
   const [isControlSheetOpen, setIsControlSheetOpen] = useState(false);
   const [controlSheetSection, setControlSheetSection] = useState<ControlSheetSection>("advanced");
   const [controlSheetSnap, setControlSheetSnap] = useState<ControlSheetSnap>("half");
@@ -1387,9 +1388,10 @@ export default function ThreadPage({ params }: Props) {
     [desktopQuestionDrafts],
   );
 
-  async function createThread(): Promise<void> {
+  async function createThread(targetProjectKey?: string): Promise<void> {
+    const projectKey = targetProjectKey ?? activeProjectKey;
     try {
-      const body = activeProjectKey !== "unknown" ? { cwd: activeProjectKey } : {};
+      const body = projectKey && projectKey !== "unknown" ? { cwd: projectKey } : {};
       const res = await fetch(`${gatewayUrl}/api/threads`, {
         method: "POST",
         headers: {
@@ -2417,9 +2419,25 @@ export default function ThreadPage({ params }: Props) {
         <MobileThreadSwitcherOverlay
           open={isThreadSwitcherOpen}
           groups={mobileThreadSwitcherGroups}
+          collapsedGroups={switcherCollapsedGroups}
           loading={threadListLoading}
           onClose={() => setIsThreadSwitcherOpen(false)}
           onSelect={selectThreadFromMobileSwitcher}
+          onToggleGroup={(key) =>
+            setSwitcherCollapsedGroups((prev) => {
+              const next = new Set(prev);
+              if (next.has(key)) {
+                next.delete(key);
+              } else {
+                next.add(key);
+              }
+              return next;
+            })
+          }
+          onCreateThread={(projectKey) => {
+            setIsThreadSwitcherOpen(false);
+            void createThread(projectKey);
+          }}
         />
       </div>
     );

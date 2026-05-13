@@ -22,9 +22,12 @@ export type MobileThreadSwitcherGroup = {
 type MobileThreadSwitcherOverlayProps = {
   open: boolean;
   groups: MobileThreadSwitcherGroup[];
+  collapsedGroups: Set<string>;
   loading: boolean;
   onClose: () => void;
   onSelect: (threadId: string) => void;
+  onToggleGroup: (groupKey: string) => void;
+  onCreateThread: (projectKey: string) => void;
 };
 
 type StatusBadge = {
@@ -51,9 +54,12 @@ function badgeForItem(item: MobileThreadSwitcherItem): StatusBadge {
 export default function MobileThreadSwitcherOverlay({
   open,
   groups,
+  collapsedGroups,
   loading,
   onClose,
   onSelect,
+  onToggleGroup,
+  onCreateThread,
 }: MobileThreadSwitcherOverlayProps) {
   const closeBtnRef = useRef<HTMLButtonElement | null>(null);
 
@@ -107,50 +113,80 @@ export default function MobileThreadSwitcherOverlay({
         <div className="cdx-mobile-thread-switcher-list">
           {loading ? <p className="cdx-helper">Loading thread list...</p> : null}
           {!loading && isEmpty ? <p className="cdx-helper">No threads yet.</p> : null}
-          {groups.map((group) =>
-            group.items.length === 0 ? null : (
+          {groups.map((group) => {
+            const collapsed = collapsedGroups.has(group.key);
+            return (
               <section
                 key={group.key}
-                className="cdx-mobile-thread-switcher-group"
+                className={`cdx-mobile-thread-switcher-group ${collapsed ? "is-collapsed" : ""}`}
                 data-testid="mobile-thread-switcher-group"
                 data-project-key={group.key}
               >
                 <header className="cdx-mobile-thread-switcher-group-head">
-                  <span className="cdx-mobile-thread-switcher-group-label">{group.label}</span>
-                  <span className="cdx-mobile-thread-switcher-group-count">{group.items.length}</span>
-                </header>
-                {group.items.map((item) => {
-                  const badge = badgeForItem(item);
-                  return (
-                    <button
-                      key={item.id}
-                      type="button"
-                      className={`cdx-mobile-thread-switcher-item ${item.isActive ? "is-active" : ""}`}
-                      data-testid="mobile-thread-switcher-item"
-                      data-status={badge.kind}
-                      onClick={() => onSelect(item.id)}
+                  <button
+                    type="button"
+                    className="cdx-mobile-thread-switcher-group-toggle"
+                    data-testid="mobile-thread-switcher-group-toggle"
+                    aria-expanded={!collapsed}
+                    aria-controls={`group-${group.key}`}
+                    onClick={() => onToggleGroup(group.key)}
+                  >
+                    <span
+                      className="cdx-mobile-thread-switcher-group-caret"
+                      aria-hidden="true"
                     >
-                      <span
-                        className={`cdx-mobile-thread-switcher-status cdx-mobile-thread-switcher-status--${badge.kind}`}
-                        aria-hidden="true"
-                      />
-                      <span className="cdx-mobile-thread-switcher-item-body">
-                        <span className="cdx-mobile-thread-switcher-item-title">{item.title}</span>
-                        <span className="cdx-mobile-thread-switcher-item-meta">
+                      {collapsed ? "▸" : "▾"}
+                    </span>
+                    <span className="cdx-mobile-thread-switcher-group-label">{group.label}</span>
+                    <span className="cdx-mobile-thread-switcher-group-count">{group.items.length}</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="cdx-mobile-thread-switcher-group-new"
+                    data-testid="mobile-thread-switcher-group-new"
+                    data-project-key={group.key}
+                    aria-label={`New thread in ${group.label}`}
+                    onClick={() => onCreateThread(group.key)}
+                  >
+                    +
+                  </button>
+                </header>
+                {collapsed ? null : (
+                  <div className="cdx-mobile-thread-switcher-group-items" id={`group-${group.key}`}>
+                    {group.items.map((item) => {
+                      const badge = badgeForItem(item);
+                      return (
+                        <button
+                          key={item.id}
+                          type="button"
+                          className={`cdx-mobile-thread-switcher-item ${item.isActive ? "is-active" : ""}`}
+                          data-testid="mobile-thread-switcher-item"
+                          data-status={badge.kind}
+                          onClick={() => onSelect(item.id)}
+                        >
                           <span
-                            className={`cdx-mobile-thread-switcher-badge cdx-mobile-thread-switcher-badge--${badge.kind}`}
-                          >
-                            {badge.label}
+                            className={`cdx-mobile-thread-switcher-status cdx-mobile-thread-switcher-status--${badge.kind}`}
+                            aria-hidden="true"
+                          />
+                          <span className="cdx-mobile-thread-switcher-item-body">
+                            <span className="cdx-mobile-thread-switcher-item-title">{item.title}</span>
+                            <span className="cdx-mobile-thread-switcher-item-meta">
+                              <span
+                                className={`cdx-mobile-thread-switcher-badge cdx-mobile-thread-switcher-badge--${badge.kind}`}
+                              >
+                                {badge.label}
+                              </span>
+                              <span>{item.lastActiveAt}</span>
+                            </span>
                           </span>
-                          <span>{item.lastActiveAt}</span>
-                        </span>
-                      </span>
-                    </button>
-                  );
-                })}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
               </section>
-            ),
-          )}
+            );
+          })}
         </div>
       </section>
     </div>

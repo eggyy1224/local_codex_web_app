@@ -350,6 +350,121 @@ describe("Thread page integration", () => {
     });
   });
 
+  it("mobile thread switcher groups by project, collapses per group, and creates a new thread in the chosen project", async () => {
+    setMobileViewport(true);
+    vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+
+    const createCalls: unknown[] = [];
+    server.use(
+      http.get("http://127.0.0.1:8795/api/threads/:id", ({ params }) =>
+        HttpResponse.json({
+          thread: {
+            id: String(params.id),
+            title: "Switcher Thread",
+            preview: "",
+            status: "idle",
+            createdAt: null,
+            updatedAt: null,
+          },
+          turns: [],
+          nextCursor: null,
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/approvals/pending", () =>
+        HttpResponse.json({ data: [] }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/interactions/pending", () =>
+        HttpResponse.json({ data: [] }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads", () =>
+        HttpResponse.json({
+          data: [
+            {
+              id: "thread-1",
+              projectKey: "/repos/alpha",
+              title: "Alpha Active",
+              preview: "",
+              status: "active",
+              lastActiveAt: "2026-01-03T00:00:00.000Z",
+              archived: false,
+              waitingApprovalCount: 0,
+              errorCount: 0,
+            },
+            {
+              id: "thread-2",
+              projectKey: "/repos/alpha",
+              title: "Alpha Idle",
+              preview: "",
+              status: "idle",
+              lastActiveAt: "2026-01-02T00:00:00.000Z",
+              archived: false,
+              waitingApprovalCount: 0,
+              errorCount: 0,
+            },
+            {
+              id: "thread-3",
+              projectKey: "/repos/beta",
+              title: "Beta Waiting",
+              preview: "",
+              status: "idle",
+              lastActiveAt: "2026-01-01T00:00:00.000Z",
+              archived: false,
+              waitingApprovalCount: 2,
+              errorCount: 0,
+            },
+          ],
+          nextCursor: null,
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/timeline", () => HttpResponse.json({ data: [] })),
+      http.get("http://127.0.0.1:8795/api/threads/:id/context", () =>
+        HttpResponse.json({
+          threadId: "thread-1",
+          cwd: "/repos/alpha",
+          resolvedCwd: "/repos/alpha",
+          isFallback: false,
+          source: "projection",
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/models", () => HttpResponse.json({ data: [] })),
+      http.post("http://127.0.0.1:8795/api/threads", async ({ request }) => {
+        const body = await request.json();
+        createCalls.push(body);
+        return HttpResponse.json({ threadId: "thread-new-beta" });
+      }),
+    );
+
+    render(<ThreadPage params={Promise.resolve({ id: "thread-1" })} />);
+
+    fireEvent.click(await screen.findByLabelText("Open threads"));
+    await screen.findByTestId("mobile-thread-switcher-overlay");
+
+    // Both projects are surfaced as separate groups.
+    const groups = await screen.findAllByTestId("mobile-thread-switcher-group");
+    expect(groups).toHaveLength(2);
+
+    // The active thread surfaces a running badge; the beta thread surfaces a waiting badge.
+    expect(screen.getByText("Running")).toBeInTheDocument();
+    expect(screen.getByText("2 pending")).toBeInTheDocument();
+
+    // Collapse the alpha group — its two items should disappear, but the beta group still renders its item.
+    const alphaToggle = within(groups[0]).getByTestId("mobile-thread-switcher-group-toggle");
+    fireEvent.click(alphaToggle);
+    await waitFor(() => {
+      expect(within(groups[0]).queryAllByTestId("mobile-thread-switcher-item")).toHaveLength(0);
+      expect(screen.queryByText("Alpha Active")).not.toBeInTheDocument();
+    });
+    expect(screen.getByText("Beta Waiting")).toBeInTheDocument();
+
+    // The "+" button in the beta group creates a new thread scoped to that project's cwd.
+    const betaPlus = within(groups[1]).getByTestId("mobile-thread-switcher-group-new");
+    fireEvent.click(betaPlus);
+    await waitFor(() => {
+      expect(createCalls).toEqual([{ cwd: "/repos/beta" }]);
+      expect(pushMock).toHaveBeenCalledWith("/threads/thread-new-beta");
+    });
+  });
+
   it("mobile settings tab toggles service tier via /api/config/value", async () => {
     setMobileViewport(true);
     vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
