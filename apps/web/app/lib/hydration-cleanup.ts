@@ -1,0 +1,5 @@
+export const hydrationAttributeCleanupScript =
+  '(()=>{const a="__gcrremoteframetoken";const c=()=>document.documentElement.removeAttribute(a);c();new MutationObserver(c).observe(document.documentElement,{attributes:true,attributeFilter:[a]});})();';
+
+export const nextDevIndicatorCleanupScript =
+  '(()=>{const p=(u,b)=>fetch(u,{method:"POST",headers:b?{"content-type":"application/json"}:void 0,body:b?JSON.stringify(b):void 0}).catch(()=>{});const h=()=>{const s=new WeakSet;const r=o=>{if(!o||s.has(o))return;s.add(o);const c=()=>["data-devtools-indicator","next-logo"].forEach(i=>o.getElementById(i)?.style.setProperty("display","none","important"));c();new MutationObserver(c).observe(o,{childList:true,subtree:true})};const c=()=>document.querySelectorAll("nextjs-portal").forEach(e=>r(e.shadowRoot));c();new MutationObserver(c).observe(document.documentElement,{childList:true,subtree:true})};p("/__nextjs_disable_dev_indicator");p("/__nextjs_devtools_config",{disableDevIndicator:true});document.readyState==="loading"?document.addEventListener("DOMContentLoaded",h,{once:true}):h();})();';
