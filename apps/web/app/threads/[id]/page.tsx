@@ -1491,6 +1491,33 @@ export default function ThreadPage({ params }: Props) {
     }
   }
 
+  const interruptRunningTurn = useCallback(async (turnId: string): Promise<void> => {
+    if (!threadId || !turnId || controlBusy) {
+      return;
+    }
+    const requestThreadId = threadId;
+    setControlBusy("stop");
+    setControlError(null);
+    try {
+      const res = await fetch(`${gatewayUrl}/api/threads/${requestThreadId}/interrupt`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ turnId }),
+      });
+      if (!res.ok) {
+        throw new Error(`interrupt http ${res.status}`);
+      }
+    } catch (err) {
+      if (activeThreadIdRef.current === requestThreadId) {
+        setControlError(err instanceof Error ? err.message : "interrupt failed");
+      }
+    } finally {
+      if (activeThreadIdRef.current === requestThreadId) {
+        setControlBusy(null);
+      }
+    }
+  }, [controlBusy, threadId]);
+
   const sendControl = useCallback(async (action: ThreadControlRequest["action"]): Promise<void> => {
     if (!threadId || controlBusy) {
       return;
@@ -2058,6 +2085,7 @@ export default function ThreadPage({ params }: Props) {
     [visibleConversationTurns],
   );
   const isThinkingActive = submitting || streamingTurnCount > 0;
+  const runningTurnId = latestStreamingTurn?.turnId ?? null;
   const thinkingBannerText = submitting
     ? "Preparing request..."
     : latestStreamingTurn?.thinkingText
@@ -2072,6 +2100,9 @@ export default function ThreadPage({ params }: Props) {
           collaborationMode={collaborationMode}
           serviceTier={gatewayConfig.config?.serviceTier ?? null}
           pendingActionCount={pendingActionCount}
+          runningTurnId={runningTurnId}
+          stopBusy={controlBusy === "stop"}
+          onStop={(turnId) => void interruptRunningTurn(turnId)}
           onOpenThreads={() => setIsThreadSwitcherOpen(true)}
           onOpenControls={() =>
             openControlSheet(

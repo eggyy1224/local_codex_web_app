@@ -1217,6 +1217,20 @@ textarea {
   background: rgba(255, 255, 255, 0.11);
 }
 
+.cdx-mobile-icon-btn--stop {
+  background: rgba(231, 92, 92, 0.18);
+  border-color: rgba(231, 92, 92, 0.45);
+  color: rgba(255, 196, 196, 0.95);
+}
+
+.cdx-mobile-icon-btn--stop:active:not(:disabled) {
+  background: rgba(231, 92, 92, 0.32);
+}
+
+.cdx-mobile-icon-btn--stop:disabled {
+  opacity: 0.5;
+}
+
 .cdx-mobile-dot {
   position: absolute;
   top: 4px;

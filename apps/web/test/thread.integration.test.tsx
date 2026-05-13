@@ -435,6 +435,107 @@ describe("Thread page integration", () => {
     });
   });
 
+  it("mobile topbar shows Stop button during a streaming turn and posts to /interrupt", async () => {
+    setMobileViewport(true);
+    vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+
+    const interruptCalls: Array<{ threadId: string; body: unknown }> = [];
+
+    server.use(
+      http.get("http://127.0.0.1:8795/api/threads/:id", ({ params }) =>
+        HttpResponse.json({
+          thread: {
+            id: String(params.id),
+            title: "Running Thread",
+            preview: "",
+            status: "active",
+            createdAt: null,
+            updatedAt: null,
+          },
+          turns: [
+            {
+              id: "turn-running",
+              status: "inProgress",
+              startedAt: null,
+              completedAt: null,
+              error: null,
+              items: [],
+            },
+          ],
+          nextCursor: null,
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/approvals/pending", () =>
+        HttpResponse.json({ data: [] }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads", () =>
+        HttpResponse.json({ data: [], nextCursor: null }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/timeline", () =>
+        HttpResponse.json({
+          data: [
+            {
+              id: "tl-start",
+              ts: "2026-05-13T10:00:00.000Z",
+              turnId: "turn-running",
+              type: "status",
+              title: "Turn started",
+              text: null,
+              rawType: "turn/started",
+              toolName: null,
+              callId: null,
+            },
+            {
+              id: "tl-delta",
+              ts: "2026-05-13T10:00:01.000Z",
+              turnId: "turn-running",
+              type: "assistantMessage",
+              title: "Codex",
+              text: "thinking…",
+              rawType: "item/agentMessage/delta",
+              toolName: null,
+              callId: null,
+            },
+          ],
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/context", () =>
+        HttpResponse.json({
+          threadId: "thread-1",
+          cwd: "/tmp/project",
+          resolvedCwd: "/tmp/project",
+          isFallback: false,
+          source: "projection",
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/models", () => HttpResponse.json({ data: [] })),
+      http.post(
+        "http://127.0.0.1:8795/api/threads/:id/interrupt",
+        async ({ params, request }) => {
+          interruptCalls.push({ threadId: String(params.id), body: await request.json() });
+          return HttpResponse.json({ ok: true });
+        },
+      ),
+    );
+
+    render(<ThreadPage params={Promise.resolve({ id: "thread-1" })} />);
+
+    // Stop appears once the running turn is detected.
+    const stopBtn = await screen.findByTestId("mobile-topbar-stop");
+    expect(stopBtn).toBeInTheDocument();
+    expect(screen.queryByTestId("mobile-topbar-control-toggle")).not.toBeInTheDocument();
+
+    fireEvent.click(stopBtn);
+
+    await waitFor(() => {
+      expect(interruptCalls).toHaveLength(1);
+    });
+    expect(interruptCalls[0]).toEqual({
+      threadId: "thread-1",
+      body: { turnId: "turn-running" },
+    });
+  });
+
   it("keeps mobile topbar interactive after timeline scroll", async () => {
     setMobileViewport(true);
     vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);

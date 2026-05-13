@@ -7,8 +7,11 @@ type MobileChatTopBarProps = {
   collaborationMode: "plan" | "default";
   serviceTier: ServiceTier | null;
   pendingActionCount: number;
+  runningTurnId: string | null;
+  stopBusy: boolean;
   onOpenThreads: () => void;
   onOpenControls: () => void;
+  onStop: (turnId: string) => void;
 };
 
 export default function MobileChatTopBar({
@@ -16,12 +19,16 @@ export default function MobileChatTopBar({
   collaborationMode,
   serviceTier,
   pendingActionCount,
+  runningTurnId,
+  stopBusy,
   onOpenThreads,
   onOpenControls,
+  onStop,
 }: MobileChatTopBarProps) {
   const planActive = collaborationMode === "plan";
   const flexActive = serviceTier === "flex";
   const hasPill = planActive || flexActive;
+  const isRunning = runningTurnId !== null;
   return (
     <header className="cdx-mobile-chat-topbar" data-testid="mobile-chat-topbar">
       <button
@@ -57,16 +64,33 @@ export default function MobileChatTopBar({
           </div>
         ) : null}
       </div>
-      <button
-        type="button"
-        className="cdx-mobile-icon-btn"
-        data-testid="mobile-topbar-control-toggle"
-        onClick={onOpenControls}
-        aria-label="Open controls"
-      >
-        ⋯
-        {pendingActionCount > 0 ? <span className="cdx-mobile-dot" aria-hidden="true" /> : null}
-      </button>
+      {isRunning ? (
+        <button
+          type="button"
+          className="cdx-mobile-icon-btn cdx-mobile-icon-btn--stop"
+          data-testid="mobile-topbar-stop"
+          onClick={() => {
+            if (runningTurnId) {
+              onStop(runningTurnId);
+            }
+          }}
+          aria-label="Stop turn"
+          disabled={stopBusy}
+        >
+          {stopBusy ? "…" : "■"}
+        </button>
+      ) : (
+        <button
+          type="button"
+          className="cdx-mobile-icon-btn"
+          data-testid="mobile-topbar-control-toggle"
+          onClick={onOpenControls}
+          aria-label="Open controls"
+        >
+          ⋯
+          {pendingActionCount > 0 ? <span className="cdx-mobile-dot" aria-hidden="true" /> : null}
+        </button>
+      )}
     </header>
   );
 }
