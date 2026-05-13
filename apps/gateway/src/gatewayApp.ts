@@ -1844,10 +1844,27 @@ app.get("/api/config", async (): Promise<GatewayConfigResponse> => {
   };
 });
 
+// Allowlist of config keys the gateway will forward writes for. Tight by design:
+// the UI only needs to flip a small set of safe knobs. Extend deliberately.
+const ALLOWED_CONFIG_WRITE_KEYS: ReadonlyMap<string, (value: unknown) => boolean> = new Map([
+  ["service_tier", (value) => value === "fast" || value === "flex"],
+]);
+
 app.post("/api/config/value", async (request): Promise<GatewayConfigValueWriteResponse> => {
   const body = request.body as GatewayConfigValueWriteRequest;
   if (!body || typeof body.keyPath !== "string" || body.keyPath.length === 0) {
     const err = new Error("keyPath required") as Error & { statusCode?: number };
+    err.statusCode = 400;
+    throw err;
+  }
+  const validate = ALLOWED_CONFIG_WRITE_KEYS.get(body.keyPath);
+  if (!validate) {
+    const err = new Error(`keyPath not writable: ${body.keyPath}`) as Error & { statusCode?: number };
+    err.statusCode = 403;
+    throw err;
+  }
+  if (!validate(body.value)) {
+    const err = new Error(`invalid value for ${body.keyPath}`) as Error & { statusCode?: number };
     err.statusCode = 400;
     throw err;
   }

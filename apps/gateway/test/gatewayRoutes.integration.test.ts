@@ -1481,6 +1481,46 @@ describe("gateway integration routes", () => {
     }
   });
 
+  it("POST /api/config/value rejects keyPaths outside the allowlist with 403", async () => {
+    const ctx = await createTestContext();
+    try {
+      let forwarded = false;
+      ctx.stub.handlers.set("config/value/write", () => {
+        forwarded = true;
+        return { status: "ok" };
+      });
+      const res = await ctx.app.inject({
+        method: "POST",
+        url: "/api/config/value",
+        payload: { keyPath: "model", value: "gpt-5.5" },
+      });
+      expect(res.statusCode).toBe(403);
+      expect(forwarded).toBe(false);
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  it("POST /api/config/value rejects invalid value for allowlisted keyPath with 400", async () => {
+    const ctx = await createTestContext();
+    try {
+      let forwarded = false;
+      ctx.stub.handlers.set("config/value/write", () => {
+        forwarded = true;
+        return { status: "ok" };
+      });
+      const res = await ctx.app.inject({
+        method: "POST",
+        url: "/api/config/value",
+        payload: { keyPath: "service_tier", value: "extreme" },
+      });
+      expect(res.statusCode).toBe(400);
+      expect(forwarded).toBe(false);
+    } finally {
+      await ctx.close();
+    }
+  });
+
   it("POST /api/threads/:id/steer forwards turn/steer params and returns turnId", async () => {
     const ctx = await createTestContext();
     try {
