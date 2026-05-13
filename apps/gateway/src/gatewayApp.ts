@@ -2027,9 +2027,15 @@ app.get("/api/files/search", async (request): Promise<FuzzyFileSearchResponse> =
   const result = (await appServer.request("fuzzyFileSearch", {
     roots,
     query: queryString,
-  })) as { data?: unknown };
+  })) as { files?: unknown; data?: unknown };
 
-  const raw = Array.isArray(result.data) ? result.data : [];
+  // app-server returns `{ files: [...] }`; keep a fallback to `data` in case the
+  // protocol version emits either key.
+  const raw = Array.isArray(result.files)
+    ? result.files
+    : Array.isArray(result.data)
+      ? result.data
+      : [];
   const data: FuzzyFileMatch[] = [];
   for (const entry of raw) {
     if (data.length >= FUZZY_FILE_SEARCH_LIMIT) {

@@ -36,6 +36,7 @@ import type {
 } from "@lcwa/shared-types";
 import { resolveGatewayUrl } from "../../lib/gateway-url";
 import { useGatewayConfig } from "../../lib/use-gateway-config";
+import { applyFileMention, useFileMentionSearch } from "../../lib/use-file-mention-search";
 import {
   DEFAULT_MODEL,
   FALLBACK_MODEL_OPTIONS,
@@ -413,6 +414,13 @@ export default function ThreadPage({ params }: Props) {
     [prompt, slashMenuDismissed],
   );
   const slashMenuOpen = slashSuggestions.length > 0;
+  const [fileMentionDismissed, setFileMentionDismissed] = useState(false);
+  const fileMentionSearch = useFileMentionSearch(
+    prompt,
+    threadContext?.resolvedCwd ?? null,
+    fileMentionDismissed || slashMenuOpen,
+  );
+  const fileMentionOpen = fileMentionSearch.trigger !== null && !slashMenuOpen;
 
   useEffect(() => {
     if (!slashMenuOpen) {
@@ -2249,12 +2257,21 @@ export default function ThreadPage({ params }: Props) {
           slashSuggestions={slashSuggestions}
           activeSlashIndex={activeSlashIndex}
           steerActive={runningTurnId !== null}
+          fileMentionOpen={fileMentionOpen}
+          fileMentionResults={fileMentionSearch.results}
+          fileMentionLoading={fileMentionSearch.isLoading}
           onPromptChange={(value) => {
             setPrompt(value);
             setSlashMenuDismissed(false);
+            setFileMentionDismissed(false);
           }}
           onPromptKeyDown={handlePromptKeyDown}
           onApplySlash={applyPromptSlash}
+          onApplyFileMention={(path) => {
+            if (!fileMentionSearch.trigger) return;
+            setPrompt(applyFileMention(prompt, fileMentionSearch.trigger, path));
+            setFileMentionDismissed(true);
+          }}
           onSend={submitComposer}
           onOpenControls={() =>
             openControlSheet(

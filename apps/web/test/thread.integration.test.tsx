@@ -861,6 +861,93 @@ describe("Thread page integration", () => {
     expect(questionsTab).toHaveClass("is-active");
   });
 
+  it("mobile composer @-mention queries fuzzy file search and inserts the picked path", async () => {
+    setMobileViewport(true);
+    vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+
+    server.use(
+      http.get("http://127.0.0.1:8795/api/threads/:id", ({ params }) =>
+        HttpResponse.json({
+          thread: {
+            id: String(params.id),
+            title: "Mention",
+            preview: "",
+            status: "idle",
+            createdAt: null,
+            updatedAt: null,
+          },
+          turns: [],
+          nextCursor: null,
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/approvals/pending", () =>
+        HttpResponse.json({ data: [] }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads", () =>
+        HttpResponse.json({ data: [], nextCursor: null }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/timeline", () =>
+        HttpResponse.json({ data: [] }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/context", () =>
+        HttpResponse.json({
+          threadId: "thread-1",
+          cwd: "/tmp/project-a",
+          resolvedCwd: "/tmp/project-a",
+          isFallback: false,
+          source: "projection",
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/models", () => HttpResponse.json({ data: [] })),
+      http.get("http://127.0.0.1:8795/api/files/search", ({ request }) => {
+        const url = new URL(request.url);
+        expect(url.searchParams.get("roots")).toBe("/tmp/project-a");
+        expect(url.searchParams.get("query")).toBe("Mob");
+        return HttpResponse.json({
+          data: [
+            {
+              root: "/tmp/project-a",
+              path: "apps/web/app/threads/MobileChatTopBar.tsx",
+              fileName: "MobileChatTopBar.tsx",
+              matchType: "file",
+              score: 200,
+              indices: [0, 1, 2],
+            },
+            {
+              root: "/tmp/project-a",
+              path: "apps/web/app/threads/MobileComposerDock.tsx",
+              fileName: "MobileComposerDock.tsx",
+              matchType: "file",
+              score: 180,
+              indices: [0, 1, 2],
+            },
+          ],
+        });
+      }),
+    );
+
+    render(<ThreadPage params={Promise.resolve({ id: "thread-1" })} />);
+
+    const input = (await screen.findByTestId("turn-input")) as HTMLTextAreaElement;
+    fireEvent.change(input, { target: { value: "look at @Mob" } });
+
+    const items = await screen.findAllByTestId("file-mention-item");
+    expect(items.length).toBeGreaterThanOrEqual(2);
+    expect(items[0]).toHaveAttribute(
+      "data-path",
+      "apps/web/app/threads/MobileChatTopBar.tsx",
+    );
+
+    fireEvent.mouseDown(items[0]);
+
+    await waitFor(() => {
+      expect((screen.getByTestId("turn-input") as HTMLTextAreaElement).value).toBe(
+        "look at @apps/web/app/threads/MobileChatTopBar.tsx ",
+      );
+    });
+    expect(screen.queryByTestId("file-mention-menu")).not.toBeInTheDocument();
+  });
+
   it("mobile composer steers via /steer instead of /turns while a turn is running", async () => {
     setMobileViewport(true);
     vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);

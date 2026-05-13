@@ -1521,6 +1521,14 @@ textarea {
   background: rgba(122, 162, 247, 0.5);
 }
 
+.cdx-mobile-mention-menu {
+  border-color: rgba(122, 162, 247, 0.32);
+}
+
+.cdx-mobile-mention-menu .cdx-mobile-slash-item-desc {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+}
+
 .cdx-mobile-slash-menu {
   margin: 0 6px 8px;
   border: 1px solid var(--border-soft);

@@ -1723,6 +1723,39 @@ describe("gateway integration routes", () => {
     }
   });
 
+  it("GET /api/files/search reads the real app-server `files` key (not `data`)", async () => {
+    const ctx = await createTestContext();
+    try {
+      ctx.stub.handlers.set("fuzzyFileSearch", () => ({
+        files: [
+          {
+            root: "/tmp/a",
+            path: "apps/web/app/Foo.tsx",
+            file_name: "Foo.tsx",
+            score: 200,
+            match_type: "file",
+            indices: [0, 1, 2],
+          },
+        ],
+      }));
+
+      const res = await ctx.app.inject({
+        method: "GET",
+        url: "/api/files/search?roots=/tmp/a&query=Foo",
+      });
+      expect(res.statusCode).toBe(200);
+      const body = res.json() as FuzzyFileSearchResponse;
+      expect(body.data).toHaveLength(1);
+      expect(body.data[0]).toMatchObject({
+        path: "apps/web/app/Foo.tsx",
+        fileName: "Foo.tsx",
+        matchType: "file",
+      });
+    } finally {
+      await ctx.close();
+    }
+  });
+
   it("GET /api/files/search rejects empty roots with 400", async () => {
     const ctx = await createTestContext();
     try {

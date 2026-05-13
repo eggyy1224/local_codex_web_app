@@ -2,6 +2,7 @@
 
 import { useRef } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent } from "react";
+import type { FuzzyFileMatch } from "@lcwa/shared-types";
 import type { KnownSlashCommand } from "../../lib/slash-commands";
 
 type SlashSuggestion = {
@@ -18,9 +19,13 @@ type MobileComposerDockProps = {
   slashSuggestions: SlashSuggestion[];
   activeSlashIndex: number;
   steerActive: boolean;
+  fileMentionOpen: boolean;
+  fileMentionResults: FuzzyFileMatch[];
+  fileMentionLoading: boolean;
   onPromptChange: (value: string) => void;
   onPromptKeyDown: (event: ReactKeyboardEvent<HTMLTextAreaElement>) => void;
   onApplySlash: (command: KnownSlashCommand) => void;
+  onApplyFileMention: (path: string) => void;
   onSend: () => void;
   onOpenControls: () => void;
   onSwipeOpenControls: () => void;
@@ -37,9 +42,13 @@ export default function MobileComposerDock({
   slashSuggestions,
   activeSlashIndex,
   steerActive,
+  fileMentionOpen,
+  fileMentionResults,
+  fileMentionLoading,
   onPromptChange,
   onPromptKeyDown,
   onApplySlash,
+  onApplyFileMention,
   onSend,
   onOpenControls,
   onSwipeOpenControls,
@@ -110,6 +119,44 @@ export default function MobileComposerDock({
               </button>
             );
           })}
+        </div>
+      ) : null}
+
+      {fileMentionOpen ? (
+        <div
+          className="cdx-mobile-slash-menu cdx-mobile-mention-menu"
+          role="listbox"
+          aria-label="File mention suggestions"
+          data-testid="file-mention-menu"
+        >
+          {fileMentionResults.length === 0 ? (
+            <div className="cdx-mobile-slash-item" data-testid="file-mention-empty">
+              <span className="cdx-mobile-slash-item-command">
+                {fileMentionLoading ? "Searching…" : "No matches"}
+              </span>
+              <span className="cdx-mobile-slash-item-desc">
+                {fileMentionLoading ? "" : "Try a different prefix"}
+              </span>
+            </div>
+          ) : (
+            fileMentionResults.map((file) => (
+              <button
+                key={`${file.root}/${file.path}`}
+                type="button"
+                role="option"
+                className="cdx-mobile-slash-item"
+                data-testid="file-mention-item"
+                data-path={file.path}
+                onMouseDown={(event) => {
+                  event.preventDefault();
+                  onApplyFileMention(file.path);
+                }}
+              >
+                <span className="cdx-mobile-slash-item-command">{file.fileName}</span>
+                <span className="cdx-mobile-slash-item-desc">{file.path}</span>
+              </button>
+            ))
+          )}
         </div>
       ) : null}
 
