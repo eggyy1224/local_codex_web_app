@@ -3196,17 +3196,24 @@ describe("Thread page integration", () => {
     if (!es) {
       throw new Error("missing EventSource instance");
     }
+    // Streaming deltas are intentionally dropped now; the final agent message
+    // arrives via item/completed and carries the full plan text.
     es.emit("gateway", {
       seq: 1,
       serverTs: "2026-01-01T00:00:02.000Z",
       threadId: "thread-1",
       turnId: "turn-2",
       kind: "item",
-      name: "item/agentMessage/delta",
+      name: "item/completed",
       payload: {
         threadId: "thread-1",
         turnId: "turn-2",
-        delta: "<proposed_plan>1. Ship\n2. Monitor</proposed_plan>",
+        item: {
+          type: "agentMessage",
+          id: "item-plan-2",
+          turnId: "turn-2",
+          text: "<proposed_plan>1. Ship\n2. Monitor</proposed_plan>",
+        },
       },
     });
     es.emit("gateway", {

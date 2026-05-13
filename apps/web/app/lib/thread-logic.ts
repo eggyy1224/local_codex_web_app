@@ -364,84 +364,20 @@ export function timelineItemFromGatewayEvent(event: GatewayEvent): ThreadTimelin
     };
   }
 
-  if (event.name === "item/agentMessage/delta") {
-    const text = normalizeText(readString(payload, "delta") ?? readString(payload, "text"));
-    if (!text) {
-      return null;
-    }
-    const itemTurnId = readString(payload, "turn_id") ?? readString(payload, "turnId") ?? event.turnId;
-    const callId = readString(payload, "itemId") ?? readString(payload, "item_id");
-    return {
-      id: `${eventId}-assistant-delta`,
-      ts: event.serverTs,
-      turnId: itemTurnId,
-      type: "assistantMessage",
-      title: "Assistant",
-      text,
-      rawType: event.name,
-      toolName: null,
-      callId,
-    };
-  }
-
-  if (event.name === "item/plan/delta") {
-    const text = normalizeText(readString(payload, "delta") ?? readString(payload, "text"));
-    if (!text) {
-      return null;
-    }
-    const itemTurnId = readString(payload, "turn_id") ?? readString(payload, "turnId") ?? event.turnId;
-    const callId = readString(payload, "itemId") ?? readString(payload, "item_id");
-    return {
-      id: `${eventId}-plan-delta`,
-      ts: event.serverTs,
-      turnId: itemTurnId,
-      type: "reasoning",
-      title: "Plan",
-      text,
-      rawType: event.name,
-      toolName: null,
-      callId,
-    };
-  }
-
-  if (event.name === "item/reasoning/summaryTextDelta" || event.name === "item/reasoning/textDelta") {
-    const text = normalizeText(readString(payload, "delta") ?? readString(payload, "text"));
-    if (!text) {
-      return null;
-    }
-    const itemTurnId = readString(payload, "turn_id") ?? readString(payload, "turnId") ?? event.turnId;
-    const callId = readString(payload, "itemId") ?? readString(payload, "item_id");
-    return {
-      id: `${eventId}-reasoning-delta`,
-      ts: event.serverTs,
-      turnId: itemTurnId,
-      type: "reasoning",
-      title: "Thinking",
-      text,
-      rawType: event.name,
-      toolName: null,
-      callId,
-    };
-  }
-
-  if (event.name === "item/commandExecution/outputDelta" || event.name === "item/fileChange/outputDelta") {
-    const text = normalizeText(readString(payload, "delta") ?? readString(payload, "output"));
-    if (!text) {
-      return null;
-    }
-    const itemTurnId = readString(payload, "turn_id") ?? readString(payload, "turnId") ?? event.turnId;
-    const callId = readString(payload, "itemId") ?? readString(payload, "item_id");
-    return {
-      id: `${eventId}-tool-output-delta`,
-      ts: event.serverTs,
-      turnId: itemTurnId,
-      type: "toolResult",
-      title: "Tool output",
-      text,
-      rawType: event.name,
-      toolName: event.name.includes("commandExecution") ? "command" : "apply_patch",
-      callId,
-    };
+  // Streaming delta events are dropped on the floor. Rendering the live
+  // accumulating text caused O(N²) string concatenation and a giant <pre> that
+  // dragged mobile rendering to a halt on long answers. The completed item
+  // (handled below) carries the final text; turn/started is still mapped so
+  // the running-turn indicator (Stop button, steer composer) works.
+  if (
+    event.name === "item/agentMessage/delta" ||
+    event.name === "item/plan/delta" ||
+    event.name === "item/reasoning/summaryTextDelta" ||
+    event.name === "item/reasoning/textDelta" ||
+    event.name === "item/commandExecution/outputDelta" ||
+    event.name === "item/fileChange/outputDelta"
+  ) {
+    return null;
   }
 
   if ((event.name === "item/started" || event.name === "item/completed") && item) {

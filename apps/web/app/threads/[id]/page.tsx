@@ -1074,10 +1074,35 @@ export default function ThreadPage({ params }: Props) {
       });
     return merged;
   }, [timelineItems, liveTimelineItems]);
-  const allConversationTurns = useMemo(
-    () => buildConversationTurns(allTimelineItems),
-    [allTimelineItems],
-  );
+  const allConversationTurns = useMemo(() => {
+    const built = buildConversationTurns(allTimelineItems);
+    // Server is the source of truth for turn status. If detail.turns reports a
+    // terminal status (interrupted/failed/completed) and there is no live
+    // turn/started or turn/completed in the post-detail event stream contradicting
+    // it, override the timeline-derived status so we don't keep showing
+    // "Responding" on a turn the gateway already knows ended.
+    const serverStatusByTurnId = new Map<string, string>();
+    for (const turn of detail?.turns ?? []) {
+      if (typeof turn.status === "string" && turn.status.length > 0) {
+        serverStatusByTurnId.set(turn.id, turn.status);
+      }
+    }
+    if (serverStatusByTurnId.size === 0) {
+      return built;
+    }
+    return built.map((turn) => {
+      if (!turn.isStreaming) return turn;
+      const serverStatus = serverStatusByTurnId.get(turn.turnId);
+      if (!serverStatus || serverStatus === "inProgress" || serverStatus === "active") {
+        return turn;
+      }
+      return {
+        ...turn,
+        status: serverStatus as typeof turn.status,
+        isStreaming: false,
+      };
+    });
+  }, [allTimelineItems, detail]);
   const reviewSlashCommandByTurnId = useMemo(() => {
     const commandByTurnId = new Map<string, string>();
     for (const item of allTimelineItems) {

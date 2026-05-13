@@ -18,7 +18,7 @@ describe("thread logic helpers", () => {
     expect(truncateText("abcdef", 4)).toBe("abcd...");
   });
 
-  it("maps gateway events to timeline items", () => {
+  it("drops streaming delta events from the timeline (we render only completed items)", () => {
     const event: GatewayEvent = {
       seq: 10,
       serverTs: "2026-01-01T00:00:00.000Z",
@@ -28,14 +28,29 @@ describe("thread logic helpers", () => {
       name: "item/agentMessage/delta",
       payload: { delta: "Hello" },
     };
+    expect(timelineItemFromGatewayEvent(event)).toBeNull();
+  });
 
-    const item = timelineItemFromGatewayEvent(event);
-    expect(item).toMatchObject({
-      id: "live-10-assistant-delta",
-      type: "assistantMessage",
-      text: "Hello",
-      turnId: "turn-1",
-    });
+  it("drops plan/reasoning/tool-output delta events too", () => {
+    const names = [
+      "item/plan/delta",
+      "item/reasoning/textDelta",
+      "item/reasoning/summaryTextDelta",
+      "item/commandExecution/outputDelta",
+      "item/fileChange/outputDelta",
+    ] as const;
+    for (const name of names) {
+      const event: GatewayEvent = {
+        seq: 1,
+        serverTs: "2026-01-01T00:00:00.000Z",
+        threadId: "thread-1",
+        turnId: "turn-1",
+        kind: "item",
+        name,
+        payload: { delta: "x" },
+      };
+      expect(timelineItemFromGatewayEvent(event)).toBeNull();
+    }
   });
 
   it("maps plan/review/token usage events to timeline items", () => {
@@ -123,11 +138,7 @@ describe("thread logic helpers", () => {
       },
     };
 
-    expect(timelineItemFromGatewayEvent(planDelta)).toMatchObject({
-      type: "reasoning",
-      title: "Plan",
-      text: "Step 1",
-    });
+    expect(timelineItemFromGatewayEvent(planDelta)).toBeNull();
     expect(timelineItemFromGatewayEvent(reviewItem)).toMatchObject({
       type: "status",
       title: "Entered review mode",
