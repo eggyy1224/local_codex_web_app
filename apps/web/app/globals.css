@@ -1169,14 +1169,21 @@ textarea {
   white-space: nowrap;
 }
 
-.cdx-mobile-chat-subtitle {
+.cdx-mobile-chat-pill {
+  justify-self: start;
   margin: 0;
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1.2;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  line-height: 1.4;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+}
+
+.cdx-mobile-chat-pill--plan {
+  background: rgba(122, 162, 247, 0.16);
+  color: rgba(196, 214, 255, 0.95);
+  border: 1px solid rgba(122, 162, 247, 0.32);
 }
 
 .cdx-mobile-icon-btn {
@@ -1394,12 +1401,6 @@ textarea {
 
 .cdx-mobile-send-btn:disabled {
   opacity: 0.45;
-}
-
-.cdx-mobile-composer-meta {
-  margin: 6px 8px 0;
-  font-size: 11px;
-  color: var(--muted);
 }
 
 .cdx-mobile-slash-menu {

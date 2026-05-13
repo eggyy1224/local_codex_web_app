@@ -1963,7 +1963,7 @@ export default function ThreadPage({ params }: Props) {
       <div className="cdx-mobile-thread-page">
         <MobileChatTopBar
           threadTitle={activeThreadTitle}
-          modelLabel={selectedModelLabel}
+          collaborationMode={collaborationMode}
           pendingActionCount={pendingActionCount}
           onOpenThreads={() => setIsThreadSwitcherOpen(true)}
           onOpenControls={() =>
@@ -2043,7 +2043,6 @@ export default function ThreadPage({ params }: Props) {
           prompt={prompt}
           submitting={submitting}
           canSend={prompt.trim().length > 0}
-          collaborationMode={collaborationMode}
           slashMenuOpen={slashMenuOpen}
           slashSuggestions={slashSuggestions}
           activeSlashIndex={activeSlashIndex}

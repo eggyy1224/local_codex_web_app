@@ -335,6 +335,11 @@ describe("Thread page integration", () => {
     expect(screen.getByTestId("mobile-topbar-control-toggle")).toBeInTheDocument();
     expect(screen.getByTestId("mobile-composer-control-toggle")).toBeInTheDocument();
 
+    // Simplified mobile chrome: no model subtitle, no composer mode meta line; plan pill hidden by default.
+    expect(screen.queryByTestId("mobile-chat-model-label")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("mobile-chat-plan-pill")).not.toBeInTheDocument();
+    expect(screen.queryByText(/^Mode:/)).not.toBeInTheDocument();
+
     fireEvent.click(screen.getByLabelText("Open threads"));
     await screen.findByTestId("mobile-thread-switcher-overlay");
 

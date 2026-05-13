@@ -14,7 +14,6 @@ type MobileComposerDockProps = {
   prompt: string;
   submitting: boolean;
   canSend: boolean;
-  collaborationMode: "plan" | "default";
   slashMenuOpen: boolean;
   slashSuggestions: SlashSuggestion[];
   activeSlashIndex: number;
@@ -33,7 +32,6 @@ export default function MobileComposerDock({
   prompt,
   submitting,
   canSend,
-  collaborationMode,
   slashMenuOpen,
   slashSuggestions,
   activeSlashIndex,
@@ -134,7 +132,6 @@ export default function MobileComposerDock({
           {submitting ? "..." : "↑"}
         </button>
       </div>
-      <p className="cdx-mobile-composer-meta">Mode: {collaborationMode}</p>
     </section>
   );
 }
