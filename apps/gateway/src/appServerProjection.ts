@@ -47,7 +47,7 @@ export type AppServerProjection = {
   reconcilePendingInteractionsOnStartup(): void;
 };
 
-function extractThreadId(params: unknown): string | null {
+export function extractThreadId(params: unknown): string | null {
   if (!params || typeof params !== "object") {
     return null;
   }
@@ -61,7 +61,7 @@ function extractThreadId(params: unknown): string | null {
   return null;
 }
 
-function extractTurnId(params: unknown): string | null {
+export function extractTurnId(params: unknown): string | null {
   if (!params || typeof params !== "object") {
     return null;
   }
