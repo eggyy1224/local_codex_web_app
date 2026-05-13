@@ -2133,12 +2133,16 @@ export default function ThreadPage({ params }: Props) {
     ) {
       return;
     }
+    if (isMobileViewport) {
+      return;
+    }
     event.preventDefault();
     submitComposer();
   }, [
     activeSlashIndex,
     applyPromptSlash,
     fileMentionOpen,
+    isMobileViewport,
     slashMenuOpen,
     slashSuggestions,
     submitComposer,

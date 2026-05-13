@@ -11,6 +11,22 @@ import {
 
 const pushMock = vi.fn();
 
+function setMobileViewport(matches: boolean): void {
+  Object.defineProperty(window, "matchMedia", {
+    writable: true,
+    value: (query: string) => ({
+      matches,
+      media: query,
+      onchange: null,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      addListener: () => {},
+      removeListener: () => {},
+      dispatchEvent: () => false,
+    }),
+  });
+}
+
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: pushMock }),
 }));
@@ -29,6 +45,7 @@ describe("Home page integration", () => {
   beforeEach(() => {
     pushMock.mockReset();
     window.localStorage.clear();
+    setMobileViewport(false);
   });
 
   it("loads health + threads + model catalog", async () => {
@@ -138,6 +155,35 @@ describe("Home page integration", () => {
       expect(pushMock).toHaveBeenCalledWith("/threads/thread-new");
     });
     expect(turnCalls).toHaveLength(1);
+  });
+
+  it("keeps mobile Enter as a newline instead of submitting", async () => {
+    setMobileViewport(true);
+    const turnCalls: Array<unknown> = [];
+
+    server.use(
+      http.get("http://127.0.0.1:8795/health", () =>
+        HttpResponse.json({ status: "ok", appServerConnected: true, timestamp: new Date().toISOString() }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads", () => HttpResponse.json({ data: [], nextCursor: null })),
+      http.get("http://127.0.0.1:8795/api/models", () =>
+        HttpResponse.json({ data: [{ id: "gpt-5-codex", model: "gpt-5-codex", isDefault: true }] }),
+      ),
+      http.post("http://127.0.0.1:8795/api/threads", () => HttpResponse.json({ threadId: "thread-new" })),
+      http.post("http://127.0.0.1:8795/api/threads/:id/turns", async ({ request }) => {
+        turnCalls.push(await request.json());
+        return HttpResponse.json({ turnId: "turn-1" });
+      }),
+    );
+
+    render(<HomePage />);
+
+    const textarea = await screen.findByPlaceholderText("Ask Codex anything, / for commands");
+    fireEvent.change(textarea, { target: { value: "Line one" } });
+    fireEvent.keyDown(textarea, { key: "Enter" });
+
+    expect(pushMock).not.toHaveBeenCalled();
+    expect(turnCalls).toHaveLength(0);
   });
 
   it("supports /plan slash command with initial plan turn", async () => {

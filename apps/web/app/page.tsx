@@ -595,6 +595,9 @@ export default function HomePage() {
                 ) {
                   return;
                 }
+                if (window.matchMedia("(max-width: 1024px)").matches) {
+                  return;
+                }
                 event.preventDefault();
                 void onSubmitComposer();
               }}

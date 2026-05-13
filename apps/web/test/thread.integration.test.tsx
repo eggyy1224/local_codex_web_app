@@ -1470,9 +1470,13 @@ describe("Thread page integration", () => {
       expect((screen.getByTestId("turn-input") as HTMLTextAreaElement).value).toBe("");
     });
 
-    // Enter-key path must route through steer too (caught by Codex review of 899bba3).
+    // On mobile, Enter belongs to textarea line breaks; the explicit Send button submits.
     fireEvent.change(screen.getByTestId("turn-input"), { target: { value: "via enter key" } });
     fireEvent.keyDown(screen.getByTestId("turn-input"), { key: "Enter" });
+    expect(steerCalls).toHaveLength(1);
+    expect((screen.getByTestId("turn-input") as HTMLTextAreaElement).value).toBe("via enter key");
+
+    fireEvent.click(screen.getByTestId("turn-submit"));
     await waitFor(() => {
       expect(steerCalls).toHaveLength(2);
     });
