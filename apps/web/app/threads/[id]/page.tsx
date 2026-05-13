@@ -2070,6 +2070,7 @@ export default function ThreadPage({ params }: Props) {
         <MobileChatTopBar
           threadTitle={activeThreadTitle}
           collaborationMode={collaborationMode}
+          serviceTier={gatewayConfig.config?.serviceTier ?? null}
           pendingActionCount={pendingActionCount}
           onOpenThreads={() => setIsThreadSwitcherOpen(true)}
           onOpenControls={() =>

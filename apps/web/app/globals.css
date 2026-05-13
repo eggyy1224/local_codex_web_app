@@ -1169,8 +1169,14 @@ textarea {
   white-space: nowrap;
 }
 
+.cdx-mobile-chat-pill-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 0;
+}
+
 .cdx-mobile-chat-pill {
-  justify-self: start;
   margin: 0;
   padding: 2px 8px;
   border-radius: 999px;
@@ -1184,6 +1190,12 @@ textarea {
   background: rgba(122, 162, 247, 0.16);
   color: rgba(196, 214, 255, 0.95);
   border: 1px solid rgba(122, 162, 247, 0.32);
+}
+
+.cdx-mobile-chat-pill--flex {
+  background: rgba(247, 178, 122, 0.16);
+  color: rgba(255, 220, 196, 0.95);
+  border: 1px solid rgba(247, 178, 122, 0.32);
 }
 
 .cdx-mobile-icon-btn {

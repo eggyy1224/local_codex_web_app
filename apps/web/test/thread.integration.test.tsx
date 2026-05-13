@@ -335,9 +335,10 @@ describe("Thread page integration", () => {
     expect(screen.getByTestId("mobile-topbar-control-toggle")).toBeInTheDocument();
     expect(screen.getByTestId("mobile-composer-control-toggle")).toBeInTheDocument();
 
-    // Simplified mobile chrome: no model subtitle, no composer mode meta line; plan pill hidden by default.
+    // Simplified mobile chrome: no model subtitle, no composer mode meta line; plan/flex pills hidden by default.
     expect(screen.queryByTestId("mobile-chat-model-label")).not.toBeInTheDocument();
     expect(screen.queryByTestId("mobile-chat-plan-pill")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("mobile-chat-flex-pill")).not.toBeInTheDocument();
     expect(screen.queryByText(/^Mode:/)).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByLabelText("Open threads"));
@@ -427,6 +428,10 @@ describe("Thread page integration", () => {
     });
     await waitFor(() => {
       expect(screen.getByTestId("mobile-service-tier-flex")).toHaveAttribute("aria-checked", "true");
+    });
+    // After the toggle commits, the topbar should surface the Flex state as a persistent pill.
+    await waitFor(() => {
+      expect(screen.getByTestId("mobile-chat-flex-pill")).toBeInTheDocument();
     });
   });
 

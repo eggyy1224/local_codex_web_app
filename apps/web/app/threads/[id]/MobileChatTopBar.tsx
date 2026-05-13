@@ -1,8 +1,11 @@
 "use client";
 
+import type { ServiceTier } from "@lcwa/shared-types";
+
 type MobileChatTopBarProps = {
   threadTitle: string;
   collaborationMode: "plan" | "default";
+  serviceTier: ServiceTier | null;
   pendingActionCount: number;
   onOpenThreads: () => void;
   onOpenControls: () => void;
@@ -11,11 +14,14 @@ type MobileChatTopBarProps = {
 export default function MobileChatTopBar({
   threadTitle,
   collaborationMode,
+  serviceTier,
   pendingActionCount,
   onOpenThreads,
   onOpenControls,
 }: MobileChatTopBarProps) {
   const planActive = collaborationMode === "plan";
+  const flexActive = serviceTier === "flex";
+  const hasPill = planActive || flexActive;
   return (
     <header className="cdx-mobile-chat-topbar" data-testid="mobile-chat-topbar">
       <button
@@ -30,13 +36,25 @@ export default function MobileChatTopBar({
         <h1 className="cdx-mobile-chat-title" data-testid="thread-title">
           {threadTitle}
         </h1>
-        {planActive ? (
-          <span
-            className="cdx-mobile-chat-pill cdx-mobile-chat-pill--plan"
-            data-testid="mobile-chat-plan-pill"
-          >
-            Planning
-          </span>
+        {hasPill ? (
+          <div className="cdx-mobile-chat-pill-row">
+            {planActive ? (
+              <span
+                className="cdx-mobile-chat-pill cdx-mobile-chat-pill--plan"
+                data-testid="mobile-chat-plan-pill"
+              >
+                Planning
+              </span>
+            ) : null}
+            {flexActive ? (
+              <span
+                className="cdx-mobile-chat-pill cdx-mobile-chat-pill--flex"
+                data-testid="mobile-chat-flex-pill"
+              >
+                Flex
+              </span>
+            ) : null}
+          </div>
         ) : null}
       </div>
       <button
