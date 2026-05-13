@@ -455,7 +455,37 @@ textarea {
   min-height: 0;
   overflow: auto;
   display: grid;
+  gap: 16px;
+}
+
+.cdx-mobile-thread-switcher-group {
+  display: grid;
   gap: 6px;
+}
+
+.cdx-mobile-thread-switcher-group-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 2px 4px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.cdx-mobile-thread-switcher-group-label {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: rgba(255, 255, 255, 0.72);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cdx-mobile-thread-switcher-group-count {
+  font-size: 11px;
+  color: var(--muted);
+  flex-shrink: 0;
 }
 
 .cdx-mobile-thread-switcher-item {
@@ -466,7 +496,9 @@ textarea {
   padding: 10px;
   text-align: left;
   display: grid;
-  gap: 4px;
+  grid-template-columns: 14px minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
 }
 
 .cdx-mobile-thread-switcher-item:hover {
@@ -480,6 +512,45 @@ textarea {
   background: rgba(45, 77, 112, 0.28);
 }
 
+.cdx-mobile-thread-switcher-status {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  margin-top: 5px;
+  flex-shrink: 0;
+}
+
+.cdx-mobile-thread-switcher-status--running {
+  background: rgba(102, 230, 158, 0.95);
+  box-shadow: 0 0 0 4px rgba(102, 230, 158, 0.22);
+  animation: cdx-thread-status-pulse 1.4s ease-in-out infinite;
+}
+
+.cdx-mobile-thread-switcher-status--waiting {
+  background: rgba(247, 178, 122, 0.95);
+  box-shadow: 0 0 0 4px rgba(247, 178, 122, 0.2);
+}
+
+.cdx-mobile-thread-switcher-status--error {
+  background: rgba(231, 92, 92, 0.95);
+  box-shadow: 0 0 0 4px rgba(231, 92, 92, 0.18);
+}
+
+.cdx-mobile-thread-switcher-status--idle {
+  background: rgba(255, 255, 255, 0.22);
+}
+
+@keyframes cdx-thread-status-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.65; transform: scale(0.82); }
+}
+
+.cdx-mobile-thread-switcher-item-body {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
 .cdx-mobile-thread-switcher-item-title {
   font-size: 13px;
   line-height: 18px;
@@ -489,9 +560,53 @@ textarea {
 }
 
 .cdx-mobile-thread-switcher-item-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   font-size: 11px;
   line-height: 15px;
   color: var(--muted);
+  min-width: 0;
+}
+
+.cdx-mobile-thread-switcher-item-meta > span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.cdx-mobile-thread-switcher-badge {
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  font-size: 10px;
+  line-height: 14px;
+  letter-spacing: 0.02em;
+  flex-shrink: 0;
+}
+
+.cdx-mobile-thread-switcher-badge--running {
+  background: rgba(102, 230, 158, 0.14);
+  border-color: rgba(102, 230, 158, 0.42);
+  color: rgba(196, 248, 220, 0.95);
+}
+
+.cdx-mobile-thread-switcher-badge--waiting {
+  background: rgba(247, 178, 122, 0.14);
+  border-color: rgba(247, 178, 122, 0.4);
+  color: rgba(255, 220, 196, 0.95);
+}
+
+.cdx-mobile-thread-switcher-badge--error {
+  background: rgba(231, 92, 92, 0.14);
+  border-color: rgba(231, 92, 92, 0.4);
+  color: rgba(255, 196, 196, 0.95);
+}
+
+.cdx-mobile-thread-switcher-badge--idle {
+  color: rgba(255, 255, 255, 0.46);
+  border-color: rgba(255, 255, 255, 0.14);
 }
 
 .cdx-status-banner {

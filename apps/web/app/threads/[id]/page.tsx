@@ -69,7 +69,7 @@ import MobileControlSheet from "./MobileControlSheet";
 import MobileMessageDetailsSheet from "./MobileMessageDetailsSheet";
 import MobileMessageStream from "./MobileMessageStream";
 import MobileThreadSwitcherOverlay, {
-  type MobileThreadSwitcherItem,
+  type MobileThreadSwitcherGroup,
 } from "./MobileThreadSwitcherOverlay";
 import TerminalDock from "./TerminalDock";
 
@@ -1094,18 +1094,22 @@ export default function ThreadPage({ params }: Props) {
   }, [allTimelineItems]);
   const activeThread = threadList.find((thread) => thread.id === threadId);
   const groupedThreads = useMemo(() => groupThreadsByProject(threadList), [threadList]);
-  const mobileThreadSwitcherItems = useMemo<MobileThreadSwitcherItem[]>(
+  const mobileThreadSwitcherGroups = useMemo<MobileThreadSwitcherGroup[]>(
     () =>
-      [...threadList]
-        .sort((a, b) => b.lastActiveAt.localeCompare(a.lastActiveAt))
-        .map((thread) => ({
+      groupedThreads.map((group) => ({
+        key: group.key,
+        label: group.label,
+        items: group.threads.map((thread) => ({
           id: thread.id,
           title: thread.title || "(untitled thread)",
-          projectLabel: projectLabelFromKey(thread.projectKey || "unknown"),
           lastActiveAt: thread.lastActiveAt,
           isActive: thread.id === threadId,
+          status: thread.status,
+          waitingApprovalCount: thread.waitingApprovalCount,
+          errorCount: thread.errorCount,
         })),
-    [threadId, threadList],
+      })),
+    [groupedThreads, threadId],
   );
   const activeProjectKey = useMemo(() => {
     if (activeThread?.projectKey) {
@@ -2412,7 +2416,7 @@ export default function ThreadPage({ params }: Props) {
 
         <MobileThreadSwitcherOverlay
           open={isThreadSwitcherOpen}
-          items={mobileThreadSwitcherItems}
+          groups={mobileThreadSwitcherGroups}
           loading={threadListLoading}
           onClose={() => setIsThreadSwitcherOpen(false)}
           onSelect={selectThreadFromMobileSwitcher}
