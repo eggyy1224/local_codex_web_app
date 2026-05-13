@@ -12,13 +12,11 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type {
   AccountRateLimitsResponse,
   ApprovalDecisionRequest,
-  ApprovalView,
   CreateTurnResponse,
   CreateReviewRequest,
   CreateReviewResponse,
   GatewayEvent,
   InteractionRespondRequest,
-  InteractionView,
   ModelOption,
   ModelsResponse,
   PendingApprovalsResponse,
@@ -77,6 +75,22 @@ import InteractionQuestionForm, {
   type InteractionQuestionDrafts,
 } from "./InteractionQuestionForm";
 import { useThreadViewportShell } from "./use-thread-viewport-shell";
+import {
+  approvalFromEvent,
+  asRecord,
+  formatRateLimitStatus,
+  formatTimestamp,
+  interactionFromEvent,
+  isCollaborationModeKind,
+  readString,
+  THREAD_MODE_STORAGE_KEY_PREFIX,
+  threadModeStorageKey,
+  tokenUsageFromEvent,
+  type CollaborationModeKind,
+  type PendingApprovalCard,
+  type PendingInteractionCard,
+  type ThreadTokenUsageSummary,
+} from "./thread-page-helpers";
 
 type ConnectionState = "connecting" | "connected" | "reconnecting" | "lagging";
 
@@ -84,20 +98,8 @@ type Props = {
   params: Promise<{ id: string }>;
 };
 
-type PendingApprovalCard = ApprovalView;
-type PendingInteractionCard = InteractionView;
-type CollaborationModeKind = "plan" | "default";
 type ControlSheetSection = "pending" | "advanced";
 type ControlSheetSnap = "half" | "full";
-type ThreadTokenUsageSummary = {
-  threadId: string;
-  turnId: string | null;
-  totalTokens: number;
-  inputTokens: number;
-  outputTokens: number;
-  modelContextWindow: number | null;
-  updatedAt: string;
-};
 type StatusBanner = {
   generatedAt: string;
   lines: string[];
@@ -117,187 +119,9 @@ const gatewayUrl = resolveGatewayUrl();
 const SIDEBAR_SCROLL_STORAGE_KEY = "lcwa.sidebar.scroll.v1";
 const PERMISSION_MODE_STORAGE_KEY = "lcwa.permission.mode.v1";
 const THINKING_EFFORT_STORAGE_KEY = "lcwa.thinking.effort.v1";
-const THREAD_MODE_STORAGE_KEY_PREFIX = "lcwa.thread.mode.v1";
 const TIMELINE_STICKY_THRESHOLD_PX = 56;
 const ACTIVE_THREAD_SCROLL_SNAP_THRESHOLD_PX = 24;
 const FALLBACK_THINKING_EFFORT_OPTIONS = ["minimal", "low", "medium", "high"];
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  if (!value || typeof value !== "object") {
-    return null;
-  }
-  return value as Record<string, unknown>;
-}
-
-function readString(obj: Record<string, unknown> | null, key: string): string | null {
-  if (!obj) return null;
-  const value = obj[key];
-  return typeof value === "string" ? value : null;
-}
-
-function formatTimestamp(value: string | null): string {
-  if (!value) {
-    return "No timestamp";
-  }
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-  return date.toLocaleString();
-}
-
-function approvalTypeFromEventName(eventName: string): PendingApprovalCard["type"] {
-  if (eventName === "item/commandExecution/requestApproval") return "commandExecution";
-  return "fileChange";
-}
-
-function approvalFromEvent(event: GatewayEvent): PendingApprovalCard | null {
-  const payload = asRecord(event.payload);
-  const approvalId = readString(payload, "approvalId");
-  if (!approvalId) {
-    return null;
-  }
-
-  const approvalType = readString(payload, "approvalType");
-  const type =
-    approvalType === "commandExecution" || approvalType === "fileChange"
-      ? approvalType
-      : approvalTypeFromEventName(event.name);
-
-  return {
-    approvalId,
-    threadId: event.threadId,
-    turnId: event.turnId,
-    itemId: readString(payload, "itemId"),
-    type,
-    status: "pending",
-    reason: readString(payload, "reason"),
-    commandPreview: readString(payload, "command"),
-    fileChangePreview: readString(payload, "grantRoot"),
-    createdAt: event.serverTs,
-    resolvedAt: null,
-  };
-}
-
-function interactionFromEvent(event: GatewayEvent): PendingInteractionCard | null {
-  const payload = asRecord(event.payload);
-  const interactionId = readString(payload, "interactionId");
-  if (!interactionId) {
-    return null;
-  }
-  const questionsRaw = payload?.questions;
-  if (!Array.isArray(questionsRaw)) {
-    return null;
-  }
-  const questions = questionsRaw
-    .map((entry) => {
-      if (!entry || typeof entry !== "object") {
-        return null;
-      }
-      const question = entry as Record<string, unknown>;
-      const id = readString(question, "id");
-      const header = readString(question, "header");
-      const body = readString(question, "question");
-      if (!id || !header || !body) {
-        return null;
-      }
-      const options = Array.isArray(question.options)
-        ? question.options
-            .map((option) => {
-              if (!option || typeof option !== "object") {
-                return null;
-              }
-              const candidate = option as Record<string, unknown>;
-              const label = readString(candidate, "label");
-              const description = readString(candidate, "description");
-              if (!label || !description) {
-                return null;
-              }
-              return { label, description };
-            })
-            .filter((option): option is NonNullable<typeof option> => option !== null)
-        : null;
-      const normalizedOptions = options && options.length > 0 ? options : null;
-
-      return {
-        id,
-        header,
-        question: body,
-        isOther: question.isOther === true,
-        isSecret: question.isSecret === true,
-        options: normalizedOptions,
-      };
-    })
-    .filter((question): question is NonNullable<typeof question> => question !== null);
-
-  return {
-    interactionId,
-    threadId: event.threadId,
-    turnId: event.turnId,
-    itemId: readString(payload, "itemId"),
-    type: "userInput",
-    status: "pending",
-    questions,
-    createdAt: event.serverTs,
-    resolvedAt: null,
-  };
-}
-
-// proposedPlanFromText is re-exported from ../lib/thread-logic so it can be
-// unit-tested in isolation.
-
-function isCollaborationModeKind(value: string | null): value is CollaborationModeKind {
-  return value === "plan" || value === "default";
-}
-
-function threadModeStorageKey(threadId: string): string {
-  return `${THREAD_MODE_STORAGE_KEY_PREFIX}.${threadId}`;
-}
-
-function tokenUsageFromEvent(event: GatewayEvent): ThreadTokenUsageSummary | null {
-  if (event.name !== "thread/tokenUsage/updated") {
-    return null;
-  }
-  const payload = asRecord(event.payload);
-  const tokenUsage = asRecord(payload?.tokenUsage);
-  const total = asRecord(tokenUsage?.total);
-  const totalTokens = total?.totalTokens;
-  const inputTokens = total?.inputTokens;
-  const outputTokens = total?.outputTokens;
-  if (
-    typeof totalTokens !== "number" ||
-    typeof inputTokens !== "number" ||
-    typeof outputTokens !== "number"
-  ) {
-    return null;
-  }
-  const turnId = readString(payload, "turnId") ?? readString(payload, "turn_id");
-  const modelContextWindow =
-    typeof tokenUsage?.modelContextWindow === "number" ? tokenUsage.modelContextWindow : null;
-  return {
-    threadId: event.threadId,
-    turnId,
-    totalTokens,
-    inputTokens,
-    outputTokens,
-    modelContextWindow,
-    updatedAt: event.serverTs,
-  };
-}
-
-function formatRateLimitStatus(response: AccountRateLimitsResponse): string {
-  if (response.error || !response.rateLimits) {
-    return "rate limits: unavailable";
-  }
-  const primary = response.rateLimits.primary;
-  if (!primary) {
-    return "rate limits: unavailable";
-  }
-  const limitName = response.rateLimits.limitName ?? response.rateLimits.limitId ?? "default";
-  const resetAt = new Date(primary.resetsAt * 1000);
-  const resetLabel = Number.isNaN(resetAt.getTime()) ? String(primary.resetsAt) : resetAt.toLocaleTimeString();
-  return `rate limits: ${limitName} ${primary.usedPercent}% (reset ${resetLabel})`;
-}
 
 export default function ThreadPage({ params }: Props) {
   const router = useRouter();
