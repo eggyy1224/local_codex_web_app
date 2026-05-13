@@ -3,9 +3,30 @@ import type {
   GatewayEvent,
   ModelOption,
   ThreadListItem,
+  ThreadMeta,
   ThreadStatus,
   TurnPermissionMode,
+  TurnView,
 } from "@lcwa/shared-types";
+
+export type RawTurn = {
+  id: string;
+  status?: string;
+  error?: unknown;
+  items?: unknown[];
+  startedAt?: number;
+  completedAt?: number;
+};
+
+export type RawThread = {
+  id: string;
+  preview?: string;
+  name?: string | null;
+  createdAt?: number;
+  updatedAt?: number;
+  status?: unknown;
+  turns?: RawTurn[];
+};
 
 export type RawReasoningEffort = {
   effort?: unknown;
@@ -214,4 +235,60 @@ export function approvalTypeFromMethod(method: string): ApprovalType | null {
 
 export function isUserInputRequestMethod(method: string): boolean {
   return method === "item/tool/requestUserInput" || method === "tool/requestUserInput";
+}
+
+export function unixSecondsToIso(ts?: number): string {
+  if (!ts || Number.isNaN(ts)) {
+    return new Date().toISOString();
+  }
+  return new Date(ts * 1000).toISOString();
+}
+
+export function toThreadListItem(
+  raw: RawThread,
+  projectKey = "unknown",
+  waitingApprovalCount = 0,
+): ThreadListItem {
+  const status = statusFromRaw(raw.status);
+  const title = raw.name ?? raw.preview?.slice(0, 80) ?? raw.id;
+  const preview = raw.preview ?? "";
+  const lastActiveAt = unixSecondsToIso(raw.updatedAt ?? raw.createdAt);
+
+  return {
+    id: raw.id,
+    projectKey,
+    title,
+    preview,
+    status,
+    lastActiveAt,
+    archived: false,
+    waitingApprovalCount,
+    errorCount: status === "systemError" ? 1 : 0,
+  };
+}
+
+export function toThreadMeta(raw: RawThread): ThreadMeta {
+  return {
+    id: raw.id,
+    title: raw.name ?? raw.preview?.slice(0, 80) ?? raw.id,
+    preview: raw.preview ?? "",
+    status: statusFromRaw(raw.status),
+    createdAt: raw.createdAt ? unixSecondsToIso(raw.createdAt) : null,
+    updatedAt: raw.updatedAt ? unixSecondsToIso(raw.updatedAt) : null,
+  };
+}
+
+export function toTurnView(raw: RawTurn): TurnView {
+  return {
+    id: raw.id,
+    status: raw.status ?? "unknown",
+    startedAt: raw.startedAt ? unixSecondsToIso(raw.startedAt) : null,
+    completedAt: raw.completedAt ? unixSecondsToIso(raw.completedAt) : null,
+    error: raw.error ?? null,
+    items: raw.items ?? [],
+  };
+}
+
+export function isResumeNeeded(message: string): boolean {
+  return message.includes("thread not loaded") || message.includes("thread not found");
 }
