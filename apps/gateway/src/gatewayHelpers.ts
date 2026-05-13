@@ -27,6 +27,17 @@ export type RawModel = {
   isDefault?: unknown;
 };
 
+export function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  return value as Record<string, unknown>;
+}
+
+export function readString(value: unknown): string | null {
+  return typeof value === "string" ? value : null;
+}
+
 export function statusFromRaw(raw: unknown): ThreadStatus {
   if (raw && typeof raw === "object" && "type" in (raw as Record<string, unknown>)) {
     const typeValue = (raw as Record<string, unknown>).type;
