@@ -2,30 +2,18 @@ import type { FastifyInstance } from "fastify";
 import type {
   ApprovalDecisionRequest,
   ApprovalDecisionResponse,
-  ApprovalType,
   GatewayEvent,
   InteractionRespondRequest,
   InteractionRespondResponse,
-  InteractionType,
   PendingApprovalsResponse,
   PendingInteractionsResponse,
 } from "@lcwa/shared-types";
+import type {
+  PendingApprovalEntry,
+  PendingInteractionEntry,
+} from "../appServerProjection.js";
 import type { GatewayAppServerPort } from "../appServerPort.js";
 import type { GatewayDbPort } from "../db.js";
-
-export type PendingApprovalEntry = {
-  rpcId: string | number;
-  threadId: string;
-  turnId: string | null;
-  type: ApprovalType;
-};
-
-export type PendingInteractionEntry = {
-  rpcId: string | number;
-  threadId: string;
-  turnId: string | null;
-  type: InteractionType;
-};
 
 export type ApprovalInteractionRoutesDeps = {
   appServer: GatewayAppServerPort;

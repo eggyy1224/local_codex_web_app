@@ -9,16 +9,9 @@ import type {
   ThreadTimelineItem,
   ThreadTimelineResponse,
 } from "@lcwa/shared-types";
-import type { ApprovalType } from "@lcwa/shared-types";
+import type { PendingApprovalEntry } from "../appServerProjection.js";
 import type { GatewayAppServerPort } from "../appServerPort.js";
 import type { GatewayDbPort, ThreadProjection } from "../db.js";
-
-export type PendingApprovalEntry = {
-  rpcId: string | number;
-  threadId: string;
-  turnId: string | null;
-  type: ApprovalType;
-};
 import {
   applyFilters,
   isResumeNeeded,
