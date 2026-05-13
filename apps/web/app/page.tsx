@@ -11,6 +11,16 @@ import type {
   ThreadListResponse,
 } from "@lcwa/shared-types";
 import { groupThreadsByProject, pickDefaultProjectKey, projectLabelFromKey } from "./lib/projects";
+import { resolveGatewayUrl } from "./lib/gateway-url";
+import {
+  DEFAULT_MODEL,
+  FALLBACK_MODEL_OPTIONS,
+  MODEL_DEFAULT_MIGRATION_STORAGE_KEY,
+  MODEL_STORAGE_KEY,
+  preferredModelOption,
+  shouldRestoreSavedModel,
+  type ModelSelectOption,
+} from "./lib/model-options";
 import {
   applySlashSuggestion,
   getSlashSuggestions,
@@ -26,15 +36,9 @@ type UiState = {
   error: string | null;
 };
 
-const gatewayUrl = process.env.NEXT_PUBLIC_GATEWAY_URL ?? "http://127.0.0.1:8787";
-const MODEL_STORAGE_KEY = "lcwa.model.v1";
+const gatewayUrl = resolveGatewayUrl();
 const THINKING_EFFORT_STORAGE_KEY = "lcwa.thinking.effort.v1";
 
-const FALLBACK_MODEL_OPTIONS: Array<{ value: string; label: string }> = [
-  { value: "gpt-5.3-codex", label: "GPT-5.3-Codex" },
-  { value: "gpt-5-codex", label: "GPT-5-Codex" },
-  { value: "gpt-5.3-codex-spark", label: "GPT-5.3-Codex-Spark" },
-];
 const FALLBACK_THINKING_EFFORT_OPTIONS = ["minimal", "low", "medium", "high"];
 
 const quickPrompts = [
@@ -56,7 +60,7 @@ export default function HomePage() {
   const [submitting, setSubmitting] = useState(false);
   const [modelCatalog, setModelCatalog] = useState<ModelOption[]>([]);
   const [modelCatalogError, setModelCatalogError] = useState<string | null>(null);
-  const [model, setModel] = useState<string>(FALLBACK_MODEL_OPTIONS[0]?.value ?? "gpt-5.3-codex");
+  const [model, setModel] = useState<string>(DEFAULT_MODEL);
   const [thinkingEffort, setThinkingEffort] = useState<string>("high");
   const [activeSlashIndex, setActiveSlashIndex] = useState(0);
   const [slashMenuDismissed, setSlashMenuDismissed] = useState(false);
@@ -119,7 +123,7 @@ export default function HomePage() {
     }
 
     const seen = new Set<string>();
-    const options: Array<{ value: string; label: string; isDefault: boolean }> = [];
+    const options: ModelSelectOption[] = [];
     for (const entry of modelCatalog) {
       const value = entry.model || entry.id;
       if (!value || seen.has(value)) {
@@ -129,7 +133,7 @@ export default function HomePage() {
       options.push({
         value,
         label: entry.displayName ?? value,
-        isDefault: entry.isDefault === true,
+        isDefault: value === DEFAULT_MODEL || entry.isDefault === true,
       });
     }
     return options.length > 0
@@ -185,7 +189,8 @@ export default function HomePage() {
 
   useEffect(() => {
     const savedModel = window.localStorage.getItem(MODEL_STORAGE_KEY);
-    if (savedModel) {
+    const defaultMigration = window.localStorage.getItem(MODEL_DEFAULT_MIGRATION_STORAGE_KEY);
+    if (shouldRestoreSavedModel(savedModel, defaultMigration)) {
       setModel(savedModel);
     }
     const savedEffort = window.localStorage.getItem(THINKING_EFFORT_STORAGE_KEY);
@@ -229,9 +234,9 @@ export default function HomePage() {
     if (modelOptions.some((option) => option.value === model)) {
       return;
     }
-    const preferredDefault = modelOptions.find((option) => option.isDefault)?.value ?? modelOptions[0]?.value;
+    const preferredDefault = preferredModelOption(modelOptions);
     if (preferredDefault) {
-      setModel(preferredDefault);
+      setModel(preferredDefault.value);
     }
   }, [model, modelOptions]);
 
@@ -252,6 +257,7 @@ export default function HomePage() {
 
   useEffect(() => {
     window.localStorage.setItem(MODEL_STORAGE_KEY, model);
+    window.localStorage.setItem(MODEL_DEFAULT_MIGRATION_STORAGE_KEY, DEFAULT_MODEL);
   }, [model]);
 
   useEffect(() => {
@@ -439,7 +445,7 @@ export default function HomePage() {
         </div>
       </header>
 
-      <div className="cdx-workspace">
+      <div className="cdx-workspace cdx-workspace--home">
         {sidebarOpen ? (
           <aside className="cdx-sidebar">
             <div className="cdx-sidebar-actions">
@@ -488,7 +494,7 @@ export default function HomePage() {
           </aside>
         ) : null}
 
-        <main className="cdx-main">
+        <main className="cdx-main cdx-main--home">
           <section className="cdx-hero cdx-hero--home">
             <div className="cdx-hero-row cdx-hero-row--home">
               <h1>Let&apos;s build</h1>
@@ -592,7 +598,7 @@ export default function HomePage() {
                 event.preventDefault();
                 void onSubmitComposer();
               }}
-              placeholder="Ask Codex anything, @ to add files, / for commands"
+              placeholder="Ask Codex anything, / for commands"
               rows={3}
             />
             {slashMenuOpen ? (

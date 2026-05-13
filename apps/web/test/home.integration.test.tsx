@@ -3,6 +3,11 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { http, HttpResponse } from "msw";
 import { server } from "./msw/server";
+import {
+  DEFAULT_MODEL,
+  MODEL_DEFAULT_MIGRATION_STORAGE_KEY,
+  MODEL_STORAGE_KEY,
+} from "../app/lib/model-options";
 
 const pushMock = vi.fn();
 
@@ -23,14 +28,15 @@ import HomePage from "../app/page";
 describe("Home page integration", () => {
   beforeEach(() => {
     pushMock.mockReset();
+    window.localStorage.clear();
   });
 
   it("loads health + threads + model catalog", async () => {
     server.use(
-      http.get("http://127.0.0.1:8787/health", () =>
+      http.get("http://127.0.0.1:8795/health", () =>
         HttpResponse.json({ status: "ok", appServerConnected: true, timestamp: new Date().toISOString() }),
       ),
-      http.get("http://127.0.0.1:8787/api/threads", () =>
+      http.get("http://127.0.0.1:8795/api/threads", () =>
         HttpResponse.json({
           data: [
             {
@@ -48,7 +54,7 @@ describe("Home page integration", () => {
           nextCursor: null,
         }),
       ),
-      http.get("http://127.0.0.1:8787/api/models", () =>
+      http.get("http://127.0.0.1:8795/api/models", () =>
         HttpResponse.json({
           data: [{ id: "gpt-5-codex", model: "gpt-5-codex", displayName: "GPT-5-Codex", isDefault: true }],
         }),
@@ -62,13 +68,41 @@ describe("Home page integration", () => {
     expect(screen.getByTestId("home-model-select")).toBeInTheDocument();
   });
 
-  it("shows model catalog fallback message when model API fails", async () => {
+  it("defaults to GPT-5.5 and migrates the old stored default", async () => {
+    window.localStorage.setItem(MODEL_STORAGE_KEY, "gpt-5.3-codex");
+
     server.use(
-      http.get("http://127.0.0.1:8787/health", () =>
+      http.get("http://127.0.0.1:8795/health", () =>
         HttpResponse.json({ status: "ok", appServerConnected: true, timestamp: new Date().toISOString() }),
       ),
-      http.get("http://127.0.0.1:8787/api/threads", () => HttpResponse.json({ data: [], nextCursor: null })),
-      http.get("http://127.0.0.1:8787/api/models", () => new HttpResponse(null, { status: 500 })),
+      http.get("http://127.0.0.1:8795/api/threads", () => HttpResponse.json({ data: [], nextCursor: null })),
+      http.get("http://127.0.0.1:8795/api/models", () =>
+        HttpResponse.json({
+          data: [
+            { id: "gpt-5.3-codex", model: "gpt-5.3-codex", displayName: "GPT-5.3-Codex", isDefault: true },
+            { id: "gpt-5.5", model: "gpt-5.5", displayName: "GPT-5.5" },
+          ],
+        }),
+      ),
+    );
+
+    render(<HomePage />);
+
+    const select = await screen.findByTestId("home-model-select");
+    await waitFor(() => {
+      expect(select).toHaveValue("gpt-5.5");
+      expect(window.localStorage.getItem(MODEL_STORAGE_KEY)).toBe("gpt-5.5");
+      expect(window.localStorage.getItem(MODEL_DEFAULT_MIGRATION_STORAGE_KEY)).toBe(DEFAULT_MODEL);
+    });
+  });
+
+  it("shows model catalog fallback message when model API fails", async () => {
+    server.use(
+      http.get("http://127.0.0.1:8795/health", () =>
+        HttpResponse.json({ status: "ok", appServerConnected: true, timestamp: new Date().toISOString() }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads", () => HttpResponse.json({ data: [], nextCursor: null })),
+      http.get("http://127.0.0.1:8795/api/models", () => new HttpResponse(null, { status: 500 })),
     );
 
     render(<HomePage />);
@@ -80,15 +114,15 @@ describe("Home page integration", () => {
     const turnCalls: Array<unknown> = [];
 
     server.use(
-      http.get("http://127.0.0.1:8787/health", () =>
+      http.get("http://127.0.0.1:8795/health", () =>
         HttpResponse.json({ status: "ok", appServerConnected: true, timestamp: new Date().toISOString() }),
       ),
-      http.get("http://127.0.0.1:8787/api/threads", () => HttpResponse.json({ data: [], nextCursor: null })),
-      http.get("http://127.0.0.1:8787/api/models", () =>
+      http.get("http://127.0.0.1:8795/api/threads", () => HttpResponse.json({ data: [], nextCursor: null })),
+      http.get("http://127.0.0.1:8795/api/models", () =>
         HttpResponse.json({ data: [{ id: "gpt-5-codex", model: "gpt-5-codex", isDefault: true }] }),
       ),
-      http.post("http://127.0.0.1:8787/api/threads", () => HttpResponse.json({ threadId: "thread-new" })),
-      http.post("http://127.0.0.1:8787/api/threads/:id/turns", async ({ request }) => {
+      http.post("http://127.0.0.1:8795/api/threads", () => HttpResponse.json({ threadId: "thread-new" })),
+      http.post("http://127.0.0.1:8795/api/threads/:id/turns", async ({ request }) => {
         turnCalls.push(await request.json());
         return HttpResponse.json({ turnId: "turn-1" });
       }),
@@ -96,7 +130,7 @@ describe("Home page integration", () => {
 
     render(<HomePage />);
 
-    const textarea = await screen.findByPlaceholderText("Ask Codex anything, @ to add files, / for commands");
+    const textarea = await screen.findByPlaceholderText("Ask Codex anything, / for commands");
     fireEvent.change(textarea, { target: { value: "Build tests" } });
     fireEvent.keyDown(textarea, { key: "Enter" });
 
@@ -110,15 +144,15 @@ describe("Home page integration", () => {
     const turnCalls: Array<unknown> = [];
 
     server.use(
-      http.get("http://127.0.0.1:8787/health", () =>
+      http.get("http://127.0.0.1:8795/health", () =>
         HttpResponse.json({ status: "ok", appServerConnected: true, timestamp: new Date().toISOString() }),
       ),
-      http.get("http://127.0.0.1:8787/api/threads", () => HttpResponse.json({ data: [], nextCursor: null })),
-      http.get("http://127.0.0.1:8787/api/models", () =>
+      http.get("http://127.0.0.1:8795/api/threads", () => HttpResponse.json({ data: [], nextCursor: null })),
+      http.get("http://127.0.0.1:8795/api/models", () =>
         HttpResponse.json({ data: [{ id: "gpt-5-codex", model: "gpt-5-codex", isDefault: true }] }),
       ),
-      http.post("http://127.0.0.1:8787/api/threads", () => HttpResponse.json({ threadId: "thread-plan" })),
-      http.post("http://127.0.0.1:8787/api/threads/:id/turns", async ({ request }) => {
+      http.post("http://127.0.0.1:8795/api/threads", () => HttpResponse.json({ threadId: "thread-plan" })),
+      http.post("http://127.0.0.1:8795/api/threads/:id/turns", async ({ request }) => {
         turnCalls.push(await request.json());
         return HttpResponse.json({ turnId: "turn-1" });
       }),
@@ -126,7 +160,7 @@ describe("Home page integration", () => {
 
     render(<HomePage />);
 
-    const textarea = await screen.findByPlaceholderText("Ask Codex anything, @ to add files, / for commands");
+    const textarea = await screen.findByPlaceholderText("Ask Codex anything, / for commands");
     fireEvent.change(textarea, { target: { value: "/plan draft roadmap" } });
     fireEvent.keyDown(textarea, { key: "Enter" });
 
@@ -145,27 +179,27 @@ describe("Home page integration", () => {
     let turnCalls = 0;
 
     server.use(
-      http.get("http://127.0.0.1:8787/health", () =>
+      http.get("http://127.0.0.1:8795/health", () =>
         HttpResponse.json({ status: "ok", appServerConnected: true, timestamp: new Date().toISOString() }),
       ),
-      http.get("http://127.0.0.1:8787/api/threads", () => HttpResponse.json({ data: [], nextCursor: null })),
-      http.get("http://127.0.0.1:8787/api/models", () =>
+      http.get("http://127.0.0.1:8795/api/threads", () => HttpResponse.json({ data: [], nextCursor: null })),
+      http.get("http://127.0.0.1:8795/api/models", () =>
         HttpResponse.json({ data: [{ id: "gpt-5-codex", model: "gpt-5-codex", isDefault: true }] }),
       ),
-      http.post("http://127.0.0.1:8787/api/threads", () => HttpResponse.json({ threadId: "thread-cmd" })),
-      http.post("http://127.0.0.1:8787/api/threads/:id/review", async ({ request }) => {
+      http.post("http://127.0.0.1:8795/api/threads", () => HttpResponse.json({ threadId: "thread-cmd" })),
+      http.post("http://127.0.0.1:8795/api/threads/:id/review", async ({ request }) => {
         reviewCalls += 1;
         expect(await request.json()).toEqual({ instructions: "focus tests" });
         return HttpResponse.json({ turnId: "turn-r", reviewThreadId: "thread-cmd" });
       }),
-      http.post("http://127.0.0.1:8787/api/threads/:id/turns", () => {
+      http.post("http://127.0.0.1:8795/api/threads/:id/turns", () => {
         turnCalls += 1;
         return HttpResponse.json({ turnId: "turn-1" });
       }),
     );
 
     render(<HomePage />);
-    const textarea = await screen.findByPlaceholderText("Ask Codex anything, @ to add files, / for commands");
+    const textarea = await screen.findByPlaceholderText("Ask Codex anything, / for commands");
 
     fireEvent.change(textarea, { target: { value: "/review focus tests" } });
     fireEvent.keyDown(textarea, { key: "Enter" });
@@ -192,15 +226,15 @@ describe("Home page integration", () => {
     let reviewCalls = 0;
 
     server.use(
-      http.get("http://127.0.0.1:8787/health", () =>
+      http.get("http://127.0.0.1:8795/health", () =>
         HttpResponse.json({ status: "ok", appServerConnected: true, timestamp: new Date().toISOString() }),
       ),
-      http.get("http://127.0.0.1:8787/api/threads", () => HttpResponse.json({ data: [], nextCursor: null })),
-      http.get("http://127.0.0.1:8787/api/models", () =>
+      http.get("http://127.0.0.1:8795/api/threads", () => HttpResponse.json({ data: [], nextCursor: null })),
+      http.get("http://127.0.0.1:8795/api/models", () =>
         HttpResponse.json({ data: [{ id: "gpt-5-codex", model: "gpt-5-codex", isDefault: true }] }),
       ),
-      http.post("http://127.0.0.1:8787/api/threads", () => HttpResponse.json({ threadId: "thread-r" })),
-      http.post("http://127.0.0.1:8787/api/threads/:id/review", async ({ request }) => {
+      http.post("http://127.0.0.1:8795/api/threads", () => HttpResponse.json({ threadId: "thread-r" })),
+      http.post("http://127.0.0.1:8795/api/threads/:id/review", async ({ request }) => {
         reviewCalls += 1;
         expect(await request.json()).toEqual({});
         return HttpResponse.json({ turnId: "turn-r", reviewThreadId: "thread-r" });
@@ -208,7 +242,7 @@ describe("Home page integration", () => {
     );
 
     render(<HomePage />);
-    const textarea = await screen.findByPlaceholderText("Ask Codex anything, @ to add files, / for commands");
+    const textarea = await screen.findByPlaceholderText("Ask Codex anything, / for commands");
 
     fireEvent.change(textarea, { target: { value: "/r" } });
     expect(screen.getByTestId("home-slash-menu")).toBeInTheDocument();
@@ -232,22 +266,22 @@ describe("Home page integration", () => {
     const turnCalls: Array<unknown> = [];
 
     server.use(
-      http.get("http://127.0.0.1:8787/health", () =>
+      http.get("http://127.0.0.1:8795/health", () =>
         HttpResponse.json({ status: "ok", appServerConnected: true, timestamp: new Date().toISOString() }),
       ),
-      http.get("http://127.0.0.1:8787/api/threads", () => HttpResponse.json({ data: [], nextCursor: null })),
-      http.get("http://127.0.0.1:8787/api/models", () =>
+      http.get("http://127.0.0.1:8795/api/threads", () => HttpResponse.json({ data: [], nextCursor: null })),
+      http.get("http://127.0.0.1:8795/api/models", () =>
         HttpResponse.json({ data: [{ id: "gpt-5-codex", model: "gpt-5-codex", isDefault: true }] }),
       ),
-      http.post("http://127.0.0.1:8787/api/threads", () => HttpResponse.json({ threadId: "thread-u" })),
-      http.post("http://127.0.0.1:8787/api/threads/:id/turns", async ({ request }) => {
+      http.post("http://127.0.0.1:8795/api/threads", () => HttpResponse.json({ threadId: "thread-u" })),
+      http.post("http://127.0.0.1:8795/api/threads/:id/turns", async ({ request }) => {
         turnCalls.push(await request.json());
         return HttpResponse.json({ turnId: "turn-1" });
       }),
     );
 
     render(<HomePage />);
-    const textarea = await screen.findByPlaceholderText("Ask Codex anything, @ to add files, / for commands");
+    const textarea = await screen.findByPlaceholderText("Ask Codex anything, / for commands");
     fireEvent.change(textarea, { target: { value: "/foo bar" } });
     fireEvent.keyDown(textarea, { key: "Enter" });
 

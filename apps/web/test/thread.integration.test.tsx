@@ -77,15 +77,16 @@ describe("Thread page integration", () => {
   beforeEach(() => {
     pushMock.mockReset();
     replaceMock.mockReset();
+    window.localStorage.clear();
     pathnameValue = "/threads/thread-1";
     searchParamsValue = new URLSearchParams();
     MockEventSource.instances.length = 0;
     setMobileViewport(false);
     server.use(
-      http.get("http://127.0.0.1:8787/api/threads/:id/interactions/pending", () =>
+      http.get("http://127.0.0.1:8795/api/threads/:id/interactions/pending", () =>
         HttpResponse.json({ data: [] }),
       ),
-      http.post("http://127.0.0.1:8787/api/threads/:id/interactions/:interactionId/respond", () =>
+      http.post("http://127.0.0.1:8795/api/threads/:id/interactions/:interactionId/respond", () =>
         HttpResponse.json({ ok: true }),
       ),
     );
@@ -95,7 +96,7 @@ describe("Thread page integration", () => {
     vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
 
     server.use(
-      http.get("http://127.0.0.1:8787/api/threads/:id", ({ params }) =>
+      http.get("http://127.0.0.1:8795/api/threads/:id", ({ params }) =>
         HttpResponse.json({
           thread: {
             id: String(params.id),
@@ -109,7 +110,7 @@ describe("Thread page integration", () => {
           nextCursor: null,
         }),
       ),
-      http.get("http://127.0.0.1:8787/api/threads/:id/approvals/pending", () =>
+      http.get("http://127.0.0.1:8795/api/threads/:id/approvals/pending", () =>
         HttpResponse.json({
           data: [
             {
@@ -128,7 +129,7 @@ describe("Thread page integration", () => {
           ],
         }),
       ),
-      http.get("http://127.0.0.1:8787/api/threads", () =>
+      http.get("http://127.0.0.1:8795/api/threads", () =>
         HttpResponse.json({
           data: [
             {
@@ -146,7 +147,7 @@ describe("Thread page integration", () => {
           nextCursor: null,
         }),
       ),
-      http.get("http://127.0.0.1:8787/api/threads/:id/timeline", () =>
+      http.get("http://127.0.0.1:8795/api/threads/:id/timeline", () =>
         HttpResponse.json({
           data: [
             {
@@ -163,7 +164,7 @@ describe("Thread page integration", () => {
           ],
         }),
       ),
-      http.get("http://127.0.0.1:8787/api/threads/:id/context", () =>
+      http.get("http://127.0.0.1:8795/api/threads/:id/context", () =>
         HttpResponse.json({
           threadId: "thread-1",
           cwd: "/tmp/project",
@@ -172,14 +173,14 @@ describe("Thread page integration", () => {
           source: "projection",
         }),
       ),
-      http.get("http://127.0.0.1:8787/api/models", () => HttpResponse.json({ data: [] })),
+      http.get("http://127.0.0.1:8795/api/models", () => HttpResponse.json({ data: [] })),
     );
 
     render(<ThreadPage params={Promise.resolve({ id: "thread-1" })} />);
 
     await screen.findByText(/Main Thread/);
     expect(await screen.findByTestId("approval-drawer")).toBeInTheDocument();
-    expect(screen.getByText("Need approval")).toBeInTheDocument();
+    expect(await screen.findByText("Need approval")).toBeInTheDocument();
     expect(screen.getByTestId("timeline")).toBeInTheDocument();
   });
 
@@ -191,7 +192,7 @@ describe("Thread page integration", () => {
     });
 
     server.use(
-      http.get("http://127.0.0.1:8787/api/threads/:id", ({ params }) =>
+      http.get("http://127.0.0.1:8795/api/threads/:id", ({ params }) =>
         HttpResponse.json({
           thread: {
             id: String(params.id),
@@ -205,8 +206,8 @@ describe("Thread page integration", () => {
           nextCursor: null,
         }),
       ),
-      http.get("http://127.0.0.1:8787/api/threads/:id/approvals/pending", () => HttpResponse.json({ data: [] })),
-      http.get("http://127.0.0.1:8787/api/threads", () =>
+      http.get("http://127.0.0.1:8795/api/threads/:id/approvals/pending", () => HttpResponse.json({ data: [] })),
+      http.get("http://127.0.0.1:8795/api/threads", () =>
         HttpResponse.json({
           data: [
             {
@@ -224,8 +225,8 @@ describe("Thread page integration", () => {
           nextCursor: null,
         }),
       ),
-      http.get("http://127.0.0.1:8787/api/threads/:id/timeline", () => HttpResponse.json({ data: [] })),
-      http.get("http://127.0.0.1:8787/api/threads/:id/context", () =>
+      http.get("http://127.0.0.1:8795/api/threads/:id/timeline", () => HttpResponse.json({ data: [] })),
+      http.get("http://127.0.0.1:8795/api/threads/:id/context", () =>
         HttpResponse.json({
           threadId: "thread-1",
           cwd: "/tmp/project",
@@ -234,8 +235,8 @@ describe("Thread page integration", () => {
           source: "projection",
         }),
       ),
-      http.get("http://127.0.0.1:8787/api/models", () => HttpResponse.json({ data: [] })),
-      http.post("http://127.0.0.1:8787/api/threads/:id/turns", async () => {
+      http.get("http://127.0.0.1:8795/api/models", () => HttpResponse.json({ data: [] })),
+      http.post("http://127.0.0.1:8795/api/threads/:id/turns", async () => {
         await turnRequestGate;
         return HttpResponse.json({ turnId: "turn-2" });
       }),
@@ -266,7 +267,7 @@ describe("Thread page integration", () => {
     vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
 
     server.use(
-      http.get("http://127.0.0.1:8787/api/threads/:id", ({ params }) =>
+      http.get("http://127.0.0.1:8795/api/threads/:id", ({ params }) =>
         HttpResponse.json({
           thread: {
             id: String(params.id),
@@ -280,10 +281,10 @@ describe("Thread page integration", () => {
           nextCursor: null,
         }),
       ),
-      http.get("http://127.0.0.1:8787/api/threads/:id/approvals/pending", () =>
+      http.get("http://127.0.0.1:8795/api/threads/:id/approvals/pending", () =>
         HttpResponse.json({ data: [] }),
       ),
-      http.get("http://127.0.0.1:8787/api/threads", () =>
+      http.get("http://127.0.0.1:8795/api/threads", () =>
         HttpResponse.json({
           data: [
             {
@@ -312,8 +313,8 @@ describe("Thread page integration", () => {
           nextCursor: null,
         }),
       ),
-      http.get("http://127.0.0.1:8787/api/threads/:id/timeline", () => HttpResponse.json({ data: [] })),
-      http.get("http://127.0.0.1:8787/api/threads/:id/context", () =>
+      http.get("http://127.0.0.1:8795/api/threads/:id/timeline", () => HttpResponse.json({ data: [] })),
+      http.get("http://127.0.0.1:8795/api/threads/:id/context", () =>
         HttpResponse.json({
           threadId: "thread-1",
           cwd: "/tmp/project-a",
@@ -322,8 +323,8 @@ describe("Thread page integration", () => {
           source: "projection",
         }),
       ),
-      http.get("http://127.0.0.1:8787/api/models", () => HttpResponse.json({ data: [] })),
-      http.post("http://127.0.0.1:8787/api/threads/:id/control", () => HttpResponse.json({ ok: true })),
+      http.get("http://127.0.0.1:8795/api/models", () => HttpResponse.json({ data: [] })),
+      http.post("http://127.0.0.1:8795/api/threads/:id/control", () => HttpResponse.json({ ok: true })),
     );
 
     render(<ThreadPage params={Promise.resolve({ id: "thread-1" })} />);
@@ -348,7 +349,7 @@ describe("Thread page integration", () => {
     vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
 
     server.use(
-      http.get("http://127.0.0.1:8787/api/threads/:id", ({ params }) =>
+      http.get("http://127.0.0.1:8795/api/threads/:id", ({ params }) =>
         HttpResponse.json({
           thread: {
             id: String(params.id),
@@ -362,10 +363,10 @@ describe("Thread page integration", () => {
           nextCursor: null,
         }),
       ),
-      http.get("http://127.0.0.1:8787/api/threads/:id/approvals/pending", () =>
+      http.get("http://127.0.0.1:8795/api/threads/:id/approvals/pending", () =>
         HttpResponse.json({ data: [] }),
       ),
-      http.get("http://127.0.0.1:8787/api/threads", () =>
+      http.get("http://127.0.0.1:8795/api/threads", () =>
         HttpResponse.json({
           data: [
             {
@@ -394,7 +395,7 @@ describe("Thread page integration", () => {
           nextCursor: null,
         }),
       ),
-      http.get("http://127.0.0.1:8787/api/threads/:id/timeline", () =>
+      http.get("http://127.0.0.1:8795/api/threads/:id/timeline", () =>
         HttpResponse.json({
           data: [
             {
@@ -422,7 +423,7 @@ describe("Thread page integration", () => {
           ],
         }),
       ),
-      http.get("http://127.0.0.1:8787/api/threads/:id/context", () =>
+      http.get("http://127.0.0.1:8795/api/threads/:id/context", () =>
         HttpResponse.json({
           threadId: "thread-1",
           cwd: "/tmp/project-a",
@@ -431,7 +432,7 @@ describe("Thread page integration", () => {
           source: "projection",
         }),
       ),
-      http.get("http://127.0.0.1:8787/api/models", () => HttpResponse.json({ data: [] })),
+      http.get("http://127.0.0.1:8795/api/models", () => HttpResponse.json({ data: [] })),
     );
 
     render(<ThreadPage params={Promise.resolve({ id: "thread-1" })} />);
@@ -449,7 +450,7 @@ describe("Thread page integration", () => {
     vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
 
     server.use(
-      http.get("http://127.0.0.1:8787/api/threads/:id", ({ params }) =>
+      http.get("http://127.0.0.1:8795/api/threads/:id", ({ params }) =>
         HttpResponse.json({
           thread: {
             id: String(params.id),
@@ -463,14 +464,14 @@ describe("Thread page integration", () => {
           nextCursor: null,
         }),
       ),
-      http.get("http://127.0.0.1:8787/api/threads/:id/approvals/pending", () =>
+      http.get("http://127.0.0.1:8795/api/threads/:id/approvals/pending", () =>
         HttpResponse.json({ data: [] }),
       ),
-      http.get("http://127.0.0.1:8787/api/threads", () =>
+      http.get("http://127.0.0.1:8795/api/threads", () =>
         HttpResponse.json({ data: [{ id: "thread-1", projectKey: "/tmp/project", title: "", status: "idle", preview: "Preview", lastActiveAt: "2026-01-01T00:00:00.000Z", archived: false, waitingApprovalCount: 0, errorCount: 0, }], nextCursor: null }),
       ),
-      http.get("http://127.0.0.1:8787/api/threads/:id/timeline", () => HttpResponse.json({ data: [] })),
-      http.get("http://127.0.0.1:8787/api/threads/:id/context", () =>
+      http.get("http://127.0.0.1:8795/api/threads/:id/timeline", () => HttpResponse.json({ data: [] })),
+      http.get("http://127.0.0.1:8795/api/threads/:id/context", () =>
         HttpResponse.json({
           threadId: "thread-1",
           cwd: "/tmp/project",
@@ -479,7 +480,7 @@ describe("Thread page integration", () => {
           source: "projection",
         }),
       ),
-      http.get("http://127.0.0.1:8787/api/models", () => HttpResponse.json({ data: [] })),
+      http.get("http://127.0.0.1:8795/api/models", () => HttpResponse.json({ data: [] })),
     );
 
     render(<ThreadPage params={Promise.resolve({ id: "thread-1" })} />);
@@ -498,7 +499,7 @@ describe("Thread page integration", () => {
     });
 
     server.use(
-      http.get("http://127.0.0.1:8787/api/threads/:id", ({ params }) =>
+      http.get("http://127.0.0.1:8795/api/threads/:id", ({ params }) =>
         HttpResponse.json({
           thread: {
             id: String(params.id),
@@ -512,10 +513,10 @@ describe("Thread page integration", () => {
           nextCursor: null,
         }),
       ),
-      http.get("http://127.0.0.1:8787/api/threads/:id/approvals/pending", () =>
+      http.get("http://127.0.0.1:8795/api/threads/:id/approvals/pending", () =>
         HttpResponse.json({ data: [] }),
       ),
-      http.get("http://127.0.0.1:8787/api/threads", () =>
+      http.get("http://127.0.0.1:8795/api/threads", () =>
         HttpResponse.json({
           data: [
             {
@@ -533,10 +534,10 @@ describe("Thread page integration", () => {
           nextCursor: null,
         }),
       ),
-      http.get("http://127.0.0.1:8787/api/threads/:id/timeline", () =>
+      http.get("http://127.0.0.1:8795/api/threads/:id/timeline", () =>
         HttpResponse.json({ data: [] }),
       ),
-      http.get("http://127.0.0.1:8787/api/threads/:id/context", () =>
+      http.get("http://127.0.0.1:8795/api/threads/:id/context", () =>
         HttpResponse.json({
           threadId: "thread-1",
           cwd: "/tmp/project",
@@ -545,7 +546,7 @@ describe("Thread page integration", () => {
           source: "projection",
         }),
       ),
-      http.get("http://127.0.0.1:8787/api/models", () => HttpResponse.json({ data: [] })),
+      http.get("http://127.0.0.1:8795/api/models", () => HttpResponse.json({ data: [] })),
     );
 
     render(<ThreadPage params={params} />);
@@ -571,7 +572,7 @@ describe("Thread page integration", () => {
 
     let approvalCalls = 0;
     server.use(
-      http.get("http://127.0.0.1:8787/api/threads/:id", ({ params }) =>
+      http.get("http://127.0.0.1:8795/api/threads/:id", ({ params }) =>
         HttpResponse.json({
           thread: {
             id: String(params.id),
@@ -585,7 +586,7 @@ describe("Thread page integration", () => {
           nextCursor: null,
         }),
       ),
-      http.get("http://127.0.0.1:8787/api/threads/:id/approvals/pending", () =>
+      http.get("http://127.0.0.1:8795/api/threads/:id/approvals/pending", () =>
         HttpResponse.json({
           data: [
             {
@@ -617,11 +618,11 @@ describe("Thread page integration", () => {
           ],
         }),
       ),
-      http.get("http://127.0.0.1:8787/api/threads", () =>
+      http.get("http://127.0.0.1:8795/api/threads", () =>
         HttpResponse.json({ data: [], nextCursor: null }),
       ),
-      http.get("http://127.0.0.1:8787/api/threads/:id/timeline", () => HttpResponse.json({ data: [] })),
-      http.get("http://127.0.0.1:8787/api/threads/:id/context", () =>
+      http.get("http://127.0.0.1:8795/api/threads/:id/timeline", () => HttpResponse.json({ data: [] })),
+      http.get("http://127.0.0.1:8795/api/threads/:id/context", () =>
         HttpResponse.json({
           threadId: "thread-1",
           cwd: "/tmp/project",
@@ -630,15 +631,15 @@ describe("Thread page integration", () => {
           source: "projection",
         }),
       ),
-      http.get("http://127.0.0.1:8787/api/models", () => HttpResponse.json({ data: [] })),
-      http.post("http://127.0.0.1:8787/api/threads/:id/approvals/:approvalId", async () => {
+      http.get("http://127.0.0.1:8795/api/models", () => HttpResponse.json({ data: [] })),
+      http.post("http://127.0.0.1:8795/api/threads/:id/approvals/:approvalId", async () => {
         approvalCalls += 1;
         await new Promise<void>((resolve) => {
           window.setTimeout(resolve, 75);
         });
         return HttpResponse.json({ ok: true });
       }),
-      http.post("http://127.0.0.1:8787/api/threads/:id/control", () => HttpResponse.json({ ok: true })),
+      http.post("http://127.0.0.1:8795/api/threads/:id/control", () => HttpResponse.json({ ok: true })),
     );
 
     render(<ThreadPage params={Promise.resolve({ id: "thread-1" })} />);
@@ -682,7 +683,7 @@ describe("Thread page integration", () => {
     let controlCalls = 0;
 
     server.use(
-      http.get("http://127.0.0.1:8787/api/threads/:id", ({ params }) =>
+      http.get("http://127.0.0.1:8795/api/threads/:id", ({ params }) =>
         HttpResponse.json({
           thread: {
             id: String(params.id),
@@ -696,7 +697,7 @@ describe("Thread page integration", () => {
           nextCursor: null,
         }),
       ),
-      http.get("http://127.0.0.1:8787/api/threads/:id/approvals/pending", () =>
+      http.get("http://127.0.0.1:8795/api/threads/:id/approvals/pending", () =>
         HttpResponse.json({
           data: [
             {
@@ -715,9 +716,9 @@ describe("Thread page integration", () => {
           ],
         }),
       ),
-      http.get("http://127.0.0.1:8787/api/threads", () => HttpResponse.json({ data: [], nextCursor: null })),
-      http.get("http://127.0.0.1:8787/api/threads/:id/timeline", () => HttpResponse.json({ data: [] })),
-      http.get("http://127.0.0.1:8787/api/threads/:id/context", () =>
+      http.get("http://127.0.0.1:8795/api/threads", () => HttpResponse.json({ data: [], nextCursor: null })),
+      http.get("http://127.0.0.1:8795/api/threads/:id/timeline", () => HttpResponse.json({ data: [] })),
+      http.get("http://127.0.0.1:8795/api/threads/:id/context", () =>
         HttpResponse.json({
           threadId: "thread-1",
           cwd: "/tmp/project",
@@ -726,12 +727,12 @@ describe("Thread page integration", () => {
           source: "projection",
         }),
       ),
-      http.get("http://127.0.0.1:8787/api/models", () => HttpResponse.json({ data: [] })),
-      http.post("http://127.0.0.1:8787/api/threads/:id/approvals/:approvalId", () => {
+      http.get("http://127.0.0.1:8795/api/models", () => HttpResponse.json({ data: [] })),
+      http.post("http://127.0.0.1:8795/api/threads/:id/approvals/:approvalId", () => {
         approvalCalls += 1;
         return HttpResponse.json({ ok: true });
       }),
-      http.post("http://127.0.0.1:8787/api/threads/:id/control", () => {
+      http.post("http://127.0.0.1:8795/api/threads/:id/control", () => {
         controlCalls += 1;
         return HttpResponse.json({ ok: true });
       }),
@@ -763,7 +764,7 @@ describe("Thread page integration", () => {
     MockEventSource.instances.length = 0;
 
     server.use(
-      http.get("http://127.0.0.1:8787/api/threads/:id", ({ params }) =>
+      http.get("http://127.0.0.1:8795/api/threads/:id", ({ params }) =>
         HttpResponse.json({
           thread: {
             id: String(params.id),
@@ -777,10 +778,10 @@ describe("Thread page integration", () => {
           nextCursor: null,
         }),
       ),
-      http.get("http://127.0.0.1:8787/api/threads/:id/approvals/pending", () => HttpResponse.json({ data: [] })),
-      http.get("http://127.0.0.1:8787/api/threads", () => HttpResponse.json({ data: [], nextCursor: null })),
-      http.get("http://127.0.0.1:8787/api/threads/:id/timeline", () => HttpResponse.json({ data: [] })),
-      http.get("http://127.0.0.1:8787/api/threads/:id/context", () =>
+      http.get("http://127.0.0.1:8795/api/threads/:id/approvals/pending", () => HttpResponse.json({ data: [] })),
+      http.get("http://127.0.0.1:8795/api/threads", () => HttpResponse.json({ data: [], nextCursor: null })),
+      http.get("http://127.0.0.1:8795/api/threads/:id/timeline", () => HttpResponse.json({ data: [] })),
+      http.get("http://127.0.0.1:8795/api/threads/:id/context", () =>
         HttpResponse.json({
           threadId: "thread-1",
           cwd: "/tmp/project",
@@ -789,8 +790,8 @@ describe("Thread page integration", () => {
           source: "projection",
         }),
       ),
-      http.get("http://127.0.0.1:8787/api/models", () => HttpResponse.json({ data: [] })),
-      http.post("http://127.0.0.1:8787/api/threads/:id/control", () => HttpResponse.json({ ok: true })),
+      http.get("http://127.0.0.1:8795/api/models", () => HttpResponse.json({ data: [] })),
+      http.post("http://127.0.0.1:8795/api/threads/:id/control", () => HttpResponse.json({ ok: true })),
     );
 
     render(<ThreadPage params={Promise.resolve({ id: "thread-1" })} />);
@@ -851,7 +852,7 @@ describe("Thread page integration", () => {
     const turnCalls: Array<unknown> = [];
 
     server.use(
-      http.get("http://127.0.0.1:8787/api/threads/:id", ({ params }) =>
+      http.get("http://127.0.0.1:8795/api/threads/:id", ({ params }) =>
         HttpResponse.json({
           thread: {
             id: String(params.id),
@@ -865,10 +866,10 @@ describe("Thread page integration", () => {
           nextCursor: null,
         }),
       ),
-      http.get("http://127.0.0.1:8787/api/threads/:id/approvals/pending", () => HttpResponse.json({ data: [] })),
-      http.get("http://127.0.0.1:8787/api/threads", () => HttpResponse.json({ data: [], nextCursor: null })),
-      http.get("http://127.0.0.1:8787/api/threads/:id/timeline", () => HttpResponse.json({ data: [] })),
-      http.get("http://127.0.0.1:8787/api/threads/:id/context", () =>
+      http.get("http://127.0.0.1:8795/api/threads/:id/approvals/pending", () => HttpResponse.json({ data: [] })),
+      http.get("http://127.0.0.1:8795/api/threads", () => HttpResponse.json({ data: [], nextCursor: null })),
+      http.get("http://127.0.0.1:8795/api/threads/:id/timeline", () => HttpResponse.json({ data: [] })),
+      http.get("http://127.0.0.1:8795/api/threads/:id/context", () =>
         HttpResponse.json({
           threadId: "thread-1",
           cwd: "/tmp/project",
@@ -877,12 +878,12 @@ describe("Thread page integration", () => {
           source: "projection",
         }),
       ),
-      http.get("http://127.0.0.1:8787/api/models", () => HttpResponse.json({ data: [] })),
-      http.post("http://127.0.0.1:8787/api/threads/:id/turns", async ({ request }) => {
+      http.get("http://127.0.0.1:8795/api/models", () => HttpResponse.json({ data: [] })),
+      http.post("http://127.0.0.1:8795/api/threads/:id/turns", async ({ request }) => {
         turnCalls.push(await request.json());
         return HttpResponse.json({ turnId: "turn-plan-1" });
       }),
-      http.post("http://127.0.0.1:8787/api/threads/:id/control", () => HttpResponse.json({ ok: true })),
+      http.post("http://127.0.0.1:8795/api/threads/:id/control", () => HttpResponse.json({ ok: true })),
     );
 
     render(<ThreadPage params={Promise.resolve({ id: "thread-1" })} />);
@@ -913,7 +914,7 @@ describe("Thread page integration", () => {
     let rateLimitCalls = 0;
 
     server.use(
-      http.get("http://127.0.0.1:8787/api/threads/:id", ({ params }) =>
+      http.get("http://127.0.0.1:8795/api/threads/:id", ({ params }) =>
         HttpResponse.json({
           thread: {
             id: String(params.id),
@@ -927,10 +928,10 @@ describe("Thread page integration", () => {
           nextCursor: null,
         }),
       ),
-      http.get("http://127.0.0.1:8787/api/threads/:id/approvals/pending", () => HttpResponse.json({ data: [] })),
-      http.get("http://127.0.0.1:8787/api/threads", () => HttpResponse.json({ data: [], nextCursor: null })),
-      http.get("http://127.0.0.1:8787/api/threads/:id/timeline", () => HttpResponse.json({ data: [] })),
-      http.get("http://127.0.0.1:8787/api/threads/:id/context", () =>
+      http.get("http://127.0.0.1:8795/api/threads/:id/approvals/pending", () => HttpResponse.json({ data: [] })),
+      http.get("http://127.0.0.1:8795/api/threads", () => HttpResponse.json({ data: [], nextCursor: null })),
+      http.get("http://127.0.0.1:8795/api/threads/:id/timeline", () => HttpResponse.json({ data: [] })),
+      http.get("http://127.0.0.1:8795/api/threads/:id/context", () =>
         HttpResponse.json({
           threadId: "thread-1",
           cwd: "/tmp/project",
@@ -939,14 +940,14 @@ describe("Thread page integration", () => {
           source: "projection",
         }),
       ),
-      http.get("http://127.0.0.1:8787/api/models", () => HttpResponse.json({ data: [] })),
-      http.post("http://127.0.0.1:8787/api/threads/:id/review", async ({ request }) => {
+      http.get("http://127.0.0.1:8795/api/models", () => HttpResponse.json({ data: [] })),
+      http.post("http://127.0.0.1:8795/api/threads/:id/review", async ({ request }) => {
         reviewCalls += 1;
         const payload = await request.json();
         expect(payload).toEqual({ instructions: "focus risky diff" });
         return HttpResponse.json({ turnId: "turn-review-1", reviewThreadId: "thread-1" });
       }),
-      http.get("http://127.0.0.1:8787/api/account/rate-limits", () => {
+      http.get("http://127.0.0.1:8795/api/account/rate-limits", () => {
         rateLimitCalls += 1;
         return HttpResponse.json({
           rateLimits: {
@@ -962,7 +963,7 @@ describe("Thread page integration", () => {
           rateLimitsByLimitId: {},
         });
       }),
-      http.post("http://127.0.0.1:8787/api/threads/:id/control", () => HttpResponse.json({ ok: true })),
+      http.post("http://127.0.0.1:8795/api/threads/:id/control", () => HttpResponse.json({ ok: true })),
     );
 
     render(<ThreadPage params={Promise.resolve({ id: "thread-1" })} />);
@@ -994,7 +995,7 @@ describe("Thread page integration", () => {
     vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
 
     server.use(
-      http.get("http://127.0.0.1:8787/api/threads/:id", ({ params }) =>
+      http.get("http://127.0.0.1:8795/api/threads/:id", ({ params }) =>
         HttpResponse.json({
           thread: {
             id: String(params.id),
@@ -1008,9 +1009,9 @@ describe("Thread page integration", () => {
           nextCursor: null,
         }),
       ),
-      http.get("http://127.0.0.1:8787/api/threads/:id/approvals/pending", () => HttpResponse.json({ data: [] })),
-      http.get("http://127.0.0.1:8787/api/threads", () => HttpResponse.json({ data: [], nextCursor: null })),
-      http.get("http://127.0.0.1:8787/api/threads/:id/timeline", () =>
+      http.get("http://127.0.0.1:8795/api/threads/:id/approvals/pending", () => HttpResponse.json({ data: [] })),
+      http.get("http://127.0.0.1:8795/api/threads", () => HttpResponse.json({ data: [], nextCursor: null })),
+      http.get("http://127.0.0.1:8795/api/threads/:id/timeline", () =>
         HttpResponse.json({
           data: [
             {
@@ -1038,7 +1039,7 @@ describe("Thread page integration", () => {
           ],
         }),
       ),
-      http.get("http://127.0.0.1:8787/api/threads/:id/context", () =>
+      http.get("http://127.0.0.1:8795/api/threads/:id/context", () =>
         HttpResponse.json({
           threadId: "thread-1",
           cwd: "/tmp/project",
@@ -1047,8 +1048,8 @@ describe("Thread page integration", () => {
           source: "projection",
         }),
       ),
-      http.get("http://127.0.0.1:8787/api/models", () => HttpResponse.json({ data: [] })),
-      http.post("http://127.0.0.1:8787/api/threads/:id/control", () => HttpResponse.json({ ok: true })),
+      http.get("http://127.0.0.1:8795/api/models", () => HttpResponse.json({ data: [] })),
+      http.post("http://127.0.0.1:8795/api/threads/:id/control", () => HttpResponse.json({ ok: true })),
     );
 
     render(<ThreadPage params={Promise.resolve({ id: "thread-1" })} />);
@@ -1062,7 +1063,7 @@ describe("Thread page integration", () => {
     let reviewCalls = 0;
 
     server.use(
-      http.get("http://127.0.0.1:8787/api/threads/:id", ({ params }) =>
+      http.get("http://127.0.0.1:8795/api/threads/:id", ({ params }) =>
         HttpResponse.json({
           thread: {
             id: String(params.id),
@@ -1076,10 +1077,10 @@ describe("Thread page integration", () => {
           nextCursor: null,
         }),
       ),
-      http.get("http://127.0.0.1:8787/api/threads/:id/approvals/pending", () => HttpResponse.json({ data: [] })),
-      http.get("http://127.0.0.1:8787/api/threads", () => HttpResponse.json({ data: [], nextCursor: null })),
-      http.get("http://127.0.0.1:8787/api/threads/:id/timeline", () => HttpResponse.json({ data: [] })),
-      http.get("http://127.0.0.1:8787/api/threads/:id/context", () =>
+      http.get("http://127.0.0.1:8795/api/threads/:id/approvals/pending", () => HttpResponse.json({ data: [] })),
+      http.get("http://127.0.0.1:8795/api/threads", () => HttpResponse.json({ data: [], nextCursor: null })),
+      http.get("http://127.0.0.1:8795/api/threads/:id/timeline", () => HttpResponse.json({ data: [] })),
+      http.get("http://127.0.0.1:8795/api/threads/:id/context", () =>
         HttpResponse.json({
           threadId: "thread-1",
           cwd: "/tmp/project",
@@ -1088,13 +1089,13 @@ describe("Thread page integration", () => {
           source: "projection",
         }),
       ),
-      http.get("http://127.0.0.1:8787/api/models", () => HttpResponse.json({ data: [] })),
-      http.post("http://127.0.0.1:8787/api/threads/:id/review", async ({ request }) => {
+      http.get("http://127.0.0.1:8795/api/models", () => HttpResponse.json({ data: [] })),
+      http.post("http://127.0.0.1:8795/api/threads/:id/review", async ({ request }) => {
         reviewCalls += 1;
         expect(await request.json()).toEqual({});
         return HttpResponse.json({ turnId: "turn-review-1", reviewThreadId: "thread-1" });
       }),
-      http.post("http://127.0.0.1:8787/api/threads/:id/control", () => HttpResponse.json({ ok: true })),
+      http.post("http://127.0.0.1:8795/api/threads/:id/control", () => HttpResponse.json({ ok: true })),
     );
 
     render(<ThreadPage params={Promise.resolve({ id: "thread-1" })} />);
@@ -1121,7 +1122,7 @@ describe("Thread page integration", () => {
     const turnCalls: Array<unknown> = [];
 
     server.use(
-      http.get("http://127.0.0.1:8787/api/threads/:id", ({ params }) =>
+      http.get("http://127.0.0.1:8795/api/threads/:id", ({ params }) =>
         HttpResponse.json({
           thread: {
             id: String(params.id),
@@ -1135,10 +1136,10 @@ describe("Thread page integration", () => {
           nextCursor: null,
         }),
       ),
-      http.get("http://127.0.0.1:8787/api/threads/:id/approvals/pending", () => HttpResponse.json({ data: [] })),
-      http.get("http://127.0.0.1:8787/api/threads", () => HttpResponse.json({ data: [], nextCursor: null })),
-      http.get("http://127.0.0.1:8787/api/threads/:id/timeline", () => HttpResponse.json({ data: [] })),
-      http.get("http://127.0.0.1:8787/api/threads/:id/context", () =>
+      http.get("http://127.0.0.1:8795/api/threads/:id/approvals/pending", () => HttpResponse.json({ data: [] })),
+      http.get("http://127.0.0.1:8795/api/threads", () => HttpResponse.json({ data: [], nextCursor: null })),
+      http.get("http://127.0.0.1:8795/api/threads/:id/timeline", () => HttpResponse.json({ data: [] })),
+      http.get("http://127.0.0.1:8795/api/threads/:id/context", () =>
         HttpResponse.json({
           threadId: "thread-1",
           cwd: "/tmp/project",
@@ -1147,12 +1148,12 @@ describe("Thread page integration", () => {
           source: "projection",
         }),
       ),
-      http.get("http://127.0.0.1:8787/api/models", () => HttpResponse.json({ data: [] })),
-      http.post("http://127.0.0.1:8787/api/threads/:id/turns", async ({ request }) => {
+      http.get("http://127.0.0.1:8795/api/models", () => HttpResponse.json({ data: [] })),
+      http.post("http://127.0.0.1:8795/api/threads/:id/turns", async ({ request }) => {
         turnCalls.push(await request.json());
         return HttpResponse.json({ turnId: "turn-1" });
       }),
-      http.post("http://127.0.0.1:8787/api/threads/:id/control", () => HttpResponse.json({ ok: true })),
+      http.post("http://127.0.0.1:8795/api/threads/:id/control", () => HttpResponse.json({ ok: true })),
     );
 
     render(<ThreadPage params={Promise.resolve({ id: "thread-1" })} />);
@@ -1173,7 +1174,7 @@ describe("Thread page integration", () => {
     const interactionCalls: Array<unknown> = [];
 
     server.use(
-      http.get("http://127.0.0.1:8787/api/threads/:id", ({ params }) =>
+      http.get("http://127.0.0.1:8795/api/threads/:id", ({ params }) =>
         HttpResponse.json({
           thread: {
             id: String(params.id),
@@ -1187,8 +1188,8 @@ describe("Thread page integration", () => {
           nextCursor: null,
         }),
       ),
-      http.get("http://127.0.0.1:8787/api/threads/:id/approvals/pending", () => HttpResponse.json({ data: [] })),
-      http.get("http://127.0.0.1:8787/api/threads/:id/interactions/pending", () =>
+      http.get("http://127.0.0.1:8795/api/threads/:id/approvals/pending", () => HttpResponse.json({ data: [] })),
+      http.get("http://127.0.0.1:8795/api/threads/:id/interactions/pending", () =>
         HttpResponse.json({
           data: [
             {
@@ -1214,9 +1215,9 @@ describe("Thread page integration", () => {
           ],
         }),
       ),
-      http.get("http://127.0.0.1:8787/api/threads", () => HttpResponse.json({ data: [], nextCursor: null })),
-      http.get("http://127.0.0.1:8787/api/threads/:id/timeline", () => HttpResponse.json({ data: [] })),
-      http.get("http://127.0.0.1:8787/api/threads/:id/context", () =>
+      http.get("http://127.0.0.1:8795/api/threads", () => HttpResponse.json({ data: [], nextCursor: null })),
+      http.get("http://127.0.0.1:8795/api/threads/:id/timeline", () => HttpResponse.json({ data: [] })),
+      http.get("http://127.0.0.1:8795/api/threads/:id/context", () =>
         HttpResponse.json({
           threadId: "thread-1",
           cwd: "/tmp/project",
@@ -1225,8 +1226,8 @@ describe("Thread page integration", () => {
           source: "projection",
         }),
       ),
-      http.get("http://127.0.0.1:8787/api/models", () => HttpResponse.json({ data: [] })),
-      http.post("http://127.0.0.1:8787/api/threads/:id/interactions/:interactionId/respond", async ({ request }) => {
+      http.get("http://127.0.0.1:8795/api/models", () => HttpResponse.json({ data: [] })),
+      http.post("http://127.0.0.1:8795/api/threads/:id/interactions/:interactionId/respond", async ({ request }) => {
         interactionCalls.push(await request.json());
         return HttpResponse.json({ ok: true });
       }),
@@ -1260,7 +1261,7 @@ describe("Thread page integration", () => {
     const interactionCalls: Array<unknown> = [];
 
     server.use(
-      http.get("http://127.0.0.1:8787/api/threads/:id", ({ params }) =>
+      http.get("http://127.0.0.1:8795/api/threads/:id", ({ params }) =>
         HttpResponse.json({
           thread: {
             id: String(params.id),
@@ -1274,8 +1275,8 @@ describe("Thread page integration", () => {
           nextCursor: null,
         }),
       ),
-      http.get("http://127.0.0.1:8787/api/threads/:id/approvals/pending", () => HttpResponse.json({ data: [] })),
-      http.get("http://127.0.0.1:8787/api/threads/:id/interactions/pending", () =>
+      http.get("http://127.0.0.1:8795/api/threads/:id/approvals/pending", () => HttpResponse.json({ data: [] })),
+      http.get("http://127.0.0.1:8795/api/threads/:id/interactions/pending", () =>
         HttpResponse.json({
           data: [
             {
@@ -1304,9 +1305,9 @@ describe("Thread page integration", () => {
           ],
         }),
       ),
-      http.get("http://127.0.0.1:8787/api/threads", () => HttpResponse.json({ data: [], nextCursor: null })),
-      http.get("http://127.0.0.1:8787/api/threads/:id/timeline", () => HttpResponse.json({ data: [] })),
-      http.get("http://127.0.0.1:8787/api/threads/:id/context", () =>
+      http.get("http://127.0.0.1:8795/api/threads", () => HttpResponse.json({ data: [], nextCursor: null })),
+      http.get("http://127.0.0.1:8795/api/threads/:id/timeline", () => HttpResponse.json({ data: [] })),
+      http.get("http://127.0.0.1:8795/api/threads/:id/context", () =>
         HttpResponse.json({
           threadId: "thread-1",
           cwd: "/tmp/project",
@@ -1315,8 +1316,8 @@ describe("Thread page integration", () => {
           source: "projection",
         }),
       ),
-      http.get("http://127.0.0.1:8787/api/models", () => HttpResponse.json({ data: [] })),
-      http.post("http://127.0.0.1:8787/api/threads/:id/interactions/:interactionId/respond", async ({ request }) => {
+      http.get("http://127.0.0.1:8795/api/models", () => HttpResponse.json({ data: [] })),
+      http.post("http://127.0.0.1:8795/api/threads/:id/interactions/:interactionId/respond", async ({ request }) => {
         interactionCalls.push(await request.json());
         return HttpResponse.json({ ok: true });
       }),
@@ -1346,7 +1347,7 @@ describe("Thread page integration", () => {
     const interactionCalls: Array<unknown> = [];
 
     server.use(
-      http.get("http://127.0.0.1:8787/api/threads/:id", ({ params }) =>
+      http.get("http://127.0.0.1:8795/api/threads/:id", ({ params }) =>
         HttpResponse.json({
           thread: {
             id: String(params.id),
@@ -1360,8 +1361,8 @@ describe("Thread page integration", () => {
           nextCursor: null,
         }),
       ),
-      http.get("http://127.0.0.1:8787/api/threads/:id/approvals/pending", () => HttpResponse.json({ data: [] })),
-      http.get("http://127.0.0.1:8787/api/threads/:id/interactions/pending", () =>
+      http.get("http://127.0.0.1:8795/api/threads/:id/approvals/pending", () => HttpResponse.json({ data: [] })),
+      http.get("http://127.0.0.1:8795/api/threads/:id/interactions/pending", () =>
         HttpResponse.json({
           data: [
             {
@@ -1387,9 +1388,9 @@ describe("Thread page integration", () => {
           ],
         }),
       ),
-      http.get("http://127.0.0.1:8787/api/threads", () => HttpResponse.json({ data: [], nextCursor: null })),
-      http.get("http://127.0.0.1:8787/api/threads/:id/timeline", () => HttpResponse.json({ data: [] })),
-      http.get("http://127.0.0.1:8787/api/threads/:id/context", () =>
+      http.get("http://127.0.0.1:8795/api/threads", () => HttpResponse.json({ data: [], nextCursor: null })),
+      http.get("http://127.0.0.1:8795/api/threads/:id/timeline", () => HttpResponse.json({ data: [] })),
+      http.get("http://127.0.0.1:8795/api/threads/:id/context", () =>
         HttpResponse.json({
           threadId: "thread-1",
           cwd: "/tmp/project",
@@ -1398,8 +1399,8 @@ describe("Thread page integration", () => {
           source: "projection",
         }),
       ),
-      http.get("http://127.0.0.1:8787/api/models", () => HttpResponse.json({ data: [] })),
-      http.post("http://127.0.0.1:8787/api/threads/:id/interactions/:interactionId/respond", async ({ request }) => {
+      http.get("http://127.0.0.1:8795/api/models", () => HttpResponse.json({ data: [] })),
+      http.post("http://127.0.0.1:8795/api/threads/:id/interactions/:interactionId/respond", async ({ request }) => {
         interactionCalls.push(await request.json());
         return HttpResponse.json({ ok: true });
       }),
@@ -1428,7 +1429,7 @@ describe("Thread page integration", () => {
     vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
 
     server.use(
-      http.get("http://127.0.0.1:8787/api/threads/:id", ({ params }) =>
+      http.get("http://127.0.0.1:8795/api/threads/:id", ({ params }) =>
         HttpResponse.json({
           thread: {
             id: String(params.id),
@@ -1442,8 +1443,8 @@ describe("Thread page integration", () => {
           nextCursor: null,
         }),
       ),
-      http.get("http://127.0.0.1:8787/api/threads/:id/approvals/pending", () => HttpResponse.json({ data: [] })),
-      http.get("http://127.0.0.1:8787/api/threads/:id/interactions/pending", () =>
+      http.get("http://127.0.0.1:8795/api/threads/:id/approvals/pending", () => HttpResponse.json({ data: [] })),
+      http.get("http://127.0.0.1:8795/api/threads/:id/interactions/pending", () =>
         HttpResponse.json({
           data: [
             {
@@ -1469,9 +1470,9 @@ describe("Thread page integration", () => {
           ],
         }),
       ),
-      http.get("http://127.0.0.1:8787/api/threads", () => HttpResponse.json({ data: [], nextCursor: null })),
-      http.get("http://127.0.0.1:8787/api/threads/:id/timeline", () => HttpResponse.json({ data: [] })),
-      http.get("http://127.0.0.1:8787/api/threads/:id/context", () =>
+      http.get("http://127.0.0.1:8795/api/threads", () => HttpResponse.json({ data: [], nextCursor: null })),
+      http.get("http://127.0.0.1:8795/api/threads/:id/timeline", () => HttpResponse.json({ data: [] })),
+      http.get("http://127.0.0.1:8795/api/threads/:id/context", () =>
         HttpResponse.json({
           threadId: "thread-1",
           cwd: "/tmp/project",
@@ -1480,7 +1481,7 @@ describe("Thread page integration", () => {
           source: "projection",
         }),
       ),
-      http.get("http://127.0.0.1:8787/api/models", () => HttpResponse.json({ data: [] })),
+      http.get("http://127.0.0.1:8795/api/models", () => HttpResponse.json({ data: [] })),
     );
 
     render(<ThreadPage params={Promise.resolve({ id: "thread-1" })} />);
@@ -1515,7 +1516,7 @@ describe("Thread page integration", () => {
     const interactionCalls: Array<unknown> = [];
 
     server.use(
-      http.get("http://127.0.0.1:8787/api/threads/:id", ({ params }) =>
+      http.get("http://127.0.0.1:8795/api/threads/:id", ({ params }) =>
         HttpResponse.json({
           thread: {
             id: String(params.id),
@@ -1529,8 +1530,8 @@ describe("Thread page integration", () => {
           nextCursor: null,
         }),
       ),
-      http.get("http://127.0.0.1:8787/api/threads/:id/approvals/pending", () => HttpResponse.json({ data: [] })),
-      http.get("http://127.0.0.1:8787/api/threads/:id/interactions/pending", () =>
+      http.get("http://127.0.0.1:8795/api/threads/:id/approvals/pending", () => HttpResponse.json({ data: [] })),
+      http.get("http://127.0.0.1:8795/api/threads/:id/interactions/pending", () =>
         HttpResponse.json({
           data: [
             {
@@ -1556,7 +1557,7 @@ describe("Thread page integration", () => {
           ],
         }),
       ),
-      http.get("http://127.0.0.1:8787/api/threads", () =>
+      http.get("http://127.0.0.1:8795/api/threads", () =>
         HttpResponse.json({
           data: [
             {
@@ -1574,8 +1575,8 @@ describe("Thread page integration", () => {
           nextCursor: null,
         }),
       ),
-      http.get("http://127.0.0.1:8787/api/threads/:id/timeline", () => HttpResponse.json({ data: [] })),
-      http.get("http://127.0.0.1:8787/api/threads/:id/context", () =>
+      http.get("http://127.0.0.1:8795/api/threads/:id/timeline", () => HttpResponse.json({ data: [] })),
+      http.get("http://127.0.0.1:8795/api/threads/:id/context", () =>
         HttpResponse.json({
           threadId: "thread-1",
           cwd: "/tmp/project",
@@ -1584,8 +1585,8 @@ describe("Thread page integration", () => {
           source: "projection",
         }),
       ),
-      http.get("http://127.0.0.1:8787/api/models", () => HttpResponse.json({ data: [] })),
-      http.post("http://127.0.0.1:8787/api/threads/:id/interactions/:interactionId/respond", async ({ request }) => {
+      http.get("http://127.0.0.1:8795/api/models", () => HttpResponse.json({ data: [] })),
+      http.post("http://127.0.0.1:8795/api/threads/:id/interactions/:interactionId/respond", async ({ request }) => {
         interactionCalls.push(await request.json());
         return HttpResponse.json({ ok: true });
       }),
@@ -1614,7 +1615,7 @@ describe("Thread page integration", () => {
     const interactionCalls: Array<unknown> = [];
 
     server.use(
-      http.get("http://127.0.0.1:8787/api/threads/:id", ({ params }) =>
+      http.get("http://127.0.0.1:8795/api/threads/:id", ({ params }) =>
         HttpResponse.json({
           thread: {
             id: String(params.id),
@@ -1628,8 +1629,8 @@ describe("Thread page integration", () => {
           nextCursor: null,
         }),
       ),
-      http.get("http://127.0.0.1:8787/api/threads/:id/approvals/pending", () => HttpResponse.json({ data: [] })),
-      http.get("http://127.0.0.1:8787/api/threads/:id/interactions/pending", () =>
+      http.get("http://127.0.0.1:8795/api/threads/:id/approvals/pending", () => HttpResponse.json({ data: [] })),
+      http.get("http://127.0.0.1:8795/api/threads/:id/interactions/pending", () =>
         HttpResponse.json({
           data: [
             {
@@ -1655,7 +1656,7 @@ describe("Thread page integration", () => {
           ],
         }),
       ),
-      http.get("http://127.0.0.1:8787/api/threads", () =>
+      http.get("http://127.0.0.1:8795/api/threads", () =>
         HttpResponse.json({
           data: [
             {
@@ -1673,8 +1674,8 @@ describe("Thread page integration", () => {
           nextCursor: null,
         }),
       ),
-      http.get("http://127.0.0.1:8787/api/threads/:id/timeline", () => HttpResponse.json({ data: [] })),
-      http.get("http://127.0.0.1:8787/api/threads/:id/context", () =>
+      http.get("http://127.0.0.1:8795/api/threads/:id/timeline", () => HttpResponse.json({ data: [] })),
+      http.get("http://127.0.0.1:8795/api/threads/:id/context", () =>
         HttpResponse.json({
           threadId: "thread-1",
           cwd: "/tmp/project",
@@ -1683,8 +1684,8 @@ describe("Thread page integration", () => {
           source: "projection",
         }),
       ),
-      http.get("http://127.0.0.1:8787/api/models", () => HttpResponse.json({ data: [] })),
-      http.post("http://127.0.0.1:8787/api/threads/:id/interactions/:interactionId/respond", async ({ request }) => {
+      http.get("http://127.0.0.1:8795/api/models", () => HttpResponse.json({ data: [] })),
+      http.post("http://127.0.0.1:8795/api/threads/:id/interactions/:interactionId/respond", async ({ request }) => {
         interactionCalls.push(await request.json());
         return HttpResponse.json({ ok: true });
       }),
@@ -1720,7 +1721,7 @@ describe("Thread page integration", () => {
     const turnCalls: Array<unknown> = [];
 
     server.use(
-      http.get("http://127.0.0.1:8787/api/threads/:id", ({ params }) =>
+      http.get("http://127.0.0.1:8795/api/threads/:id", ({ params }) =>
         HttpResponse.json({
           thread: {
             id: String(params.id),
@@ -1734,10 +1735,10 @@ describe("Thread page integration", () => {
           nextCursor: null,
         }),
       ),
-      http.get("http://127.0.0.1:8787/api/threads/:id/approvals/pending", () => HttpResponse.json({ data: [] })),
-      http.get("http://127.0.0.1:8787/api/threads/:id/interactions/pending", () => HttpResponse.json({ data: [] })),
-      http.get("http://127.0.0.1:8787/api/threads", () => HttpResponse.json({ data: [], nextCursor: null })),
-      http.get("http://127.0.0.1:8787/api/threads/:id/timeline", () =>
+      http.get("http://127.0.0.1:8795/api/threads/:id/approvals/pending", () => HttpResponse.json({ data: [] })),
+      http.get("http://127.0.0.1:8795/api/threads/:id/interactions/pending", () => HttpResponse.json({ data: [] })),
+      http.get("http://127.0.0.1:8795/api/threads", () => HttpResponse.json({ data: [], nextCursor: null })),
+      http.get("http://127.0.0.1:8795/api/threads/:id/timeline", () =>
         HttpResponse.json({
           data: [
             {
@@ -1765,7 +1766,7 @@ describe("Thread page integration", () => {
           ],
         }),
       ),
-      http.get("http://127.0.0.1:8787/api/threads/:id/context", () =>
+      http.get("http://127.0.0.1:8795/api/threads/:id/context", () =>
         HttpResponse.json({
           threadId: "thread-1",
           cwd: "/tmp/project",
@@ -1774,8 +1775,8 @@ describe("Thread page integration", () => {
           source: "projection",
         }),
       ),
-      http.get("http://127.0.0.1:8787/api/models", () => HttpResponse.json({ data: [] })),
-      http.post("http://127.0.0.1:8787/api/threads/:id/turns", async ({ request }) => {
+      http.get("http://127.0.0.1:8795/api/models", () => HttpResponse.json({ data: [] })),
+      http.post("http://127.0.0.1:8795/api/threads/:id/turns", async ({ request }) => {
         turnCalls.push(await request.json());
         return HttpResponse.json({ turnId: "turn-2" });
       }),
@@ -1858,7 +1859,7 @@ describe("Thread page integration", () => {
     searchParamsValue = new URLSearchParams("mode=plan");
 
     server.use(
-      http.get("http://127.0.0.1:8787/api/threads/:id", ({ params }) =>
+      http.get("http://127.0.0.1:8795/api/threads/:id", ({ params }) =>
         HttpResponse.json({
           thread: {
             id: String(params.id),
@@ -1872,10 +1873,10 @@ describe("Thread page integration", () => {
           nextCursor: null,
         }),
       ),
-      http.get("http://127.0.0.1:8787/api/threads/:id/approvals/pending", () => HttpResponse.json({ data: [] })),
-      http.get("http://127.0.0.1:8787/api/threads/:id/interactions/pending", () => HttpResponse.json({ data: [] })),
-      http.get("http://127.0.0.1:8787/api/threads", () => HttpResponse.json({ data: [], nextCursor: null })),
-      http.get("http://127.0.0.1:8787/api/threads/:id/timeline", () =>
+      http.get("http://127.0.0.1:8795/api/threads/:id/approvals/pending", () => HttpResponse.json({ data: [] })),
+      http.get("http://127.0.0.1:8795/api/threads/:id/interactions/pending", () => HttpResponse.json({ data: [] })),
+      http.get("http://127.0.0.1:8795/api/threads", () => HttpResponse.json({ data: [], nextCursor: null })),
+      http.get("http://127.0.0.1:8795/api/threads/:id/timeline", () =>
         HttpResponse.json({
           data: [
             {
@@ -1903,7 +1904,7 @@ describe("Thread page integration", () => {
           ],
         }),
       ),
-      http.get("http://127.0.0.1:8787/api/threads/:id/context", () =>
+      http.get("http://127.0.0.1:8795/api/threads/:id/context", () =>
         HttpResponse.json({
           threadId: "thread-1",
           cwd: "/tmp/project",
@@ -1912,7 +1913,7 @@ describe("Thread page integration", () => {
           source: "projection",
         }),
       ),
-      http.get("http://127.0.0.1:8787/api/models", () => HttpResponse.json({ data: [] })),
+      http.get("http://127.0.0.1:8795/api/models", () => HttpResponse.json({ data: [] })),
     );
 
     render(<ThreadPage params={Promise.resolve({ id: "thread-1" })} />);
@@ -1927,7 +1928,7 @@ describe("Thread page integration", () => {
     searchParamsValue = new URLSearchParams("mode=plan");
 
     server.use(
-      http.get("http://127.0.0.1:8787/api/threads/:id", ({ params }) =>
+      http.get("http://127.0.0.1:8795/api/threads/:id", ({ params }) =>
         HttpResponse.json({
           thread: {
             id: String(params.id),
@@ -1941,10 +1942,10 @@ describe("Thread page integration", () => {
           nextCursor: null,
         }),
       ),
-      http.get("http://127.0.0.1:8787/api/threads/:id/approvals/pending", () => HttpResponse.json({ data: [] })),
-      http.get("http://127.0.0.1:8787/api/threads/:id/interactions/pending", () => HttpResponse.json({ data: [] })),
-      http.get("http://127.0.0.1:8787/api/threads", () => HttpResponse.json({ data: [], nextCursor: null })),
-      http.get("http://127.0.0.1:8787/api/threads/:id/timeline", () =>
+      http.get("http://127.0.0.1:8795/api/threads/:id/approvals/pending", () => HttpResponse.json({ data: [] })),
+      http.get("http://127.0.0.1:8795/api/threads/:id/interactions/pending", () => HttpResponse.json({ data: [] })),
+      http.get("http://127.0.0.1:8795/api/threads", () => HttpResponse.json({ data: [], nextCursor: null })),
+      http.get("http://127.0.0.1:8795/api/threads/:id/timeline", () =>
         HttpResponse.json({
           data: [
             {
@@ -1961,7 +1962,7 @@ describe("Thread page integration", () => {
           ],
         }),
       ),
-      http.get("http://127.0.0.1:8787/api/threads/:id/context", () =>
+      http.get("http://127.0.0.1:8795/api/threads/:id/context", () =>
         HttpResponse.json({
           threadId: "thread-1",
           cwd: "/tmp/project",
@@ -1970,7 +1971,7 @@ describe("Thread page integration", () => {
           source: "projection",
         }),
       ),
-      http.get("http://127.0.0.1:8787/api/models", () => HttpResponse.json({ data: [] })),
+      http.get("http://127.0.0.1:8795/api/models", () => HttpResponse.json({ data: [] })),
     );
 
     render(<ThreadPage params={Promise.resolve({ id: "thread-1" })} />);
@@ -2008,7 +2009,7 @@ describe("Thread page integration", () => {
     const turnCalls: Array<unknown> = [];
 
     server.use(
-      http.get("http://127.0.0.1:8787/api/threads/:id", ({ params }) =>
+      http.get("http://127.0.0.1:8795/api/threads/:id", ({ params }) =>
         HttpResponse.json({
           thread: {
             id: String(params.id),
@@ -2022,9 +2023,9 @@ describe("Thread page integration", () => {
           nextCursor: null,
         }),
       ),
-      http.get("http://127.0.0.1:8787/api/threads/:id/approvals/pending", () => HttpResponse.json({ data: [] })),
-      http.get("http://127.0.0.1:8787/api/threads/:id/interactions/pending", () => HttpResponse.json({ data: [] })),
-      http.get("http://127.0.0.1:8787/api/threads", () =>
+      http.get("http://127.0.0.1:8795/api/threads/:id/approvals/pending", () => HttpResponse.json({ data: [] })),
+      http.get("http://127.0.0.1:8795/api/threads/:id/interactions/pending", () => HttpResponse.json({ data: [] })),
+      http.get("http://127.0.0.1:8795/api/threads", () =>
         HttpResponse.json({
           data: [
             {
@@ -2042,7 +2043,7 @@ describe("Thread page integration", () => {
           nextCursor: null,
         }),
       ),
-      http.get("http://127.0.0.1:8787/api/threads/:id/timeline", () =>
+      http.get("http://127.0.0.1:8795/api/threads/:id/timeline", () =>
         HttpResponse.json({
           data: [
             {
@@ -2070,7 +2071,7 @@ describe("Thread page integration", () => {
           ],
         }),
       ),
-      http.get("http://127.0.0.1:8787/api/threads/:id/context", () =>
+      http.get("http://127.0.0.1:8795/api/threads/:id/context", () =>
         HttpResponse.json({
           threadId: "thread-1",
           cwd: "/tmp/project",
@@ -2079,8 +2080,8 @@ describe("Thread page integration", () => {
           source: "projection",
         }),
       ),
-      http.get("http://127.0.0.1:8787/api/models", () => HttpResponse.json({ data: [] })),
-      http.post("http://127.0.0.1:8787/api/threads/:id/turns", async ({ request }) => {
+      http.get("http://127.0.0.1:8795/api/models", () => HttpResponse.json({ data: [] })),
+      http.post("http://127.0.0.1:8795/api/threads/:id/turns", async ({ request }) => {
         turnCalls.push(await request.json());
         return HttpResponse.json({ turnId: "turn-2" });
       }),
@@ -2113,7 +2114,7 @@ describe("Thread page integration", () => {
     let rateLimitCalls = 0;
 
     server.use(
-      http.get("http://127.0.0.1:8787/api/threads/:id", ({ params }) =>
+      http.get("http://127.0.0.1:8795/api/threads/:id", ({ params }) =>
         HttpResponse.json({
           thread: {
             id: String(params.id),
@@ -2127,10 +2128,10 @@ describe("Thread page integration", () => {
           nextCursor: null,
         }),
       ),
-      http.get("http://127.0.0.1:8787/api/threads/:id/approvals/pending", () => HttpResponse.json({ data: [] })),
-      http.get("http://127.0.0.1:8787/api/threads", () => HttpResponse.json({ data: [], nextCursor: null })),
-      http.get("http://127.0.0.1:8787/api/threads/:id/timeline", () => HttpResponse.json({ data: [] })),
-      http.get("http://127.0.0.1:8787/api/threads/:id/context", () =>
+      http.get("http://127.0.0.1:8795/api/threads/:id/approvals/pending", () => HttpResponse.json({ data: [] })),
+      http.get("http://127.0.0.1:8795/api/threads", () => HttpResponse.json({ data: [], nextCursor: null })),
+      http.get("http://127.0.0.1:8795/api/threads/:id/timeline", () => HttpResponse.json({ data: [] })),
+      http.get("http://127.0.0.1:8795/api/threads/:id/context", () =>
         HttpResponse.json({
           threadId: "thread-1",
           cwd: "/tmp/project",
@@ -2139,8 +2140,8 @@ describe("Thread page integration", () => {
           source: "projection",
         }),
       ),
-      http.get("http://127.0.0.1:8787/api/models", () => HttpResponse.json({ data: [] })),
-      http.get("http://127.0.0.1:8787/api/account/rate-limits", () => {
+      http.get("http://127.0.0.1:8795/api/models", () => HttpResponse.json({ data: [] })),
+      http.get("http://127.0.0.1:8795/api/account/rate-limits", () => {
         rateLimitCalls += 1;
         return HttpResponse.json({
           rateLimits: null,
@@ -2148,7 +2149,7 @@ describe("Thread page integration", () => {
           error: "unavailable",
         });
       }),
-      http.post("http://127.0.0.1:8787/api/threads/:id/control", () => HttpResponse.json({ ok: true })),
+      http.post("http://127.0.0.1:8795/api/threads/:id/control", () => HttpResponse.json({ ok: true })),
     );
 
     render(<ThreadPage params={Promise.resolve({ id: "thread-1" })} />);

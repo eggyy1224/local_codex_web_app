@@ -121,7 +121,7 @@ export default function MobileComposerDock({
           value={prompt}
           onChange={(event) => onPromptChange(event.target.value)}
           onKeyDown={onPromptKeyDown}
-          placeholder="Ask Codex anything, @ to add files, / for commands"
+          placeholder="Ask Codex anything, / for commands"
           rows={1}
         />
         <button

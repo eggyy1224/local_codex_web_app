@@ -34,6 +34,16 @@ import type {
   ThreadTimelineResponse,
   TurnPermissionMode,
 } from "@lcwa/shared-types";
+import { resolveGatewayUrl } from "../../lib/gateway-url";
+import {
+  DEFAULT_MODEL,
+  FALLBACK_MODEL_OPTIONS,
+  MODEL_DEFAULT_MIGRATION_STORAGE_KEY,
+  MODEL_STORAGE_KEY,
+  preferredModelOption,
+  shouldRestoreSavedModel,
+  type ModelSelectOption,
+} from "../../lib/model-options";
 import { groupThreadsByProject, pickDefaultProjectKey, projectLabelFromKey } from "../../lib/projects";
 import {
   buildConversationTurns,
@@ -94,10 +104,9 @@ type MobileMessageDetails = {
   hasThinking: boolean;
 };
 
-const gatewayUrl = process.env.NEXT_PUBLIC_GATEWAY_URL ?? "http://127.0.0.1:8787";
+const gatewayUrl = resolveGatewayUrl();
 const SIDEBAR_SCROLL_STORAGE_KEY = "lcwa.sidebar.scroll.v1";
 const PERMISSION_MODE_STORAGE_KEY = "lcwa.permission.mode.v1";
-const MODEL_STORAGE_KEY = "lcwa.model.v1";
 const THINKING_EFFORT_STORAGE_KEY = "lcwa.thinking.effort.v1";
 const THREAD_MODE_STORAGE_KEY_PREFIX = "lcwa.thread.mode.v1";
 const TIMELINE_STICKY_THRESHOLD_PX = 56;
@@ -106,11 +115,6 @@ const TERMINAL_WIDTH_STORAGE_KEY = "lcwa.terminal.width.v1";
 const TERMINAL_MIN_WIDTH = 320;
 const TERMINAL_MAX_WIDTH = 720;
 
-const FALLBACK_MODEL_OPTIONS: Array<{ value: string; label: string }> = [
-  { value: "gpt-5.3-codex", label: "GPT-5.3-Codex" },
-  { value: "gpt-5-codex", label: "GPT-5-Codex" },
-  { value: "gpt-5.3-codex-spark", label: "GPT-5.3-Codex-Spark" },
-];
 const FALLBACK_THINKING_EFFORT_OPTIONS = ["minimal", "low", "medium", "high"];
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -350,7 +354,7 @@ export default function ThreadPage({ params }: Props) {
   const [prompt, setPrompt] = useState("");
   const [modelCatalog, setModelCatalog] = useState<ModelOption[]>([]);
   const [modelCatalogError, setModelCatalogError] = useState<string | null>(null);
-  const [model, setModel] = useState<string>(FALLBACK_MODEL_OPTIONS[0]?.value ?? "gpt-5.3-codex");
+  const [model, setModel] = useState<string>(DEFAULT_MODEL);
   const [thinkingEffort, setThinkingEffort] = useState<string>("high");
   const [collaborationMode, setCollaborationMode] = useState<CollaborationModeKind>("default");
   const [permissionMode, setPermissionMode] = useState<TurnPermissionMode>("local");
@@ -422,7 +426,7 @@ export default function ThreadPage({ params }: Props) {
     }
 
     const seen = new Set<string>();
-    const options: Array<{ value: string; label: string; isDefault: boolean }> = [];
+    const options: ModelSelectOption[] = [];
     for (const entry of modelCatalog) {
       const value = entry.model || entry.id;
       if (!value || seen.has(value)) {
@@ -432,7 +436,7 @@ export default function ThreadPage({ params }: Props) {
       options.push({
         value,
         label: entry.displayName ?? value,
-        isDefault: entry.isDefault === true,
+        isDefault: value === DEFAULT_MODEL || entry.isDefault === true,
       });
     }
     return options.length > 0
@@ -659,7 +663,8 @@ export default function ThreadPage({ params }: Props) {
       setPermissionMode(saved);
     }
     const savedModel = window.localStorage.getItem(MODEL_STORAGE_KEY);
-    if (savedModel) {
+    const defaultMigration = window.localStorage.getItem(MODEL_DEFAULT_MIGRATION_STORAGE_KEY);
+    if (shouldRestoreSavedModel(savedModel, defaultMigration)) {
       setModel(savedModel);
     }
     const savedEffort = window.localStorage.getItem(THINKING_EFFORT_STORAGE_KEY);
@@ -706,10 +711,9 @@ export default function ThreadPage({ params }: Props) {
       return;
     }
 
-    const preferredDefault =
-      modelOptions.find((option) => option.isDefault)?.value ?? modelOptions[0]?.value;
+    const preferredDefault = preferredModelOption(modelOptions);
     if (preferredDefault) {
-      setModel(preferredDefault);
+      setModel(preferredDefault.value);
     }
   }, [model, modelOptions]);
 
@@ -736,6 +740,7 @@ export default function ThreadPage({ params }: Props) {
 
   useEffect(() => {
     window.localStorage.setItem(MODEL_STORAGE_KEY, model);
+    window.localStorage.setItem(MODEL_DEFAULT_MIGRATION_STORAGE_KEY, DEFAULT_MODEL);
   }, [model]);
 
   useEffect(() => {
@@ -2710,7 +2715,7 @@ export default function ThreadPage({ params }: Props) {
                 setSlashMenuDismissed(false);
               }}
               onKeyDown={handlePromptKeyDown}
-              placeholder="Ask Codex anything, @ to add files, / for commands"
+              placeholder="Ask Codex anything, / for commands"
               rows={3}
             />
             {slashMenuOpen ? (
