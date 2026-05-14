@@ -28,7 +28,10 @@ import type {
   ThreadTimelineItem,
   ThreadTimelineResponse,
   TurnPermissionMode,
+  UserInputItem,
 } from "@lcwa/shared-types";
+import { uploadAttachments, UploadClientError } from "../../lib/upload-client";
+import type { PendingAttachment } from "./AttachmentStrip";
 import { MarkdownText } from "../../lib/MarkdownText";
 import { resolveGatewayUrl } from "../../lib/gateway-url";
 import { useGatewayConfig } from "../../lib/use-gateway-config";
@@ -182,6 +185,7 @@ export default function ThreadPage({ params }: Props) {
     userText: string;
     startedAt: string;
   } | null>(null);
+  const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
   const [pendingApprovals, setPendingApprovals] = useState<Record<string, PendingApprovalCard>>({});
   const [pendingInteractions, setPendingInteractions] = useState<
     Record<string, PendingInteractionCard>
@@ -1710,13 +1714,90 @@ export default function ThreadPage({ params }: Props) {
     return nextMode;
   }, [applyCollaborationMode, collaborationMode]);
 
+  const handlePickFiles = useCallback(
+    async (files: File[]): Promise<void> => {
+      if (files.length === 0) return;
+      const queued: Array<Extract<PendingAttachment, { status: "uploading" }>> = files.map((file) => ({
+        id: `att-${Date.now()}-${Math.random().toString(36).slice(2, 8)}-${file.name}`,
+        status: "uploading",
+        previewUrl: URL.createObjectURL(file),
+        file,
+      }));
+      setPendingAttachments((prev) => [...prev, ...queued]);
+
+      try {
+        const results = await uploadAttachments(gatewayUrl, files);
+        setPendingAttachments((prev) =>
+          prev.map((att) => {
+            const idx = queued.findIndex((q) => q.id === att.id);
+            if (idx === -1) return att;
+            const result = results[idx];
+            if (!result) {
+              return {
+                id: att.id,
+                status: "error",
+                previewUrl: att.previewUrl,
+                reason: "upload response missing entry",
+              };
+            }
+            return {
+              id: att.id,
+              status: "ready",
+              previewUrl: att.previewUrl,
+              gatewayPath: result.path,
+              mimeType: result.mimeType,
+              originalName: result.originalName,
+            };
+          }),
+        );
+      } catch (err) {
+        const reason =
+          err instanceof UploadClientError
+            ? err.message
+            : err instanceof Error
+              ? err.message
+              : "upload failed";
+        setPendingAttachments((prev) =>
+          prev.map((att) =>
+            queued.some((q) => q.id === att.id)
+              ? {
+                  id: att.id,
+                  status: "error",
+                  previewUrl: att.previewUrl,
+                  reason,
+                }
+              : att,
+          ),
+        );
+      }
+    },
+    [],
+  );
+
+  const handleRemoveAttachment = useCallback((id: string) => {
+    setPendingAttachments((prev) => {
+      const target = prev.find((a) => a.id === id);
+      if (target) {
+        URL.revokeObjectURL(target.previewUrl);
+      }
+      return prev.filter((a) => a.id !== id);
+    });
+  }, []);
+
   const submitTurnText = useCallback(
     async (
       rawText: string,
       modeOverride?: CollaborationModeKind,
     ): Promise<boolean> => {
       const text = rawText.trim();
-      if (!text || !threadId || submitting) {
+      const readyAttachments = pendingAttachments.filter(
+        (a): a is Extract<PendingAttachment, { status: "ready" }> => a.status === "ready",
+      );
+      if ((!text && readyAttachments.length === 0) || !threadId || submitting) {
+        return false;
+      }
+      if (pendingAttachments.some((a) => a.status === "uploading")) {
+        setSubmitError("Wait for image upload to finish before sending.");
         return false;
       }
 
@@ -1726,9 +1807,11 @@ export default function ThreadPage({ params }: Props) {
       // Optimistic: render the user bubble + "Codex is working…" indicator
       // synchronously, without waiting for the POST round-trip and SSE.
       const pendingId = `pending-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const optimisticText = text
+        || `[${readyAttachments.length} image${readyAttachments.length === 1 ? "" : "s"}]`;
       setPendingNewTurn({
         id: pendingId,
-        userText: text,
+        userText: optimisticText,
         startedAt: new Date().toISOString(),
       });
 
@@ -1765,13 +1848,18 @@ export default function ThreadPage({ params }: Props) {
           options.collaborationMode = "plan";
         }
 
+        const input: UserInputItem[] = [
+          ...readyAttachments.map((a) => ({ type: "localImage" as const, path: a.gatewayPath })),
+          ...(text ? [{ type: "text" as const, text }] : []),
+        ];
+
         const res = await fetch(`${gatewayUrl}/api/threads/${requestThreadId}/turns`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            input: [{ type: "text", text }],
+            input,
             options,
           }),
         });
@@ -1788,6 +1876,11 @@ export default function ThreadPage({ params }: Props) {
         if (payload.warnings?.includes("plan_mode_fallback")) {
           setSubmitError("Plan mode unavailable on this app-server; sent in default mode.");
         }
+        // Clear the just-sent attachments + revoke their blob URLs.
+        for (const att of pendingAttachments) {
+          URL.revokeObjectURL(att.previewUrl);
+        }
+        setPendingAttachments([]);
         return true;
       } catch (submitErr) {
         if (activeThreadIdRef.current === requestThreadId) {
@@ -1803,7 +1896,7 @@ export default function ThreadPage({ params }: Props) {
         }
       }
     },
-    [activeProjectKey, collaborationMode, model, permissionMode, thinkingEffort, submitting, threadId, threadContext],
+    [activeProjectKey, collaborationMode, model, pendingAttachments, permissionMode, thinkingEffort, submitting, threadId, threadContext],
   );
 
   const startReview = useCallback(
@@ -2022,13 +2115,16 @@ export default function ThreadPage({ params }: Props) {
 
   async function sendTurn(): Promise<void> {
     const text = prompt.trim();
-    if (!text || !threadId || submitting) {
+    const hasReadyAttachments = pendingAttachments.some((a) => a.status === "ready");
+    if ((!text && !hasReadyAttachments) || !threadId || submitting) {
       return;
     }
 
-    const handled = await handleSlashCommand(text);
-    if (handled) {
-      return;
+    if (text) {
+      const handled = await handleSlashCommand(text);
+      if (handled) {
+        return;
+      }
     }
 
     const sent = await submitTurnText(text);
@@ -2039,10 +2135,15 @@ export default function ThreadPage({ params }: Props) {
 
   const submitComposer = useCallback((): void => {
     const trimmed = prompt.trim();
-    if (trimmed.length === 0) {
+    const hasReadyAttachments = pendingAttachments.some((a) => a.status === "ready");
+    if (trimmed.length === 0 && !hasReadyAttachments) {
       return;
     }
     if (runningTurnId) {
+      // Steer is text-only; attachments stay queued for the next idle turn.
+      if (trimmed.length === 0) {
+        return;
+      }
       void (async () => {
         const ok = await steerRunningTurn(runningTurnId, trimmed);
         if (ok) {
@@ -2052,7 +2153,7 @@ export default function ThreadPage({ params }: Props) {
       return;
     }
     void sendTurn();
-  }, [prompt, runningTurnId, sendTurn, steerRunningTurn]);
+  }, [pendingAttachments, prompt, runningTurnId, sendTurn, steerRunningTurn]);
 
   const handlePromptKeyDown = useComposerKeyboard({
     activeSlashIndex,
@@ -2274,7 +2375,16 @@ export default function ThreadPage({ params }: Props) {
         <MobileComposerDock
           prompt={prompt}
           submitting={submitting}
-          canSend={prompt.trim().length > 0}
+          canSend={
+            runningTurnId !== null
+              ? prompt.trim().length > 0
+              : (prompt.trim().length > 0 ||
+                  pendingAttachments.some((a) => a.status === "ready")) &&
+                !pendingAttachments.some((a) => a.status === "uploading")
+          }
+          attachments={pendingAttachments}
+          onPickFiles={runningTurnId === null ? handlePickFiles : undefined}
+          onRemoveAttachment={handleRemoveAttachment}
           slashMenuOpen={slashMenuOpen}
           slashSuggestions={slashSuggestions}
           activeSlashIndex={activeSlashIndex}

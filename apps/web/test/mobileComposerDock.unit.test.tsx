@@ -63,14 +63,83 @@ describe("MobileComposerDock slice 4: plus menu + compact strip", () => {
     expect(onOpenControls).not.toHaveBeenCalled();
   });
 
-  it("clicking + opens a 3-item menu (Add file mention / Slash commands / Controls)", () => {
+  it("clicking + opens a 3-item menu (Add file mention / Slash commands / Controls) when onPickFiles is absent", () => {
     renderDock();
     expect(screen.queryByTestId("mobile-composer-plus-menu")).not.toBeInTheDocument();
     fireEvent.click(screen.getByTestId("mobile-composer-control-toggle"));
     expect(screen.getByTestId("mobile-composer-plus-menu")).toBeInTheDocument();
+    expect(screen.queryByTestId("mobile-composer-plus-image")).not.toBeInTheDocument();
     expect(screen.getByTestId("mobile-composer-plus-mention")).toBeInTheDocument();
     expect(screen.getByTestId("mobile-composer-plus-slash")).toBeInTheDocument();
     expect(screen.getByTestId("mobile-composer-plus-controls")).toBeInTheDocument();
+  });
+
+  it("shows Add image as the first menu item when onPickFiles is provided", () => {
+    const onPickFiles = vi.fn();
+    renderDock({ onPickFiles });
+    fireEvent.click(screen.getByTestId("mobile-composer-control-toggle"));
+    const menu = screen.getByTestId("mobile-composer-plus-menu");
+    const items = menu.querySelectorAll('[role="menuitem"]');
+    expect(items[0]).toHaveAttribute("data-testid", "mobile-composer-plus-image");
+  });
+
+  it("Add image triggers the hidden file input click", () => {
+    const onPickFiles = vi.fn();
+    renderDock({ onPickFiles });
+    const fileInput = screen.getByTestId("mobile-composer-file-input") as HTMLInputElement;
+    const clickSpy = vi.spyOn(fileInput, "click");
+    fireEvent.click(screen.getByTestId("mobile-composer-control-toggle"));
+    fireEvent.click(screen.getByTestId("mobile-composer-plus-image"));
+    expect(clickSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("file input change fires onPickFiles with the selected files", () => {
+    const onPickFiles = vi.fn();
+    renderDock({ onPickFiles });
+    const fileInput = screen.getByTestId("mobile-composer-file-input") as HTMLInputElement;
+    const file = new File(["x"], "shot.png", { type: "image/png" });
+    fireEvent.change(fileInput, { target: { files: [file] } });
+    expect(onPickFiles).toHaveBeenCalledTimes(1);
+    expect(onPickFiles.mock.calls[0]![0]).toHaveLength(1);
+    expect(onPickFiles.mock.calls[0]![0][0].name).toBe("shot.png");
+  });
+
+  it("paste of an image into the textarea calls onPickFiles", () => {
+    const onPickFiles = vi.fn();
+    renderDock({ onPickFiles });
+    const textarea = screen.getByTestId("turn-input");
+    const file = new File(["x"], "pasted.png", { type: "image/png" });
+    fireEvent.paste(textarea, {
+      clipboardData: {
+        items: [
+          {
+            kind: "file",
+            type: "image/png",
+            getAsFile: () => file,
+          },
+        ],
+      },
+    });
+    expect(onPickFiles).toHaveBeenCalledTimes(1);
+    expect(onPickFiles.mock.calls[0]![0][0].name).toBe("pasted.png");
+  });
+
+  it("renders AttachmentStrip when attachments are provided", () => {
+    renderDock({
+      attachments: [
+        {
+          id: "att-1",
+          status: "ready",
+          previewUrl: "blob:test",
+          gatewayPath: "/tmp/u.png",
+          mimeType: "image/png",
+          originalName: "u.png",
+        },
+      ],
+      onRemoveAttachment: vi.fn(),
+    });
+    expect(screen.getByTestId("composer-attachment-strip")).toBeInTheDocument();
+    expect(screen.getByTestId("composer-attachment-thumb")).toBeInTheDocument();
   });
 
   it("Controls item opens the sheet via onOpenControls (preserves Pending default for caller)", () => {

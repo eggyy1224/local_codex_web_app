@@ -1,9 +1,15 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import type { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent } from "react";
+import type {
+  ChangeEvent as ReactChangeEvent,
+  ClipboardEvent as ReactClipboardEvent,
+  KeyboardEvent as ReactKeyboardEvent,
+  PointerEvent as ReactPointerEvent,
+} from "react";
 import type { FuzzyFileMatch } from "@lcwa/shared-types";
 import type { KnownSlashCommand } from "../../lib/slash-commands";
+import AttachmentStrip, { type PendingAttachment } from "./AttachmentStrip";
 
 type SlashSuggestion = {
   command: KnownSlashCommand;
@@ -30,6 +36,7 @@ type MobileComposerDockProps = {
   fileMentionResults: FuzzyFileMatch[];
   fileMentionLoading: boolean;
   strip?: MobileComposerStripInfo;
+  attachments?: PendingAttachment[];
   onPromptChange: (value: string) => void;
   onPromptKeyDown: (event: ReactKeyboardEvent<HTMLTextAreaElement>) => void;
   onApplySlash: (command: KnownSlashCommand) => void;
@@ -40,6 +47,8 @@ type MobileComposerDockProps = {
   onInsertFileMentionTrigger?: () => void;
   onInsertSlashTrigger?: () => void;
   onSwipeOpenControls: () => void;
+  onPickFiles?: (files: File[]) => void;
+  onRemoveAttachment?: (id: string) => void;
 };
 
 const OPEN_DISTANCE_THRESHOLD = 64;
@@ -57,6 +66,7 @@ export default function MobileComposerDock({
   fileMentionResults,
   fileMentionLoading,
   strip,
+  attachments,
   onPromptChange,
   onPromptKeyDown,
   onApplySlash,
@@ -67,10 +77,47 @@ export default function MobileComposerDock({
   onInsertFileMentionTrigger,
   onInsertSlashTrigger,
   onSwipeOpenControls,
+  onPickFiles,
+  onRemoveAttachment,
 }: MobileComposerDockProps) {
   const pointerStartRef = useRef<{ y: number; ts: number } | null>(null);
   const [plusMenuOpen, setPlusMenuOpen] = useState(false);
   const plusMenuRef = useRef<HTMLDivElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const handleFileInputChange = (event: ReactChangeEvent<HTMLInputElement>) => {
+    const list = event.target.files;
+    if (!list || list.length === 0 || !onPickFiles) {
+      return;
+    }
+    const files: File[] = [];
+    for (let i = 0; i < list.length; i += 1) {
+      const file = list[i];
+      if (file) files.push(file);
+    }
+    if (files.length > 0) {
+      onPickFiles(files);
+    }
+    event.target.value = "";
+  };
+
+  const handleTextareaPaste = (event: ReactClipboardEvent<HTMLTextAreaElement>) => {
+    if (!onPickFiles) return;
+    const items = event.clipboardData?.items;
+    if (!items) return;
+    const files: File[] = [];
+    for (let i = 0; i < items.length; i += 1) {
+      const item = items[i];
+      if (item && item.kind === "file" && item.type.startsWith("image/")) {
+        const file = item.getAsFile();
+        if (file) files.push(file);
+      }
+    }
+    if (files.length > 0) {
+      event.preventDefault();
+      onPickFiles(files);
+    }
+  };
 
   useEffect(() => {
     if (!plusMenuOpen) return;
@@ -237,6 +284,23 @@ export default function MobileComposerDock({
         </div>
       ) : null}
 
+      {attachments && attachments.length > 0 && onRemoveAttachment ? (
+        <AttachmentStrip
+          attachments={attachments}
+          onRemove={onRemoveAttachment}
+        />
+      ) : null}
+
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        multiple
+        data-testid="mobile-composer-file-input"
+        className="cdx-mobile-file-input"
+        onChange={handleFileInputChange}
+      />
+
       <div className="cdx-mobile-composer">
         <div className="cdx-mobile-plus-menu-anchor" ref={plusMenuRef}>
           <button
@@ -256,6 +320,21 @@ export default function MobileComposerDock({
               role="menu"
               data-testid="mobile-composer-plus-menu"
             >
+              {onPickFiles ? (
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="cdx-mobile-plus-menu-item"
+                  data-testid="mobile-composer-plus-image"
+                  onClick={() => {
+                    setPlusMenuOpen(false);
+                    fileInputRef.current?.click();
+                  }}
+                >
+                  <span className="cdx-mobile-plus-menu-item-label">Add image</span>
+                  <span className="cdx-mobile-plus-menu-item-desc">Send a screenshot or photo</span>
+                </button>
+              ) : null}
               <button
                 type="button"
                 role="menuitem"
@@ -304,6 +383,7 @@ export default function MobileComposerDock({
           value={prompt}
           onChange={(event) => onPromptChange(event.target.value)}
           onKeyDown={onPromptKeyDown}
+          onPaste={handleTextareaPaste}
           placeholder={placeholder}
           rows={1}
         />
