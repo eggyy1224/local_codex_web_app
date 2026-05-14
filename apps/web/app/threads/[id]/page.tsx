@@ -2067,6 +2067,12 @@ export default function ThreadPage({ params }: Props) {
           fileMentionOpen={fileMentionOpen}
           fileMentionResults={fileMentionSearch.results}
           fileMentionLoading={fileMentionSearch.isLoading}
+          strip={{
+            model: model || null,
+            effortLabel: thinkingEffort ? formatEffortLabel(thinkingEffort) : null,
+            permissionLabel: permissionMode ? permissionMode : null,
+            pendingCount: pendingActionCount,
+          }}
           onPromptChange={(value) => {
             setPrompt(value);
             setSlashMenuDismissed(false);
@@ -2080,6 +2086,16 @@ export default function ThreadPage({ params }: Props) {
             setFileMentionDismissed(true);
           }}
           onSend={submitComposer}
+          onInsertFileMentionTrigger={() => {
+            setPrompt((current) => (current.length === 0 || current.endsWith(" ") ? `${current}@` : `${current} @`));
+            setSlashMenuDismissed(false);
+            setFileMentionDismissed(false);
+          }}
+          onInsertSlashTrigger={() => {
+            setPrompt((current) => (current.length === 0 ? "/" : `${current} /`));
+            setSlashMenuDismissed(false);
+            setFileMentionDismissed(false);
+          }}
           onOpenControls={() =>
             openControlSheet(
               pendingInteractionList.length > 0 || pendingApprovalList.length > 0
@@ -2088,6 +2104,7 @@ export default function ThreadPage({ params }: Props) {
               "half",
             )
           }
+          onOpenAdvancedControls={() => openControlSheet("advanced", "half")}
           onSwipeOpenControls={() =>
             openControlSheet(
               pendingInteractionList.length > 0 || pendingApprovalList.length > 0

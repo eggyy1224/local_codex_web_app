@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent } from "react";
 import type { FuzzyFileMatch } from "@lcwa/shared-types";
 import type { KnownSlashCommand } from "../../lib/slash-commands";
@@ -9,6 +9,13 @@ type SlashSuggestion = {
   command: KnownSlashCommand;
   title: string;
   description: string;
+};
+
+export type MobileComposerStripInfo = {
+  model: string | null;
+  effortLabel: string | null;
+  permissionLabel: string | null;
+  pendingCount: number;
 };
 
 type MobileComposerDockProps = {
@@ -22,12 +29,16 @@ type MobileComposerDockProps = {
   fileMentionOpen: boolean;
   fileMentionResults: FuzzyFileMatch[];
   fileMentionLoading: boolean;
+  strip?: MobileComposerStripInfo;
   onPromptChange: (value: string) => void;
   onPromptKeyDown: (event: ReactKeyboardEvent<HTMLTextAreaElement>) => void;
   onApplySlash: (command: KnownSlashCommand) => void;
   onApplyFileMention: (path: string) => void;
   onSend: () => void;
   onOpenControls: () => void;
+  onOpenAdvancedControls?: () => void;
+  onInsertFileMentionTrigger?: () => void;
+  onInsertSlashTrigger?: () => void;
   onSwipeOpenControls: () => void;
 };
 
@@ -45,15 +56,33 @@ export default function MobileComposerDock({
   fileMentionOpen,
   fileMentionResults,
   fileMentionLoading,
+  strip,
   onPromptChange,
   onPromptKeyDown,
   onApplySlash,
   onApplyFileMention,
   onSend,
   onOpenControls,
+  onOpenAdvancedControls,
+  onInsertFileMentionTrigger,
+  onInsertSlashTrigger,
   onSwipeOpenControls,
 }: MobileComposerDockProps) {
   const pointerStartRef = useRef<{ y: number; ts: number } | null>(null);
+  const [plusMenuOpen, setPlusMenuOpen] = useState(false);
+  const plusMenuRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!plusMenuOpen) return;
+    const handler = (event: MouseEvent) => {
+      if (!plusMenuRef.current) return;
+      if (!plusMenuRef.current.contains(event.target as Node)) {
+        setPlusMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [plusMenuOpen]);
 
   const handlePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     pointerStartRef.current = {
@@ -83,6 +112,14 @@ export default function MobileComposerDock({
     ? "Steer the running turn…"
     : "Ask Codex anything, / for commands";
 
+  const handleStripClick = () => {
+    if (onOpenAdvancedControls) {
+      onOpenAdvancedControls();
+    } else {
+      onOpenControls();
+    }
+  };
+
   return (
     <section
       className={`cdx-mobile-composer-shell ${steerActive ? "is-steer" : ""}`}
@@ -97,6 +134,46 @@ export default function MobileComposerDock({
       >
         <span className="cdx-mobile-composer-handle-bar" aria-hidden="true" />
       </div>
+
+      {strip ? (
+        <button
+          type="button"
+          className="cdx-mobile-composer-strip"
+          data-testid="mobile-composer-strip"
+          onClick={handleStripClick}
+          aria-label="Open advanced controls"
+        >
+          {strip.model ? (
+            <span className="cdx-mobile-composer-strip-chip" data-testid="mobile-composer-strip-model">
+              {strip.model}
+            </span>
+          ) : null}
+          {strip.effortLabel ? (
+            <span
+              className="cdx-mobile-composer-strip-chip cdx-mobile-composer-strip-chip--muted"
+              data-testid="mobile-composer-strip-effort"
+            >
+              {strip.effortLabel}
+            </span>
+          ) : null}
+          {strip.permissionLabel ? (
+            <span
+              className="cdx-mobile-composer-strip-chip cdx-mobile-composer-strip-chip--muted"
+              data-testid="mobile-composer-strip-permission"
+            >
+              {strip.permissionLabel}
+            </span>
+          ) : null}
+          {strip.pendingCount > 0 ? (
+            <span
+              className="cdx-mobile-composer-strip-chip cdx-mobile-composer-strip-chip--alert"
+              data-testid="mobile-composer-strip-pending"
+            >
+              {strip.pendingCount === 1 ? "1 pending" : `${strip.pendingCount} pending`}
+            </span>
+          ) : null}
+        </button>
+      ) : null}
 
       {slashMenuOpen ? (
         <div className="cdx-mobile-slash-menu" role="listbox" aria-label="Slash command suggestions" data-testid="thread-slash-menu">
@@ -161,15 +238,66 @@ export default function MobileComposerDock({
       ) : null}
 
       <div className="cdx-mobile-composer">
-        <button
-          type="button"
-          className="cdx-mobile-icon-btn"
-          data-testid="mobile-composer-control-toggle"
-          onClick={onOpenControls}
-          aria-label="Open advanced controls"
-        >
-          +
-        </button>
+        <div className="cdx-mobile-plus-menu-anchor" ref={plusMenuRef}>
+          <button
+            type="button"
+            className="cdx-mobile-icon-btn"
+            data-testid="mobile-composer-control-toggle"
+            onClick={() => setPlusMenuOpen((value) => !value)}
+            aria-haspopup="menu"
+            aria-expanded={plusMenuOpen}
+            aria-label="Open composer actions"
+          >
+            +
+          </button>
+          {plusMenuOpen ? (
+            <div
+              className="cdx-mobile-plus-menu"
+              role="menu"
+              data-testid="mobile-composer-plus-menu"
+            >
+              <button
+                type="button"
+                role="menuitem"
+                className="cdx-mobile-plus-menu-item"
+                data-testid="mobile-composer-plus-mention"
+                onClick={() => {
+                  setPlusMenuOpen(false);
+                  onInsertFileMentionTrigger?.();
+                }}
+              >
+                <span className="cdx-mobile-plus-menu-item-label">Add file mention</span>
+                <span className="cdx-mobile-plus-menu-item-desc">Insert @ to pick a file</span>
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                className="cdx-mobile-plus-menu-item"
+                data-testid="mobile-composer-plus-slash"
+                onClick={() => {
+                  setPlusMenuOpen(false);
+                  onInsertSlashTrigger?.();
+                }}
+              >
+                <span className="cdx-mobile-plus-menu-item-label">Slash commands</span>
+                <span className="cdx-mobile-plus-menu-item-desc">Insert / to browse commands</span>
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                className="cdx-mobile-plus-menu-item"
+                data-testid="mobile-composer-plus-controls"
+                onClick={() => {
+                  setPlusMenuOpen(false);
+                  onOpenControls();
+                }}
+              >
+                <span className="cdx-mobile-plus-menu-item-label">Controls</span>
+                <span className="cdx-mobile-plus-menu-item-desc">Pending approvals, model, permission…</span>
+              </button>
+            </div>
+          ) : null}
+        </div>
         <textarea
           id="turn-input"
           data-testid="turn-input"

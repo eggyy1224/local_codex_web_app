@@ -920,7 +920,11 @@ describe("Thread page integration", () => {
     render(<ThreadPage params={Promise.resolve({ id: "thread-1" })} />);
     await screen.findByTestId("mobile-action-layer");
 
+    // The composer's + button now opens a lightweight menu first; tapping
+    // "Controls" inside the menu opens the sheet on Pending when there are
+    // pending items (regression guard for the original auto-default).
     fireEvent.click(screen.getByTestId("mobile-composer-control-toggle"));
+    fireEvent.click(await screen.findByTestId("mobile-composer-plus-controls"));
     const sheet = await screen.findByTestId("mobile-control-sheet");
     expect(within(sheet).getByTestId("mobile-control-tab-pending")).toHaveClass("is-active");
   });

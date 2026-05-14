@@ -86,6 +86,26 @@ test("mobile smoke: chat-first thread flow + sheet controls", async ({ page }, t
   await expect(page.locator(".cdx-mobile-thread-main")).toHaveCSS("overflow-y", "hidden");
   await expect(page.locator(".cdx-mobile-message-stream")).toHaveCSS("overflow-y", "auto");
 
+  // View-mode menu lives on the topbar; tapping it should surface Normal /
+  // Thinking / Verbose without affecting the rest of the chrome.
+  await page.getByTestId("mobile-topbar-views-toggle").click();
+  await expect(page.getByTestId("mobile-topbar-views-menu")).toBeVisible();
+  await page.getByTestId("mobile-topbar-views-verbose").click();
+  await expect(page.getByTestId("mobile-topbar-views-menu")).toHaveCount(0);
+  await expect(page.getByTestId("timeline")).toHaveAttribute("data-view-mode", "verbose");
+  // Reset to Normal so the rest of the smoke flow runs in the default mode.
+  await page.getByTestId("mobile-topbar-views-toggle").click();
+  await page.getByTestId("mobile-topbar-views-normal").click();
+
+  // Composer "+" opens a lightweight menu; Controls inside it routes to the
+  // sheet (the prior auto-open behavior now lives behind the Controls item).
+  await page.getByTestId("mobile-composer-control-toggle").click();
+  await expect(page.getByTestId("mobile-composer-plus-menu")).toBeVisible();
+  await page.getByTestId("mobile-composer-plus-controls").click();
+  await expect(page.getByTestId("mobile-control-sheet")).toBeVisible();
+  await page.getByTestId("mobile-control-sheet-close").click();
+  await expect(page.getByTestId("mobile-control-sheet")).toHaveCount(0);
+
   // Real .click() fires the full pointerdown → pointerup → click sequence,
   // which exercises the sheet header's pointer-capture guard. A synthetic
   // .evaluate(node => node.click()) would skip pointerdown entirely and miss
@@ -99,7 +119,28 @@ test("mobile smoke: chat-first thread flow + sheet controls", async ({ page }, t
   await page.getByLabel("Open threads").evaluate((node: HTMLElement) => {
     node.click();
   });
-  await expect(page.getByTestId("mobile-thread-switcher-overlay")).toBeVisible();
+  const drawer = page.getByTestId("mobile-thread-switcher-overlay");
+  await expect(drawer).toBeVisible();
+  // The drawer is now a left side panel, not a full-screen overlay.
+  await expect
+    .poll(async () => {
+      return await page.evaluate(() => {
+        const dialog = document.querySelector(
+          ".cdx-mobile-thread-switcher-dialog",
+        ) as HTMLElement | null;
+        if (!dialog) return Number.POSITIVE_INFINITY;
+        return dialog.getBoundingClientRect().width;
+      });
+    })
+    .toBeLessThanOrEqual(360);
+  // Search input + New session entry must be present.
+  await expect(page.getByTestId("mobile-thread-switcher-search")).toBeVisible();
+  await expect(page.getByTestId("mobile-thread-switcher-new")).toBeVisible();
+  // Status filter tabs are present and default to All.
+  await expect(page.getByTestId("mobile-thread-switcher-filter-all")).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
   await page.getByTestId("mobile-thread-switcher-close").click();
   await expect(page.getByTestId("mobile-thread-switcher-overlay")).toHaveCount(0);
 
