@@ -25,6 +25,7 @@ import {
   type RawTurn,
 } from "../gatewayHelpers.js";
 import { ThreadContextResolver, normalizeProjectKey } from "../threadContext.js";
+import { assertLocalImagePathsInsideRoot } from "../uploads.js";
 
 type RawSkillMetadata = {
   name?: unknown;
@@ -78,6 +79,7 @@ export type TurnRoutesDeps = {
   activeTurnByThread: Map<string, string>;
   lastTurnInputByThread: LastTurnInputCache;
   collaborationModeListSupported: CollaborationModeSupportRef;
+  uploadRoot: string;
 };
 
 function dedupeInputItemKey(inputItem: { type: string; name: string; path: string }): string {
@@ -155,6 +157,7 @@ export function registerTurnRoutes(
     activeTurnByThread,
     lastTurnInputByThread,
     collaborationModeListSupported,
+    uploadRoot,
   }: TurnRoutesDeps,
 ): void {
   async function resolveCollaborationMode(
@@ -404,6 +407,8 @@ export function registerTurnRoutes(
       throw error;
     }
 
+    assertLocalImagePathsInsideRoot(body.input, uploadRoot);
+
     const projected = db.getProjectedThread(params.id);
     const inferredCwd =
       body.options?.cwd ??
@@ -533,6 +538,8 @@ export function registerTurnRoutes(
       err.statusCode = 400;
       throw err;
     }
+
+    assertLocalImagePathsInsideRoot(body.input, uploadRoot);
 
     const result = (await appServer.request("turn/steer", {
       threadId: params.id,

@@ -27,6 +27,45 @@ export class UploadError extends Error {
   }
 }
 
+/**
+ * Reject a CreateTurnRequest / steer input that smuggles `localImage` items
+ * pointing outside the gateway's upload root. The browser composer normally
+ * fills these paths from the upload response, so any same-origin client that
+ * synthesises a path on its own (e.g. `/etc/passwd` rendered as an image,
+ * exfiltrating its bytes through the model) is treated as malicious.
+ *
+ * The security model only assumes the user trusts every CORS-allowlisted
+ * origin; it does NOT assume those origins trust each other, so this check
+ * is the boundary that keeps a misbehaving allowlisted page from reading
+ * arbitrary local files through codex's vision pipeline.
+ */
+export function assertLocalImagePathsInsideRoot(
+  input: ReadonlyArray<{ type: string; path?: unknown }>,
+  uploadRoot: string,
+): void {
+  const normalizedRoot = path.resolve(uploadRoot);
+  const rootWithSep = normalizedRoot.endsWith(path.sep)
+    ? normalizedRoot
+    : normalizedRoot + path.sep;
+  for (const item of input) {
+    if (item.type !== "localImage") {
+      continue;
+    }
+    const rawPath = typeof item.path === "string" ? item.path : null;
+    if (!rawPath) {
+      const err = new UploadError(400, "localImage.path is required");
+      throw err;
+    }
+    const resolved = path.resolve(rawPath);
+    if (resolved !== normalizedRoot && !resolved.startsWith(rootWithSep)) {
+      throw new UploadError(
+        400,
+        `localImage.path must live inside the upload root (${normalizedRoot})`,
+      );
+    }
+  }
+}
+
 export function resolveUploadRoot(
   options: { explicit?: string; env?: NodeJS.ProcessEnv } = {},
 ): string {

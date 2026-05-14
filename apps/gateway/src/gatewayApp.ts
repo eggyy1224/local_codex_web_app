@@ -250,6 +250,7 @@ registerTurnRoutes(app, {
   activeTurnByThread,
   lastTurnInputByThread,
   collaborationModeListSupported,
+  uploadRoot,
 });
 
 app.addHook("onClose", async () => {
