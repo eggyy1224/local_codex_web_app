@@ -61,7 +61,7 @@ import {
   type KnownSlashCommand,
 } from "../../lib/slash-commands";
 import MobileActionLayer from "./MobileActionLayer";
-import MobileChatTopBar from "./MobileChatTopBar";
+import MobileChatTopBar, { type MobileViewMode } from "./MobileChatTopBar";
 import MobileComposerDock from "./MobileComposerDock";
 import MobileControlSheet from "./MobileControlSheet";
 import MobileMessageDetailsSheet from "./MobileMessageDetailsSheet";
@@ -188,6 +188,7 @@ export default function ThreadPage({ params }: Props) {
   const [sheetDragOffsetY, setSheetDragOffsetY] = useState(0);
   const [isMessageDetailsOpen, setIsMessageDetailsOpen] = useState(false);
   const [activeMessageId, setActiveMessageId] = useState<string | null>(null);
+  const [mobileViewMode, setMobileViewMode] = useState<MobileViewMode>("normal");
   const [threadContext, setThreadContext] = useState<ThreadContextResponse | null>(null);
   const gatewayConfig = useGatewayConfig();
   const [showAllTurns, setShowAllTurns] = useState(false);
@@ -1919,12 +1920,15 @@ export default function ThreadPage({ params }: Props) {
     return (
       <div className="cdx-mobile-thread-page">
         <MobileChatTopBar
+          projectLabel={activeProjectLabel}
           threadTitle={activeThreadTitle}
           collaborationMode={collaborationMode}
           serviceTier={gatewayConfig.config?.serviceTier ?? null}
           pendingActionCount={pendingActionCount}
           runningTurnId={runningTurnId}
           stopBusy={controlBusy === "stop"}
+          viewMode={mobileViewMode}
+          onViewModeChange={setMobileViewMode}
           onStop={(turnId) => void interruptRunningTurn(turnId)}
           onOpenThreads={() => setIsThreadSwitcherOpen(true)}
           onOpenControls={() =>
