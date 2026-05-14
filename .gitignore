@@ -14,3 +14,8 @@ codex/
 .scratch/
 .tmp/
 apps/gateway/test/fixtures/local/
+
+# Local-only image samples agents may stage for prototyping (e.g. tieshan
+# history photos). These are not source-controlled assets; gateway serves
+# them via /api/files/preview from their real on-disk location.
+apps/web/public/tieshan-samples/
