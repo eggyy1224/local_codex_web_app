@@ -1,4 +1,5 @@
 import cors from "@fastify/cors";
+import multipart from "@fastify/multipart";
 import websocket from "@fastify/websocket";
 import Fastify, { type FastifyInstance } from "fastify";
 import type { CreateTurnRequest } from "@lcwa/shared-types";
@@ -11,13 +12,17 @@ import {
 import { gatewayDb, type GatewayDbPort } from "./db.js";
 import { TerminalManager } from "./terminalManager.js";
 import { ThreadContextResolver } from "./threadContext.js";
+import { resolveUploadRoot } from "./uploads.js";
 import { registerApprovalInteractionRoutes } from "./routes/approvalInteractionRoutes.js";
 import { registerConfigRoutes } from "./routes/configRoutes.js";
 import { registerMiscRoutes } from "./routes/miscRoutes.js";
 import { registerTerminalRoutes } from "./routes/terminalRoutes.js";
 import { registerThreadsRoutes } from "./routes/threadsRoutes.js";
 import { registerTurnRoutes } from "./routes/turnRoutes.js";
+import { registerUploadRoutes } from "./routes/uploadRoutes.js";
 
+const UPLOAD_MAX_FILE_BYTES = 25 * 1024 * 1024;
+const UPLOAD_MAX_FILES = 8;
 
 export type GatewayAppConfig = {
   corsAllowlist: string[];
@@ -26,6 +31,7 @@ export type GatewayAppConfig = {
   websocketMaxPayload?: number;
   startAppServerOnBoot?: boolean;
   terminalEnabled?: boolean;
+  uploadRoot?: string;
 };
 
 export type GatewayBootstrapConfig = {
@@ -102,6 +108,16 @@ export async function createGatewayApp(
       maxPayload: config.websocketMaxPayload ?? 1024 * 128,
     },
   });
+
+  await app.register(multipart, {
+    limits: {
+      fileSize: UPLOAD_MAX_FILE_BYTES,
+      files: UPLOAD_MAX_FILES,
+    },
+    throwFileSizeLimit: false,
+  });
+
+  const uploadRoot = resolveUploadRoot({ explicit: config.uploadRoot });
 
   const appServer = deps.appServer;
   const db = deps.db ?? gatewayDb;
@@ -224,6 +240,8 @@ registerApprovalInteractionRoutes(app, {
 });
 
 registerConfigRoutes(app, { appServer });
+
+registerUploadRoutes(app, { uploadRoot });
 
 registerTurnRoutes(app, {
   appServer,

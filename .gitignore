@@ -13,3 +13,4 @@ apps/web/test-results/
 codex/
 .scratch/
 .tmp/
+apps/gateway/test/fixtures/local/

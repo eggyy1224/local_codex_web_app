@@ -1,9 +1,10 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, statSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { EventEmitter } from "node:events";
 import { describe, expect, it } from "vitest";
-import type { FuzzyFileSearchResponse } from "@lcwa/shared-types";
+import type { FuzzyFileSearchResponse, UploadResponse } from "@lcwa/shared-types";
 import type { GatewayAppServerPort } from "../src/appServerPort.js";
 import { createGatewayDb } from "../src/db.js";
 import { createGatewayApp, type GatewayAppConfig, type GatewayAppDeps } from "../src/gatewayApp.js";
@@ -77,6 +78,7 @@ async function createTestContext(options: {
     {
       corsAllowlist: ["http://127.0.0.1:3000"],
       startAppServerOnBoot: false,
+      uploadRoot: path.join(tmpDir, "uploads"),
       ...options.appConfig,
     },
   );
@@ -86,11 +88,55 @@ async function createTestContext(options: {
     db,
     stub,
     app,
+    uploadRoot: path.join(tmpDir, "uploads"),
     async close() {
       await app.close();
       rmSync(tmpDir, { recursive: true, force: true });
     },
   };
+}
+
+function buildMultipartBody(
+  parts: Array<{
+    name: string;
+    filename: string;
+    contentType: string;
+    data: Buffer;
+  }>,
+): { body: Buffer; contentType: string } {
+  const boundary = `----lcwa-test-${Math.random().toString(36).slice(2)}`;
+  const chunks: Buffer[] = [];
+  for (const part of parts) {
+    chunks.push(Buffer.from(`--${boundary}\r\n`));
+    chunks.push(
+      Buffer.from(
+        `Content-Disposition: form-data; name="${part.name}"; filename="${part.filename}"\r\n`,
+      ),
+    );
+    chunks.push(Buffer.from(`Content-Type: ${part.contentType}\r\n\r\n`));
+    chunks.push(part.data);
+    chunks.push(Buffer.from("\r\n"));
+  }
+  chunks.push(Buffer.from(`--${boundary}--\r\n`));
+  return {
+    body: Buffer.concat(chunks),
+    contentType: `multipart/form-data; boundary=${boundary}`,
+  };
+}
+
+function fakePngBuffer(): Buffer {
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    Buffer.alloc(64, 0x55),
+  ]);
+}
+
+function fakeJpegBuffer(): Buffer {
+  return Buffer.concat([
+    Buffer.from([0xff, 0xd8, 0xff, 0xe0]),
+    Buffer.alloc(64, 0x33),
+    Buffer.from([0xff, 0xd9]),
+  ]);
 }
 
 describe("gateway integration routes", () => {
@@ -2322,6 +2368,217 @@ describe("gateway integration routes", () => {
         url: "/api/files/search?roots=&query=file",
       });
       expect(res.statusCode).toBe(400);
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  it("POST /api/uploads accepts a PNG and writes it under uploadRoot", async () => {
+    const ctx = await createTestContext();
+    try {
+      const png = fakePngBuffer();
+      const { body, contentType } = buildMultipartBody([
+        {
+          name: "file",
+          filename: "screenshot.png",
+          contentType: "image/png",
+          data: png,
+        },
+      ]);
+      const res = await ctx.app.inject({
+        method: "POST",
+        url: "/api/uploads",
+        headers: { "content-type": contentType },
+        payload: body,
+      });
+      expect(res.statusCode).toBe(200);
+      const json = res.json() as UploadResponse;
+      expect(json.uploads).toHaveLength(1);
+      const entry = json.uploads[0]!;
+      expect(entry.mimeType).toBe("image/png");
+      expect(entry.originalName).toBe("screenshot.png");
+      expect(entry.sizeBytes).toBe(png.byteLength);
+      expect(path.isAbsolute(entry.path)).toBe(true);
+      expect(entry.path.startsWith(ctx.uploadRoot)).toBe(true);
+      expect(existsSync(entry.path)).toBe(true);
+      const onDisk = await readFile(entry.path);
+      expect(onDisk.equals(png)).toBe(true);
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  it("POST /api/uploads accepts a JPEG", async () => {
+    const ctx = await createTestContext();
+    try {
+      const jpeg = fakeJpegBuffer();
+      const { body, contentType } = buildMultipartBody([
+        {
+          name: "file",
+          filename: "photo.jpg",
+          contentType: "image/jpeg",
+          data: jpeg,
+        },
+      ]);
+      const res = await ctx.app.inject({
+        method: "POST",
+        url: "/api/uploads",
+        headers: { "content-type": contentType },
+        payload: body,
+      });
+      expect(res.statusCode).toBe(200);
+      const json = res.json() as UploadResponse;
+      expect(json.uploads[0]!.mimeType).toBe("image/jpeg");
+      expect(json.uploads[0]!.path.endsWith(".jpg")).toBe(true);
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  it("POST /api/uploads accepts multiple files in one request", async () => {
+    const ctx = await createTestContext();
+    try {
+      const { body, contentType } = buildMultipartBody([
+        { name: "f1", filename: "a.png", contentType: "image/png", data: fakePngBuffer() },
+        { name: "f2", filename: "b.jpg", contentType: "image/jpeg", data: fakeJpegBuffer() },
+      ]);
+      const res = await ctx.app.inject({
+        method: "POST",
+        url: "/api/uploads",
+        headers: { "content-type": contentType },
+        payload: body,
+      });
+      expect(res.statusCode).toBe(200);
+      const json = res.json() as UploadResponse;
+      expect(json.uploads).toHaveLength(2);
+      expect(json.uploads.map((u) => u.mimeType).sort()).toEqual([
+        "image/jpeg",
+        "image/png",
+      ]);
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  it("POST /api/uploads rejects non-image bytes with 415", async () => {
+    const ctx = await createTestContext();
+    try {
+      const { body, contentType } = buildMultipartBody([
+        {
+          name: "file",
+          filename: "secrets.txt",
+          contentType: "text/plain",
+          data: Buffer.from("hello world this is not an image at all"),
+        },
+      ]);
+      const res = await ctx.app.inject({
+        method: "POST",
+        url: "/api/uploads",
+        headers: { "content-type": contentType },
+        payload: body,
+      });
+      expect(res.statusCode).toBe(415);
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  it("POST /api/uploads rejects a non-multipart request with 415", async () => {
+    const ctx = await createTestContext();
+    try {
+      const res = await ctx.app.inject({
+        method: "POST",
+        url: "/api/uploads",
+        headers: { "content-type": "application/json" },
+        payload: JSON.stringify({ files: [] }),
+      });
+      expect(res.statusCode).toBe(415);
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  it("POST /api/uploads returns 400 when multipart has no files", async () => {
+    const ctx = await createTestContext();
+    try {
+      const boundary = "----lcwa-test-empty";
+      const body = Buffer.from(`--${boundary}--\r\n`);
+      const res = await ctx.app.inject({
+        method: "POST",
+        url: "/api/uploads",
+        headers: { "content-type": `multipart/form-data; boundary=${boundary}` },
+        payload: body,
+      });
+      expect(res.statusCode).toBe(400);
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  it("POST /api/uploads rejects oversized files with 413", async () => {
+    const ctx = await createTestContext();
+    try {
+      const oversized = Buffer.concat([
+        Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+        Buffer.alloc(26 * 1024 * 1024, 0x77),
+      ]);
+      const { body, contentType } = buildMultipartBody([
+        {
+          name: "file",
+          filename: "huge.png",
+          contentType: "image/png",
+          data: oversized,
+        },
+      ]);
+      const res = await ctx.app.inject({
+        method: "POST",
+        url: "/api/uploads",
+        headers: { "content-type": contentType },
+        payload: body,
+      });
+      expect(res.statusCode).toBe(413);
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  it("POST /api/uploads transcodes a HEIC to JPEG (gated on local fixture)", async () => {
+    const fixturePath = path.join(
+      __dirname,
+      "fixtures",
+      "local",
+      "sample.heic",
+    );
+    if (!existsSync(fixturePath)) {
+      // Drop an iPhone HEIC at apps/gateway/test/fixtures/local/sample.heic to enable.
+      return;
+    }
+    const heicBuffer = await readFile(fixturePath);
+    const ctx = await createTestContext();
+    try {
+      const { body, contentType } = buildMultipartBody([
+        {
+          name: "file",
+          filename: "sample.heic",
+          contentType: "image/heic",
+          data: heicBuffer,
+        },
+      ]);
+      const res = await ctx.app.inject({
+        method: "POST",
+        url: "/api/uploads",
+        headers: { "content-type": contentType },
+        payload: body,
+      });
+      expect(res.statusCode).toBe(200);
+      const json = res.json() as UploadResponse;
+      expect(json.uploads[0]!.mimeType).toBe("image/jpeg");
+      expect(json.uploads[0]!.path.endsWith(".jpg")).toBe(true);
+      expect(existsSync(json.uploads[0]!.path)).toBe(true);
+      const heicLeftover = json.uploads[0]!.path.replace(/\.jpg$/, ".heic");
+      expect(existsSync(heicLeftover)).toBe(false);
+      // Sanity: transcoded jpeg should have non-zero size.
+      expect(statSync(json.uploads[0]!.path).size).toBeGreaterThan(0);
     } finally {
       await ctx.close();
     }

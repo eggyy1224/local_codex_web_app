@@ -119,6 +119,18 @@ export type ThreadTimelineResponse = {
   data: ThreadTimelineItem[];
 };
 
+export type UploadEntry = {
+  id: string;
+  path: string;
+  mimeType: "image/png" | "image/jpeg";
+  sizeBytes: number;
+  originalName: string;
+};
+
+export type UploadResponse = {
+  uploads: UploadEntry[];
+};
+
 export type UserInputItem =
   | {
       type: "text";
