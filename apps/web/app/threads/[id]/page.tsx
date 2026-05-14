@@ -171,7 +171,12 @@ export default function ThreadPage({ params }: Props) {
   const [model, setModel] = useState<string>(DEFAULT_MODEL);
   const [thinkingEffort, setThinkingEffort] = useState<string>("high");
   const [collaborationMode, setCollaborationMode] = useState<CollaborationModeKind>("default");
-  const [permissionMode, setPermissionMode] = useState<TurnPermissionMode>("local");
+  const [permissionMode, setPermissionMode] = useState<TurnPermissionMode>(() => {
+    if (typeof window === "undefined") return "auto";
+    const saved = window.localStorage.getItem(PERMISSION_MODE_STORAGE_KEY);
+    if (saved === "local" || saved === "auto" || saved === "full-access") return saved;
+    return "auto";
+  });
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   // Optimistic in-flight turn: from the moment the user hits send until the
@@ -471,10 +476,6 @@ export default function ThreadPage({ params }: Props) {
   }, [applyCollaborationMode, replaceWithoutQueryParams, searchParams, threadId]);
 
   useEffect(() => {
-    const saved = window.localStorage.getItem(PERMISSION_MODE_STORAGE_KEY);
-    if (saved === "local" || saved === "auto" || saved === "full-access") {
-      setPermissionMode(saved);
-    }
     const savedModel = window.localStorage.getItem(MODEL_STORAGE_KEY);
     const defaultMigration = window.localStorage.getItem(MODEL_DEFAULT_MIGRATION_STORAGE_KEY);
     if (shouldRestoreSavedModel(savedModel, defaultMigration)) {
