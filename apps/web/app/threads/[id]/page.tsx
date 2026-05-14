@@ -2721,6 +2721,19 @@ export default function ThreadPage({ params }: Props) {
                 const hasAssistantSegment = lastAssistantIndex !== -1;
                 const fallbackAssistantText =
                   !hasAssistantSegment && turn.assistantText ? turn.assistantText : null;
+                // Live reasoning deltas only land in `turn.thinkingText`;
+                // segments don't get a `thinking` entry until a completed
+                // reasoning item arrives. Without this fallback the
+                // Thinking/Verbose view modes look empty during the most
+                // valuable window of the stream. Render a card styled like
+                // a thinking segment off of the live buffer until a real
+                // segment shows up.
+                const hasThinkingSegment = segments.some((s) => s.kind === "thinking");
+                const shouldShowStreamingThinkingFallback =
+                  viewMode !== "normal" &&
+                  turn.isStreaming &&
+                  !hasThinkingSegment &&
+                  Boolean(turn.thinkingText);
                 return (
                   <article
                     className={`cdx-turn-card cdx-turn-card--conversation ${
@@ -2945,6 +2958,25 @@ export default function ThreadPage({ params }: Props) {
                           return null;
                         })}
                       </div>
+                    ) : null}
+                    {shouldShowStreamingThinkingFallback ? (
+                      <details
+                        className="cdx-message cdx-message--detail cdx-desktop-thinking"
+                        data-testid="desktop-thinking-streaming-fallback"
+                        open
+                      >
+                        <summary className="cdx-message-meta">
+                          <strong className="cdx-message-role">Thinking</strong>
+                          <span className="cdx-stream-indicator" aria-live="polite">
+                            <span className="cdx-stream-indicator-dot" aria-hidden="true" />
+                            Live
+                          </span>
+                        </summary>
+                        <div className="cdx-turn-body cdx-turn-body--md">
+                          <MarkdownText text={truncateText(turn.thinkingText ?? "", 6000)} />
+                          <span className="cdx-stream-cursor" aria-hidden="true" />
+                        </div>
+                      </details>
                     ) : null}
                     {fallbackAssistantText ? (
                       <section

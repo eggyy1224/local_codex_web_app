@@ -4448,4 +4448,102 @@ describe("Thread page integration", () => {
     expect(orderedSegments[1]).toHaveAttribute("data-testid", "desktop-tool-batch");
     expect(orderedSegments[2]).toHaveAttribute("data-testid", "desktop-assistant-segment");
   });
+
+  it("desktop surfaces live thinking text while streaming even when segments lack a thinking entry", async () => {
+    // Live reasoning deltas land in `turn.thinkingText` long before a
+    // completed reasoning item ever produces a thinking segment, so the
+    // Thinking/Verbose modes would otherwise look empty during the most
+    // valuable part of the stream. Render a fallback card off of
+    // `thinkingText` until a real segment shows up.
+    vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+
+    server.use(
+      http.get("http://127.0.0.1:8795/api/threads/:id", ({ params }) =>
+        HttpResponse.json({
+          thread: {
+            id: String(params.id),
+            title: "Streaming reasoning desktop",
+            preview: "",
+            status: "running",
+            createdAt: null,
+            updatedAt: null,
+          },
+          turns: [],
+          nextCursor: null,
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/approvals/pending", () =>
+        HttpResponse.json({ data: [] }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads", () =>
+        HttpResponse.json({ data: [], nextCursor: null }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/timeline", () =>
+        HttpResponse.json({
+          data: [
+            {
+              id: "tl-user",
+              ts: "2026-01-01T00:00:00.000Z",
+              turnId: "turn-1",
+              type: "userMessage",
+              title: "You",
+              text: "think out loud",
+              rawType: "userMessage",
+              toolName: null,
+              callId: null,
+            },
+            // Reasoning delta only — no completed reasoning item, so the
+            // segment builder produces no thinking segment yet.
+            {
+              id: "tl-think-delta",
+              ts: "2026-01-01T00:00:01.000Z",
+              turnId: "turn-1",
+              type: "reasoning",
+              title: "Thinking",
+              text: "Considering the available options before I act...",
+              rawType: "item/reasoning/delta",
+              toolName: null,
+              callId: null,
+            },
+          ],
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/context", () =>
+        HttpResponse.json({
+          threadId: "thread-1",
+          cwd: "/tmp/project",
+          resolvedCwd: "/tmp/project",
+          isFallback: false,
+          source: "projection",
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/models", () => HttpResponse.json({ data: [] })),
+    );
+
+    render(<ThreadPage params={Promise.resolve({ id: "thread-1" })} />);
+
+    // Normal mode: live reasoning stays hidden (mirrors mobile).
+    await screen.findByTestId("desktop-turn-segments");
+    expect(
+      screen.queryByTestId("desktop-thinking-streaming-fallback"),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByTestId("desktop-thinking-segment")).not.toBeInTheDocument();
+
+    // Flip to Thinking: the live delta is now visible via the fallback
+    // card even though segments haven't produced a thinking entry yet.
+    fireEvent.click(screen.getByTestId("desktop-topbar-views-toggle"));
+    await screen.findByTestId("desktop-topbar-views-menu");
+    fireEvent.click(screen.getByTestId("desktop-topbar-views-thinking"));
+
+    await waitFor(() => {
+      expect(
+        screen.getByTestId("desktop-thinking-streaming-fallback"),
+      ).toBeInTheDocument();
+    });
+    expect(screen.getByTestId("desktop-thinking-streaming-fallback")).toHaveTextContent(
+      /Considering the available options/,
+    );
+    // Still no completed thinking segment — only the live fallback.
+    expect(screen.queryByTestId("desktop-thinking-segment")).not.toBeInTheDocument();
+  });
 });
