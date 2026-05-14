@@ -1138,7 +1138,9 @@ textarea {
 
 .cdx-turn-body {
   margin: 0;
+  max-width: 100%;
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
   word-break: break-word;
   color: rgba(255, 255, 255, 0.84);
   font-size: 13px;
@@ -1151,7 +1153,16 @@ textarea {
  * for chat. Inline code stays monospace; fenced code blocks scroll horizontally
  * instead of wrapping so long commands stay legible. */
 .cdx-turn-body--md {
+  min-width: 0;
+  max-width: 100%;
   white-space: normal;
+}
+
+.cdx-md {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .cdx-md > :first-child {
@@ -1166,6 +1177,9 @@ textarea {
 .cdx-md blockquote,
 .cdx-md pre,
 .cdx-md table {
+  max-width: 100%;
+  min-width: 0;
+  overflow-wrap: anywhere;
   margin: 0 0 8px;
 }
 .cdx-md p:last-child,
@@ -1223,6 +1237,8 @@ textarea {
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 5px;
   padding: 0 4px;
+  overflow-wrap: anywhere;
+  word-break: break-word;
   font-family: "SF Mono", "Consolas", "Noto Sans Mono CJK TC", monospace;
   font-size: 0.9em;
 }
@@ -1238,6 +1254,8 @@ textarea {
   background: transparent;
   border: 0;
   padding: 0;
+  overflow-wrap: normal;
+  word-break: normal;
   font-size: 12px;
   line-height: 1.5;
 }
@@ -2176,18 +2194,22 @@ textarea {
 
 .cdx-mobile-turn {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 8px;
+  min-width: 0;
 }
 
 .cdx-mobile-msg {
   display: grid;
   gap: 6px;
+  min-width: 0;
   max-width: 100%;
 }
 
 .cdx-mobile-msg--user {
   justify-self: end;
   width: min(100%, 85%);
+  max-width: 100%;
   background: rgba(39, 39, 39, 0.9);
   border-radius: 16px;
   padding: 10px 12px;
@@ -2279,6 +2301,9 @@ textarea {
   background: rgba(255, 255, 255, 0.025);
   padding: 6px 10px;
   font-size: 12px;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
 }
 
 .cdx-mobile-tool-batch-summary {
@@ -2286,6 +2311,8 @@ textarea {
   align-items: center;
   gap: 8px;
   color: var(--muted);
+  min-width: 0;
+  max-width: 100%;
 }
 
 .cdx-mobile-tool-batch-icon {
@@ -2339,7 +2366,11 @@ textarea {
   margin: 0;
   padding: 0;
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 4px;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
 }
 
 .cdx-mobile-tool-action {
@@ -2352,10 +2383,14 @@ textarea {
   border: 1px solid rgba(255, 255, 255, 0.05);
   font-size: 12px;
   color: rgba(255, 255, 255, 0.86);
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
 }
 
 .cdx-mobile-tool-action-label {
   flex: 1;
+  display: block;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2686,11 +2721,13 @@ textarea {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+  min-width: 0;
+  max-width: 100%;
   margin: 6px 0 4px;
 }
 
 .cdx-message-image {
-  max-width: 260px;
+  max-width: min(260px, 100%);
   max-height: 220px;
   border-radius: 8px;
   border: 1px solid var(--border-soft);
