@@ -273,6 +273,7 @@ describe("Thread page integration", () => {
         expect(pill).not.toHaveTextContent("Preparing request");
       }
       expect(screen.queryByTestId("desktop-thinking-placeholder")).not.toBeInTheDocument();
+      expect(screen.getByText(/Live activity: 1 turn\(s\) streaming/)).toBeInTheDocument();
       expect(
         screen.getByText("run long request", { selector: ".cdx-turn-body" }),
       ).toBeInTheDocument();
@@ -1681,10 +1682,11 @@ describe("Thread page integration", () => {
 
     render(<ThreadPage params={Promise.resolve({ id: "thread-1" })} />);
 
-    // Stop appears once the running turn is detected.
+    // Stop appears once the running turn is detected, while controls remain
+    // available for pending approvals/questions during the run.
     const stopBtn = await screen.findByTestId("mobile-topbar-stop");
     expect(stopBtn).toBeInTheDocument();
-    expect(screen.queryByTestId("mobile-topbar-control-toggle")).not.toBeInTheDocument();
+    expect(screen.getByTestId("mobile-topbar-control-toggle")).toBeInTheDocument();
 
     fireEvent.click(stopBtn);
 

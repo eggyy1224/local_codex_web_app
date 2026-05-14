@@ -1192,12 +1192,13 @@ export function buildConversationTurns(items: ThreadTimelineItem[]): Conversatio
         segments,
       };
     })
-    .filter(
-      (turn) =>
+    .filter((turn) => {
+      const hasVisibleContent =
         Boolean(turn.userText) ||
         Boolean(turn.assistantText) ||
         Boolean(turn.thinkingText) ||
         turn.toolCalls.length > 0 ||
-        turn.toolResults.length > 0,
-    );
+        turn.toolResults.length > 0;
+      return hasVisibleContent || turn.isStreaming;
+    });
 }

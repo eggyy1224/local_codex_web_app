@@ -1139,7 +1139,9 @@ export default function ThreadPage({ params }: Props) {
     // Drop the optimistic bubble once the gateway's user_message item lands
     // — the real turn now carries the same text and we don't want a duplicate.
     const pendingMatchesReal = base.some(
-      (turn) => turn.isStreaming && turn.userText === pendingNewTurn.userText,
+      (turn) =>
+        (turn.isStreaming && turn.userText === pendingNewTurn.userText) ||
+        (!pendingNewTurn.id.startsWith("pending-") && turn.turnId === pendingNewTurn.id),
     );
     if (pendingMatchesReal) {
       return base;
@@ -1168,15 +1170,18 @@ export default function ThreadPage({ params }: Props) {
     return [...base, optimisticTurn];
   }, [actionablePlanByTurnId, allConversationTurns, pendingNewTurn, showAllTurns]);
 
-  // Clear the optimistic turn as soon as a real SSE user_message with the
-  // same text arrives for this thread.
+  // Clear the optimistic turn as soon as the real SSE stream confirms the
+  // same turn. A user_message with matching text is the full replacement; any
+  // event for the POST-confirmed turn id is enough to hand the running state
+  // to the live timeline and avoid a duplicate placeholder.
   useEffect(() => {
     if (!pendingNewTurn) return;
     const matched = allTimelineItems.some(
       (item) =>
-        item.type === "userMessage" &&
-        item.text === pendingNewTurn.userText &&
-        item.ts > pendingNewTurn.startedAt,
+        (item.type === "userMessage" &&
+          item.text === pendingNewTurn.userText &&
+          item.ts > pendingNewTurn.startedAt) ||
+        (!pendingNewTurn.id.startsWith("pending-") && item.turnId === pendingNewTurn.id),
     );
     if (matched) {
       setPendingNewTurn(null);
@@ -1970,6 +1975,14 @@ export default function ThreadPage({ params }: Props) {
         if (activeThreadIdRef.current !== requestThreadId) {
           return false;
         }
+        // The POST response already gives us a real turn id, even if the SSE
+        // stream has not delivered turn/started or user_message yet. Promote
+        // the optimistic bubble so controls that need a real turn id (steer,
+        // stop, running indicators) flip from "sending/waiting" to running
+        // immediately after the gateway accepts the turn.
+        setPendingNewTurn((prev) =>
+          prev?.id === pendingId ? { ...prev, id: payload.turnId } : prev,
+        );
         if (payload.warnings?.includes("plan_mode_fallback")) {
           setSubmitError("Plan mode unavailable on this app-server; sent in default mode.");
         }

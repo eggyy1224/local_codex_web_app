@@ -631,6 +631,28 @@ describe("proposedPlanFromText", () => {
     expect(turns[0]!.isStreaming).toBe(true);
   });
 
+  it("keeps a status-only started turn visible as streaming", () => {
+    const items: ThreadTimelineItem[] = [
+      {
+        id: "started-only",
+        ts: "2026-05-14T08:00:00.000Z",
+        turnId: "turn-started-only",
+        type: "status",
+        title: "Turn started",
+        text: "turn turn-started-only",
+        rawType: "turn/started",
+        toolName: null,
+        callId: null,
+      },
+    ];
+
+    const turns = buildConversationTurns(items);
+    expect(turns).toHaveLength(1);
+    expect(turns[0]!.turnId).toBe("turn-started-only");
+    expect(turns[0]!.status).toBe("inProgress");
+    expect(turns[0]!.isStreaming).toBe(true);
+  });
+
   it("marks turn_aborted from the rollout as a terminal interrupted turn", () => {
     // Regression: when codex CLI exited mid-stream (or /control stop was
     // dispatched) the rollout would record `turn_aborted` instead of

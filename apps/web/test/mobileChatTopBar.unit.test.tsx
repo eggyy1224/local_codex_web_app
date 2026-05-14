@@ -72,15 +72,13 @@ describe("MobileChatTopBar slice 1: project label + view menu", () => {
     expect(screen.queryByTestId("mobile-topbar-views-menu")).not.toBeInTheDocument();
   });
 
-  it("keeps the Views toggle visible alongside Stop while a turn is running", () => {
-    // Running is exactly when the user most needs to flip to Thinking/Verbose
-    // to watch reasoning land — so Views must stay reachable. The More button
-    // (which routes into the control sheet) is the only entry that yields to
-    // Stop, because both share the same right-cluster slot semantics and the
-    // control sheet is still reachable via the composer swipe gesture.
+  it("keeps Views and controls visible alongside Stop while a turn is running", () => {
+    // Running is exactly when the user most needs to inspect reasoning or open
+    // pending approvals/questions, so Stop is added without replacing the
+    // controls entrypoint.
     renderTopBar({ runningTurnId: "turn-123" });
     expect(screen.getByTestId("mobile-topbar-views-toggle")).toBeInTheDocument();
-    expect(screen.queryByTestId("mobile-topbar-control-toggle")).not.toBeInTheDocument();
+    expect(screen.getByTestId("mobile-topbar-control-toggle")).toBeInTheDocument();
     expect(screen.getByTestId("mobile-topbar-stop")).toBeInTheDocument();
   });
 

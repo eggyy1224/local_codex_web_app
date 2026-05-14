@@ -128,10 +128,10 @@ export default function MobileChatTopBar({
       </div>
       <div className="cdx-mobile-chat-topbar-actions">
         {/*
-          Views must stay reachable even while a turn is running — that's
-          precisely when the user most needs to flip to Thinking/Verbose to
-          inspect reasoning or tool detail. Stop is rendered alongside Views
-          (instead of replacing it) so the two actions never collide.
+          Views and controls must stay reachable even while a turn is running:
+          pending questions/approvals can arrive before the turn completes, and
+          the user still needs a path into the sheet. Stop is rendered as an
+          extra action so it never steals the controls entrypoint.
         */}
         <div className="cdx-mobile-view-menu-anchor" ref={viewMenuRef}>
           <button
@@ -197,18 +197,17 @@ export default function MobileChatTopBar({
           >
             {stopBusy ? "…" : "■"}
           </button>
-        ) : (
-          <button
-            type="button"
-            className="cdx-mobile-icon-btn"
-            data-testid="mobile-topbar-control-toggle"
-            onClick={onOpenControls}
-            aria-label="Open controls"
-          >
-            ⋯
-            {pendingActionCount > 0 ? <span className="cdx-mobile-dot" aria-hidden="true" /> : null}
-          </button>
-        )}
+        ) : null}
+        <button
+          type="button"
+          className="cdx-mobile-icon-btn"
+          data-testid="mobile-topbar-control-toggle"
+          onClick={onOpenControls}
+          aria-label="Open controls"
+        >
+          ⋯
+          {pendingActionCount > 0 ? <span className="cdx-mobile-dot" aria-hidden="true" /> : null}
+        </button>
       </div>
     </header>
   );
