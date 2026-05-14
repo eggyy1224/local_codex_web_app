@@ -556,6 +556,123 @@ describe("Thread page integration", () => {
     });
   });
 
+  it("mobile thread switcher updates the active thread status from live turn events", async () => {
+    setMobileViewport(true);
+    vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+
+    server.use(
+      http.get("http://127.0.0.1:8795/api/threads/:id", ({ params }) =>
+        HttpResponse.json({
+          thread: {
+            id: String(params.id),
+            title: "Switcher Thread",
+            preview: "",
+            status: "active",
+            createdAt: null,
+            updatedAt: null,
+          },
+          turns: [
+            {
+              id: "turn-running",
+              status: "in_progress",
+              startedAt: null,
+              completedAt: null,
+              error: null,
+              items: [],
+            },
+          ],
+          nextCursor: null,
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/approvals/pending", () =>
+        HttpResponse.json({ data: [] }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/interactions/pending", () =>
+        HttpResponse.json({ data: [] }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads", () =>
+        HttpResponse.json({
+          data: [
+            {
+              id: "thread-1",
+              projectKey: "/repos/alpha",
+              title: "Alpha Active",
+              preview: "",
+              status: "active",
+              lastActiveAt: "2026-01-03T00:00:00.000Z",
+              archived: false,
+              waitingApprovalCount: 0,
+              errorCount: 0,
+            },
+          ],
+          nextCursor: null,
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/timeline", () =>
+        HttpResponse.json({
+          data: [
+            {
+              id: "tl-start",
+              ts: "2026-01-03T00:00:00.000Z",
+              turnId: "turn-running",
+              type: "status",
+              title: "Turn started",
+              text: null,
+              rawType: "turn/started",
+              toolName: null,
+              callId: null,
+            },
+          ],
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/context", () =>
+        HttpResponse.json({
+          threadId: "thread-1",
+          cwd: "/repos/alpha",
+          resolvedCwd: "/repos/alpha",
+          isFallback: false,
+          source: "projection",
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/models", () => HttpResponse.json({ data: [] })),
+    );
+
+    render(<ThreadPage params={Promise.resolve({ id: "thread-1" })} />);
+
+    fireEvent.click(await screen.findByLabelText("Open threads"));
+    const overlay = await screen.findByTestId("mobile-thread-switcher-overlay");
+    const activeRow = within(overlay).getByText("Alpha Active").closest("button");
+    expect(activeRow).not.toBeNull();
+    expect(within(activeRow as HTMLElement).getByText("Running")).toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(MockEventSource.instances.length).toBeGreaterThan(0);
+    });
+    const es = MockEventSource.instances.at(-1);
+    if (!es) {
+      throw new Error("missing EventSource instance");
+    }
+    es.emit("gateway", {
+      seq: 1,
+      serverTs: "2026-01-03T00:00:05.000Z",
+      threadId: "thread-1",
+      turnId: "turn-running",
+      kind: "turn",
+      name: "turn/completed",
+      payload: {
+        threadId: "thread-1",
+        turnId: "turn-running",
+        turn: { id: "turn-running", status: "completed" },
+      },
+    });
+
+    await waitFor(() => {
+      const updatedRow = within(overlay).getByText("Alpha Active").closest("button");
+      expect(updatedRow).not.toBeNull();
+      expect(within(updatedRow as HTMLElement).getByText("Idle")).toBeInTheDocument();
+    });
+  });
+
   it("mobile settings tab toggles service tier via /api/config/value", async () => {
     setMobileViewport(true);
     vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);

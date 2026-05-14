@@ -3,6 +3,8 @@ import type {
   ApprovalView,
   GatewayEvent,
   InteractionView,
+  ThreadListItem,
+  ThreadStatus,
 } from "@lcwa/shared-types";
 
 export type PendingApprovalCard = ApprovalView;
@@ -37,6 +39,66 @@ export function readString(
   if (!obj) return null;
   const value = obj[key];
   return typeof value === "string" ? value : null;
+}
+
+function isThreadStatus(value: string | null): value is ThreadStatus {
+  return (
+    value === "notLoaded" ||
+    value === "idle" ||
+    value === "active" ||
+    value === "systemError" ||
+    value === "unknown"
+  );
+}
+
+function maxIsoTimestamp(current: string, candidate: string): string {
+  return candidate > current ? candidate : current;
+}
+
+export function threadListItemFromGatewayEvent(
+  item: ThreadListItem,
+  event: GatewayEvent,
+): ThreadListItem {
+  if (item.id !== event.threadId) {
+    return item;
+  }
+
+  if (event.name === "turn/started") {
+    return {
+      ...item,
+      status: "active",
+      lastActiveAt: maxIsoTimestamp(item.lastActiveAt, event.serverTs),
+    };
+  }
+
+  if (event.name === "turn/completed") {
+    const payload = asRecord(event.payload);
+    const turn = asRecord(payload?.turn);
+    const turnStatus = readString(turn, "status") ?? readString(payload, "status");
+    const status: ThreadStatus =
+      turnStatus === "failed" || turnStatus === "error" ? "systemError" : "idle";
+    return {
+      ...item,
+      status,
+      lastActiveAt: maxIsoTimestamp(item.lastActiveAt, event.serverTs),
+    };
+  }
+
+  if (event.name === "thread/updated") {
+    const payload = asRecord(event.payload);
+    const thread = asRecord(payload?.thread);
+    const status = readString(thread, "status") ?? readString(payload, "status");
+    if (!isThreadStatus(status)) {
+      return item;
+    }
+    return {
+      ...item,
+      status,
+      lastActiveAt: maxIsoTimestamp(item.lastActiveAt, event.serverTs),
+    };
+  }
+
+  return item;
 }
 
 export function formatTimestamp(value: string | null): string {

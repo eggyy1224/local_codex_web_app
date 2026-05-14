@@ -106,6 +106,7 @@ import {
   readString,
   THREAD_MODE_STORAGE_KEY_PREFIX,
   threadModeStorageKey,
+  threadListItemFromGatewayEvent,
   tokenUsageFromEvent,
   type CollaborationModeKind,
   type PlanActionState,
@@ -703,6 +704,9 @@ export default function ThreadPage({ params }: Props) {
         }
         currentSince = payload.seq;
         setEvents((prev) => [...prev, payload].slice(-600));
+        setThreadList((prev) =>
+          prev.map((item) => threadListItemFromGatewayEvent(item, payload)),
+        );
         setLastSeq((prev) => Math.max(prev, payload.seq));
         setLastEventAtMs(Date.now());
         reconnectAttempt = 0;

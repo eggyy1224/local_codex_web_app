@@ -3,7 +3,8 @@ import {
   hydrationAttributeCleanupScript,
   nextDevIndicatorCleanupScript,
 } from "../app/lib/hydration-cleanup";
-import { metadata } from "../app/layout";
+import manifest from "../app/manifest";
+import { metadata, viewport } from "../app/layout";
 
 describe("layout metadata", () => {
   it("disables iOS format detection to avoid hydration mismatches", () => {
@@ -12,6 +13,27 @@ describe("layout metadata", () => {
         ? metadata.other["format-detection"]
         : undefined;
     expect(value).toBe("telephone=no, date=no, email=no, address=no");
+  });
+
+  it("declares standalone PWA metadata for mobile home-screen launch", () => {
+    expect(metadata.manifest).toBe("/manifest.webmanifest");
+    expect(metadata.appleWebApp).toMatchObject({
+      capable: true,
+      title: "Local Codex",
+      statusBarStyle: "black-translucent",
+    });
+    expect(viewport.themeColor).toBe("#090909");
+  });
+
+  it("serves an installable web app manifest", () => {
+    expect(manifest()).toMatchObject({
+      name: "Local Codex",
+      short_name: "Codex",
+      start_url: "/",
+      scope: "/",
+      display: "standalone",
+      theme_color: "#090909",
+    });
   });
 
   it("removes Chrome remote frame attributes before hydration", () => {
