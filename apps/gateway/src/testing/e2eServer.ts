@@ -305,6 +305,7 @@ const app = await createGatewayApp(
   {
     corsAllowlist: ["http://127.0.0.1:3100"],
     startAppServerOnBoot: false,
+    uploadRoot: path.join(tmpDir, "uploads"),
   },
 );
 
