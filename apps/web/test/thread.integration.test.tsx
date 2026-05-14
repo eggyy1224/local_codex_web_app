@@ -673,6 +673,81 @@ describe("Thread page integration", () => {
     });
   });
 
+  it("mobile thread page opens a canvas iframe from the canvas query param", async () => {
+    setMobileViewport(true);
+    searchParamsValue = new URLSearchParams({
+      canvas: "127.0.0.1:4173/preview.html",
+    });
+    vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+
+    server.use(
+      http.get("http://127.0.0.1:8795/api/threads/:id", ({ params }) =>
+        HttpResponse.json({
+          thread: {
+            id: String(params.id),
+            title: "Canvas Thread",
+            preview: "",
+            status: "idle",
+            createdAt: null,
+            updatedAt: null,
+          },
+          turns: [],
+          nextCursor: null,
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/approvals/pending", () =>
+        HttpResponse.json({ data: [] }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/interactions/pending", () =>
+        HttpResponse.json({ data: [] }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads", () =>
+        HttpResponse.json({
+          data: [
+            {
+              id: "thread-1",
+              projectKey: "/repos/canvas",
+              title: "Canvas Thread",
+              preview: "",
+              status: "idle",
+              lastActiveAt: "2026-01-03T00:00:00.000Z",
+              archived: false,
+              waitingApprovalCount: 0,
+              errorCount: 0,
+            },
+          ],
+          nextCursor: null,
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/timeline", () =>
+        HttpResponse.json({ data: [] }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/context", () =>
+        HttpResponse.json({
+          threadId: "thread-1",
+          cwd: "/repos/canvas",
+          resolvedCwd: "/repos/canvas",
+          isFallback: false,
+          source: "projection",
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/models", () => HttpResponse.json({ data: [] })),
+    );
+
+    render(<ThreadPage params={Promise.resolve({ id: "thread-1" })} />);
+
+    fireEvent.click(await screen.findByTestId("mobile-topbar-canvas-toggle"));
+
+    expect(screen.getByTestId("mobile-canvas-sheet")).toBeInTheDocument();
+    expect(screen.getByTestId("mobile-canvas-url-input")).toHaveValue(
+      "http://127.0.0.1:4173/preview.html",
+    );
+    expect(screen.getByTestId("mobile-canvas-frame")).toHaveAttribute(
+      "src",
+      "http://127.0.0.1:4173/preview.html",
+    );
+  });
+
   it("mobile settings tab toggles service tier via /api/config/value", async () => {
     setMobileViewport(true);
     vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);

@@ -97,6 +97,37 @@ test("mobile smoke: chat-first thread flow + sheet controls", async ({ page }, t
   await page.getByTestId("mobile-topbar-views-toggle").click();
   await page.getByTestId("mobile-topbar-views-normal").click();
 
+  // Canvas is a mobile-only embedded browser sheet. It should open from the
+  // top bar, accept an app-relative URL, snap full, then close without
+  // disturbing the chat chrome or leaving a bottom trigger over the composer.
+  await expect(page.getByTestId("mobile-topbar-canvas-toggle")).toBeVisible();
+  await expect(page.getByTestId("mobile-canvas-trigger")).toHaveCount(0);
+  await page.getByTestId("mobile-topbar-canvas-toggle").click();
+  await expect(page.getByTestId("mobile-canvas-sheet")).toBeVisible();
+  await expect(page.getByTestId("mobile-canvas-sheet")).toHaveAttribute("data-snap", "full");
+  await page.getByTestId("mobile-canvas-url-input").fill("/?canvas-preview=1");
+  await page.getByTestId("mobile-canvas-open-url").click();
+  await expect(page.getByTestId("mobile-canvas-frame")).toHaveAttribute(
+    "src",
+    "/?canvas-preview=1",
+  );
+  const canvasFrameMetrics = await page
+    .getByTestId("mobile-canvas-frame")
+    .evaluate((node) => {
+      const rect = node.getBoundingClientRect();
+      return {
+        bottomGap: window.innerHeight - rect.bottom,
+        height: rect.height,
+        viewportHeight: window.innerHeight,
+      };
+    });
+  expect(canvasFrameMetrics.bottomGap).toBeLessThanOrEqual(2);
+  expect(canvasFrameMetrics.height).toBeGreaterThan(canvasFrameMetrics.viewportHeight * 0.55);
+  await page.getByTestId("mobile-canvas-snap-toggle").click();
+  await expect(page.getByTestId("mobile-canvas-sheet")).toHaveAttribute("data-snap", "peek");
+  await page.getByTestId("mobile-canvas-close").click();
+  await expect(page.getByTestId("mobile-canvas-sheet")).toHaveCount(0);
+
   // Composer "+" opens a lightweight menu; Controls inside it routes to the
   // sheet (the prior auto-open behavior now lives behind the Controls item).
   await page.getByTestId("mobile-composer-control-toggle").click();

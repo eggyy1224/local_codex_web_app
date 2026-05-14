@@ -70,6 +70,7 @@ import MobileChatTopBar, {
   type ThreadViewMode,
   VIEW_MODE_OPTIONS,
 } from "./MobileChatTopBar";
+import MobileCanvasSheet from "./MobileCanvasSheet";
 import MobileComposerDock from "./MobileComposerDock";
 import MobileControlSheet from "./MobileControlSheet";
 import MobileMessageDetailsSheet from "./MobileMessageDetailsSheet";
@@ -142,6 +143,7 @@ const gatewayUrl = resolveGatewayUrl();
 const SIDEBAR_SCROLL_STORAGE_KEY = "lcwa.sidebar.scroll.v1";
 const PERMISSION_MODE_STORAGE_KEY = "lcwa.permission.mode.v1";
 const THINKING_EFFORT_STORAGE_KEY = "lcwa.thinking.effort.v1";
+const MOBILE_CANVAS_URL_STORAGE_KEY = "lcwa.mobile.canvas.url.v1";
 const TIMELINE_STICKY_THRESHOLD_PX = 56;
 const ACTIVE_THREAD_SCROLL_SNAP_THRESHOLD_PX = 24;
 const FALLBACK_THINKING_EFFORT_OPTIONS = ["minimal", "low", "medium", "high"];
@@ -240,6 +242,7 @@ export default function ThreadPage({ params }: Props) {
   const [desktopQuestionDrafts, setDesktopQuestionDrafts] = useState<InteractionQuestionDrafts>(
     {},
   );
+  const [canvasOpenRequestKey, setCanvasOpenRequestKey] = useState(0);
   const [implementDialogOpen, setImplementDialogOpen] = useState(false);
   const [implementDraft, setImplementDraft] = useState("");
   const [implementTargetTurnId, setImplementTargetTurnId] = useState<string | null>(null);
@@ -1203,6 +1206,11 @@ export default function ThreadPage({ params }: Props) {
   }, [pendingNewTurn]);
   const hiddenTimelineCount = Math.max(0, allConversationTurns.length - visibleConversationTurns.length);
   const pendingActionCount = pendingApprovalList.length + pendingInteractionList.length;
+  const canvasBlocked =
+    pendingActionCount > 0 ||
+    isControlSheetOpen ||
+    isMessageDetailsOpen ||
+    implementDialogOpen;
 
   // Pending approval / interaction is the most-foreground UI on mobile.
   // While the action layer is now stacked above the drawer in CSS, we still
@@ -2360,9 +2368,14 @@ export default function ThreadPage({ params }: Props) {
           runningTurnId={runningTurnId}
           stopBusy={controlBusy === "stop"}
           viewMode={viewMode}
+          canvasDisabled={canvasBlocked}
           onViewModeChange={setViewMode}
           onStop={(turnId) => void interruptRunningTurn(turnId)}
           onOpenThreads={() => setIsThreadSwitcherOpen(true)}
+          onOpenCanvas={() => {
+            if (canvasBlocked) return;
+            setCanvasOpenRequestKey((value) => value + 1);
+          }}
           onOpenControls={() =>
             openControlSheet(
               pendingInteractionList.length > 0 || pendingApprovalList.length > 0
@@ -2480,6 +2493,14 @@ export default function ThreadPage({ params }: Props) {
             <span className="cdx-mobile-running-label">Codex is working…</span>
           </div>
         ) : null}
+
+        <MobileCanvasSheet
+          initialUrl={searchParams.get("canvas")}
+          storageKey={MOBILE_CANVAS_URL_STORAGE_KEY}
+          openRequestKey={canvasOpenRequestKey}
+          showTrigger={false}
+          hidden={canvasBlocked}
+        />
 
         {/* The control sheet, the message details sheet, and the implement
             dialog are themselves the canonical "answer / approve" surface

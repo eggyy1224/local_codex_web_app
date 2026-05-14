@@ -10,6 +10,7 @@ type Overrides = Partial<React.ComponentProps<typeof MobileChatTopBar>>;
 function renderTopBar(overrides: Overrides = {}) {
   const onViewModeChange = vi.fn();
   const onOpenThreads = vi.fn();
+  const onOpenCanvas = vi.fn();
   const onOpenControls = vi.fn();
   const onStop = vi.fn();
   const props: React.ComponentProps<typeof MobileChatTopBar> = {
@@ -23,12 +24,13 @@ function renderTopBar(overrides: Overrides = {}) {
     viewMode: "normal" satisfies MobileViewMode,
     onViewModeChange,
     onOpenThreads,
+    onOpenCanvas,
     onOpenControls,
     onStop,
     ...overrides,
   };
   const utils = render(<MobileChatTopBar {...props} />);
-  return { ...utils, onViewModeChange, onOpenThreads, onOpenControls, onStop };
+  return { ...utils, onViewModeChange, onOpenThreads, onOpenCanvas, onOpenControls, onStop };
 }
 
 describe("MobileChatTopBar slice 1: project label + view menu", () => {
@@ -77,9 +79,24 @@ describe("MobileChatTopBar slice 1: project label + view menu", () => {
     // pending approvals/questions, so Stop is added without replacing the
     // controls entrypoint.
     renderTopBar({ runningTurnId: "turn-123" });
+    expect(screen.getByTestId("mobile-topbar-canvas-toggle")).toBeInTheDocument();
     expect(screen.getByTestId("mobile-topbar-views-toggle")).toBeInTheDocument();
     expect(screen.getByTestId("mobile-topbar-control-toggle")).toBeInTheDocument();
     expect(screen.getByTestId("mobile-topbar-stop")).toBeInTheDocument();
+  });
+
+  it("opens the canvas from the top bar action", () => {
+    const { onOpenCanvas } = renderTopBar();
+    fireEvent.click(screen.getByTestId("mobile-topbar-canvas-toggle"));
+    expect(onOpenCanvas).toHaveBeenCalledTimes(1);
+  });
+
+  it("disables the canvas action while a foreground sheet owns the screen", () => {
+    const { onOpenCanvas } = renderTopBar({ canvasDisabled: true });
+    const button = screen.getByTestId("mobile-topbar-canvas-toggle");
+    expect(button).toBeDisabled();
+    fireEvent.click(button);
+    expect(onOpenCanvas).not.toHaveBeenCalled();
   });
 
   it("lets the user switch view mode while a turn is running", () => {

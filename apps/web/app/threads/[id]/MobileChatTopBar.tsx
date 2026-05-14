@@ -29,8 +29,10 @@ type MobileChatTopBarProps = {
   runningTurnId: string | null;
   stopBusy: boolean;
   viewMode: ThreadViewMode;
+  canvasDisabled?: boolean;
   onViewModeChange: (mode: ThreadViewMode) => void;
   onOpenThreads: () => void;
+  onOpenCanvas: () => void;
   onOpenControls: () => void;
   onOpenMoreControls?: () => void;
   onStop: (turnId: string) => void;
@@ -45,8 +47,10 @@ export default function MobileChatTopBar({
   runningTurnId,
   stopBusy,
   viewMode,
+  canvasDisabled = false,
   onViewModeChange,
   onOpenThreads,
+  onOpenCanvas,
   onOpenControls,
   onOpenMoreControls: _onOpenMoreControls,
   onStop,
@@ -133,6 +137,17 @@ export default function MobileChatTopBar({
           the user still needs a path into the sheet. Stop is rendered as an
           extra action so it never steals the controls entrypoint.
         */}
+        <button
+          type="button"
+          className="cdx-mobile-icon-btn"
+          data-testid="mobile-topbar-canvas-toggle"
+          onClick={onOpenCanvas}
+          aria-label="Open canvas"
+          title="Canvas"
+          disabled={canvasDisabled}
+        >
+          ▣
+        </button>
         <div className="cdx-mobile-view-menu-anchor" ref={viewMenuRef}>
           <button
             type="button"

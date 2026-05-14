@@ -2109,6 +2109,10 @@ textarea {
   background: rgba(255, 255, 255, 0.11);
 }
 
+.cdx-mobile-icon-btn:disabled {
+  opacity: 0.42;
+}
+
 .cdx-mobile-icon-btn--stop {
   background: rgba(255, 255, 255, 0.06);
   border-color: rgba(255, 255, 255, 0.16);
@@ -2491,6 +2495,184 @@ textarea {
 
 .cdx-mobile-running-label {
   letter-spacing: 0.01em;
+}
+
+.cdx-mobile-canvas-trigger {
+  position: fixed;
+  left: 50%;
+  bottom: calc(150px + env(safe-area-inset-bottom));
+  z-index: 36;
+  transform: translateX(-50%);
+  min-width: 112px;
+  min-height: 38px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 999px;
+  background: rgba(18, 18, 18, 0.9);
+  color: var(--text);
+  display: grid;
+  grid-template-rows: 5px auto;
+  justify-items: center;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 14px 8px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.42);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+  touch-action: none;
+}
+
+.cdx-mobile-canvas-trigger:active {
+  background: rgba(31, 31, 31, 0.96);
+}
+
+.cdx-mobile-canvas-trigger-bar {
+  width: 38px;
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.34);
+}
+
+.cdx-mobile-canvas-sheet {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 44;
+  height: calc(100vh - env(safe-area-inset-top));
+  height: calc(100dvh - env(safe-area-inset-top));
+  border-top-left-radius: 22px;
+  border-top-right-radius: 22px;
+  border: 1px solid var(--border-soft);
+  border-bottom: 0;
+  background: rgba(13, 13, 13, 0.98);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 -28px 48px rgba(0, 0, 0, 0.46);
+  transition: transform 220ms ease-out;
+}
+
+.cdx-mobile-canvas-sheet--peek {
+  transform: translateY(58vh);
+  transform: translateY(58dvh);
+}
+
+.cdx-mobile-canvas-sheet--full {
+  transform: translateY(0);
+}
+
+.cdx-mobile-canvas-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px 10px;
+  padding: 8px 12px 7px;
+  border-bottom: 1px solid var(--border-soft);
+  touch-action: pan-y;
+}
+
+.cdx-mobile-canvas-grip {
+  grid-column: 1 / -1;
+  justify-self: center;
+  width: 46px;
+  height: 5px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.32);
+}
+
+.cdx-mobile-canvas-title-row {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.cdx-mobile-canvas-title-row strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+  line-height: 1.25;
+}
+
+.cdx-mobile-canvas-title-row span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.cdx-mobile-canvas-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.cdx-mobile-canvas-urlbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 6px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.cdx-mobile-canvas-urlbar input {
+  min-width: 0;
+  height: 34px;
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+  background: rgba(28, 28, 28, 0.94);
+  color: var(--text);
+  padding: 0 12px;
+  font-size: 13px;
+}
+
+.cdx-mobile-canvas-urlbar input:focus {
+  outline: 1px solid rgba(122, 162, 247, 0.42);
+}
+
+.cdx-mobile-canvas-urlbar .cdx-toolbar-btn {
+  min-height: 34px;
+  border-radius: 999px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+.cdx-mobile-canvas-error {
+  margin: 0;
+  padding: 7px 12px;
+  border-bottom: 1px solid rgba(231, 92, 92, 0.22);
+  color: rgba(255, 182, 182, 0.94);
+  font-size: 12px;
+}
+
+.cdx-mobile-canvas-frame-shell {
+  flex: 1 1 auto;
+  min-height: 0;
+  background: rgba(255, 255, 255, 0.04);
+  display: grid;
+}
+
+.cdx-mobile-canvas-frame {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: white;
+}
+
+.cdx-mobile-canvas-empty {
+  align-self: center;
+  justify-self: center;
+  display: grid;
+  gap: 4px;
+  justify-items: center;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.cdx-mobile-canvas-empty strong {
+  color: var(--text);
+  font-size: 14px;
 }
 
 .cdx-mobile-action-layer {
