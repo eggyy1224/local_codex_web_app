@@ -9,7 +9,7 @@ import {
   truncateText,
 } from "../../lib/thread-logic";
 import { MarkdownText } from "../../lib/MarkdownText";
-import type { MobileViewMode } from "./MobileChatTopBar";
+import type { ThreadViewMode } from "./MobileChatTopBar";
 
 type MobileMessageStreamProps = {
   turns: ConversationTurn[];
@@ -23,7 +23,7 @@ type MobileMessageStreamProps = {
   onCopyMessage: (text: string) => void;
   onOpenMessageDetails: (turnId: string) => void;
   renderTurnActions?: (turnId: string) => ReactNode;
-  viewMode?: MobileViewMode;
+  viewMode?: ThreadViewMode;
 };
 
 function statusLabelCompact(status: TurnStatus): string {
@@ -37,7 +37,7 @@ function statusLabelCompact(status: TurnStatus): string {
 function renderToolBatch(
   segment: Extract<TurnSegment, { kind: "toolBatch" }>,
   key: string,
-  viewMode: MobileViewMode,
+  viewMode: ThreadViewMode,
 ): ReactNode {
   const showRawDetail = viewMode === "verbose";
   // Action rows: only toolCall items collapse into Claude-like semantic

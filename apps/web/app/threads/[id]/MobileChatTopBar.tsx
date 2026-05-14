@@ -3,10 +3,15 @@
 import { useEffect, useRef, useState } from "react";
 import type { ServiceTier } from "@lcwa/shared-types";
 
-export type MobileViewMode = "normal" | "thinking" | "verbose";
+export type ThreadViewMode = "normal" | "thinking" | "verbose";
+/**
+ * @deprecated Use {@link ThreadViewMode}. Retained for tests/imports that
+ * predate the desktop view-mode toggle being wired up.
+ */
+export type MobileViewMode = ThreadViewMode;
 
 export const VIEW_MODE_OPTIONS: Array<{
-  value: MobileViewMode;
+  value: ThreadViewMode;
   label: string;
   description: string;
 }> = [
@@ -23,8 +28,8 @@ type MobileChatTopBarProps = {
   pendingActionCount: number;
   runningTurnId: string | null;
   stopBusy: boolean;
-  viewMode: MobileViewMode;
-  onViewModeChange: (mode: MobileViewMode) => void;
+  viewMode: ThreadViewMode;
+  onViewModeChange: (mode: ThreadViewMode) => void;
   onOpenThreads: () => void;
   onOpenControls: () => void;
   onOpenMoreControls?: () => void;

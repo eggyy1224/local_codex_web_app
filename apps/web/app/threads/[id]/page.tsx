@@ -61,7 +61,10 @@ import {
   type KnownSlashCommand,
 } from "../../lib/slash-commands";
 import MobileActionLayer from "./MobileActionLayer";
-import MobileChatTopBar, { type MobileViewMode } from "./MobileChatTopBar";
+import MobileChatTopBar, {
+  type ThreadViewMode,
+  VIEW_MODE_OPTIONS,
+} from "./MobileChatTopBar";
 import MobileComposerDock from "./MobileComposerDock";
 import MobileControlSheet from "./MobileControlSheet";
 import MobileMessageDetailsSheet from "./MobileMessageDetailsSheet";
@@ -193,7 +196,11 @@ export default function ThreadPage({ params }: Props) {
   const [sheetDragOffsetY, setSheetDragOffsetY] = useState(0);
   const [isMessageDetailsOpen, setIsMessageDetailsOpen] = useState(false);
   const [activeMessageId, setActiveMessageId] = useState<string | null>(null);
-  const [mobileViewMode, setMobileViewMode] = useState<MobileViewMode>("normal");
+  // Shared between mobile + desktop. Toggling Views on one viewport stays
+  // sticky for the same thread session if the user resizes the window.
+  const [viewMode, setViewMode] = useState<ThreadViewMode>("normal");
+  const [desktopViewMenuOpen, setDesktopViewMenuOpen] = useState(false);
+  const desktopViewMenuRef = useRef<HTMLDivElement | null>(null);
   const [threadContext, setThreadContext] = useState<ThreadContextResponse | null>(null);
   const gatewayConfig = useGatewayConfig();
   const [showAllTurns, setShowAllTurns] = useState(false);
@@ -1618,6 +1625,23 @@ export default function ThreadPage({ params }: Props) {
     setSidebarOpen((value) => !value);
   }, [isMobileViewport]);
 
+  // Close the desktop Views menu when the user clicks anywhere outside of
+  // it. Mirrors the mobile MobileChatTopBar behaviour so the menu doesn't
+  // linger after the user has moved on.
+  useEffect(() => {
+    if (!desktopViewMenuOpen) {
+      return;
+    }
+    const handler = (event: MouseEvent) => {
+      if (!desktopViewMenuRef.current) return;
+      if (!desktopViewMenuRef.current.contains(event.target as Node)) {
+        setDesktopViewMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [desktopViewMenuOpen]);
+
   const selectThreadFromMobileSwitcher = useCallback(
     (nextThreadId: string) => {
       setIsThreadSwitcherOpen(false);
@@ -2059,8 +2083,8 @@ export default function ThreadPage({ params }: Props) {
           pendingActionCount={pendingActionCount}
           runningTurnId={runningTurnId}
           stopBusy={controlBusy === "stop"}
-          viewMode={mobileViewMode}
-          onViewModeChange={setMobileViewMode}
+          viewMode={viewMode}
+          onViewModeChange={setViewMode}
           onStop={(turnId) => void interruptRunningTurn(turnId)}
           onOpenThreads={() => setIsThreadSwitcherOpen(true)}
           onOpenControls={() =>
@@ -2112,7 +2136,7 @@ export default function ThreadPage({ params }: Props) {
             reviewSlashCommandByTurnId={reviewSlashCommandByTurnId}
             onCopyMessage={(text) => void copyMessage(text)}
             onOpenMessageDetails={openMessageDetails}
-            viewMode={mobileViewMode}
+            viewMode={viewMode}
             renderTurnActions={(turnId) => {
               const planText = actionablePlanByTurnId[turnId];
               const progressText = turnProgressByTurnId[turnId];
@@ -2416,6 +2440,51 @@ export default function ThreadPage({ params }: Props) {
         <div className="cdx-topbar-group cdx-topbar-group--right">
           {!isMobileViewport ? (
             <>
+              <div
+                className="cdx-topbar-view-menu-anchor"
+                ref={desktopViewMenuRef}
+              >
+                <button
+                  type="button"
+                  className="cdx-toolbar-btn"
+                  data-testid="desktop-topbar-views-toggle"
+                  aria-haspopup="menu"
+                  aria-expanded={desktopViewMenuOpen}
+                  aria-label="Switch view mode"
+                  onClick={() => setDesktopViewMenuOpen((value) => !value)}
+                >
+                  Views: {viewMode === "normal" ? "Normal" : viewMode === "thinking" ? "Thinking" : "Verbose"}
+                  <span aria-hidden="true" style={{ marginLeft: 6, opacity: 0.6 }}>▾</span>
+                </button>
+                {desktopViewMenuOpen ? (
+                  <div
+                    className="cdx-topbar-view-menu"
+                    role="menu"
+                    data-testid="desktop-topbar-views-menu"
+                  >
+                    {VIEW_MODE_OPTIONS.map((option) => {
+                      const active = option.value === viewMode;
+                      return (
+                        <button
+                          key={option.value}
+                          type="button"
+                          role="menuitemradio"
+                          aria-checked={active}
+                          className={`cdx-topbar-view-menu-item ${active ? "is-active" : ""}`}
+                          data-testid={`desktop-topbar-views-${option.value}`}
+                          onClick={() => {
+                            setViewMode(option.value);
+                            setDesktopViewMenuOpen(false);
+                          }}
+                        >
+                          <span className="cdx-topbar-view-menu-item-label">{option.label}</span>
+                          <span className="cdx-topbar-view-menu-item-desc">{option.description}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : null}
+              </div>
               <div className="cdx-toolbar-segment">
                 <button type="button" className="cdx-toolbar-btn cdx-toolbar-btn--segment-start">
                   Open
