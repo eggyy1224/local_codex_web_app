@@ -1980,6 +1980,7 @@ export default function ThreadPage({ params }: Props) {
             reviewSlashCommandByTurnId={reviewSlashCommandByTurnId}
             onCopyMessage={(text) => void copyMessage(text)}
             onOpenMessageDetails={openMessageDetails}
+            viewMode={mobileViewMode}
             renderTurnActions={(turnId) => {
               const planText = planReadyByTurnId[turnId];
               const progressText = turnProgressByTurnId[turnId];

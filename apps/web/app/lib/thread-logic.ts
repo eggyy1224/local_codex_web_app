@@ -631,6 +631,151 @@ export function timelineItemFromGatewayEvent(event: GatewayEvent): ThreadTimelin
   return null;
 }
 
+export type MobileToolActionKind =
+  | "command"
+  | "read"
+  | "edit"
+  | "search"
+  | "tool";
+
+export type MobileToolAction = {
+  kind: MobileToolActionKind;
+  /** Human-readable one-line label, e.g. "Ran `ls -la`" or "Read `apps/web/page.tsx`". */
+  label: string;
+  /** Optional secondary detail (truncated argument string), only shown when present. */
+  detail?: string;
+  /** Raw payload text from the original tool call/result, surfaced under view=verbose. */
+  rawText: string | null;
+  /** Tool call ID for keying batched output back to its call when available. */
+  callId: string | null;
+};
+
+function tryParseJSON(value: string): Record<string, unknown> | null {
+  const trimmed = value.trim();
+  if (!trimmed.startsWith("{")) return null;
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+  } catch {
+    /* not JSON, fall through */
+  }
+  return null;
+}
+
+function readStringField(obj: Record<string, unknown>, ...keys: string[]): string | null {
+  for (const key of keys) {
+    const value = obj[key];
+    if (typeof value === "string" && value.trim().length > 0) {
+      return value;
+    }
+    if (Array.isArray(value)) {
+      // exec_command can pass argv as an array.
+      const joined = value
+        .filter((part) => typeof part === "string" || typeof part === "number")
+        .join(" ")
+        .trim();
+      if (joined.length > 0) return joined;
+    }
+  }
+  return null;
+}
+
+function categorizeToolName(name: string): MobileToolActionKind {
+  const lower = name.toLowerCase();
+  if (
+    lower === "exec_command" ||
+    lower === "shell" ||
+    lower === "bash" ||
+    lower.includes("command")
+  ) {
+    return "command";
+  }
+  if (lower === "read_file" || lower === "fs/readfile" || lower.includes("read")) {
+    return "read";
+  }
+  if (
+    lower === "write_file" ||
+    lower === "edit_file" ||
+    lower === "apply_patch" ||
+    lower.includes("write") ||
+    lower.includes("edit") ||
+    lower.includes("patch")
+  ) {
+    return "edit";
+  }
+  if (lower.includes("search") || lower.includes("grep") || lower.includes("find")) {
+    return "search";
+  }
+  return "tool";
+}
+
+function fallbackLabel(toolName: string): string {
+  return `Used ${toolName}`;
+}
+
+function trimOneLine(text: string, max = 120): string {
+  const firstLine = text.split(/\r?\n/).find((line) => line.trim().length > 0) ?? text;
+  const collapsed = firstLine.trim();
+  return collapsed.length > max ? `${collapsed.slice(0, max - 1)}…` : collapsed;
+}
+
+/**
+ * Turn a single `toolCall` batch item into a Claude-like semantic row:
+ *   Ran <command>, Read <file>, Edited <file>, Searched <query>, Used <toolName>.
+ * Returns null for non-toolCall details (toolResult / thinking get filtered out
+ * upstream — only call rows surface as action pills on mobile).
+ */
+export function summarizeToolAction(item: ConversationDetail): MobileToolAction | null {
+  if (item.kind !== "toolCall") {
+    return null;
+  }
+  const toolName = item.toolName;
+  const rawText = item.text ?? null;
+  const kind = categorizeToolName(toolName);
+  const parsed = rawText ? tryParseJSON(rawText) : null;
+
+  let detail: string | null = null;
+  if (parsed) {
+    if (kind === "command") {
+      detail = readStringField(parsed, "command", "cmd", "argv", "input");
+    } else if (kind === "read") {
+      detail = readStringField(parsed, "path", "file", "file_path", "filename");
+    } else if (kind === "edit") {
+      detail = readStringField(parsed, "path", "file", "file_path", "filename", "input");
+    } else if (kind === "search") {
+      detail = readStringField(parsed, "query", "pattern", "q", "term");
+    } else {
+      detail = readStringField(parsed, "command", "path", "file", "query", "input");
+    }
+  } else if (rawText) {
+    // Plain (non-JSON) text — treat the first non-empty line as the detail.
+    detail = trimOneLine(rawText);
+  }
+
+  let label: string;
+  if (kind === "command") {
+    label = detail ? `Ran ${trimOneLine(detail)}` : "Ran command";
+  } else if (kind === "read") {
+    label = detail ? `Read ${trimOneLine(detail)}` : "Read file";
+  } else if (kind === "edit") {
+    label = detail ? `Edited ${trimOneLine(detail)}` : "Edited file";
+  } else if (kind === "search") {
+    label = detail ? `Searched ${trimOneLine(detail)}` : "Searched";
+  } else {
+    label = fallbackLabel(toolName);
+  }
+
+  return {
+    kind,
+    label,
+    detail: detail ? trimOneLine(detail) : undefined,
+    rawText,
+    callId: item.callId,
+  };
+}
+
 function summarizeBatch(items: ConversationDetail[]): string {
   // Bucket tool calls by a coarse category so the collapsed summary reads
   // like a normal English status line ("Ran 3 commands, edited 1 file").

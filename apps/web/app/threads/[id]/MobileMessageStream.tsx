@@ -2,8 +2,14 @@
 
 import type { ReactNode, RefObject } from "react";
 import type { ConversationTurn, TurnSegment, TurnStatus } from "../../lib/thread-logic";
-import { statusClass, statusLabel, truncateText } from "../../lib/thread-logic";
+import {
+  statusClass,
+  statusLabel,
+  summarizeToolAction,
+  truncateText,
+} from "../../lib/thread-logic";
 import { MarkdownText } from "../../lib/MarkdownText";
+import type { MobileViewMode } from "./MobileChatTopBar";
 
 type MobileMessageStreamProps = {
   turns: ConversationTurn[];
@@ -17,6 +23,7 @@ type MobileMessageStreamProps = {
   onCopyMessage: (text: string) => void;
   onOpenMessageDetails: (turnId: string) => void;
   renderTurnActions?: (turnId: string) => ReactNode;
+  viewMode?: MobileViewMode;
 };
 
 function statusLabelCompact(status: TurnStatus): string {
@@ -30,41 +37,80 @@ function statusLabelCompact(status: TurnStatus): string {
 function renderToolBatch(
   segment: Extract<TurnSegment, { kind: "toolBatch" }>,
   key: string,
+  viewMode: MobileViewMode,
 ): ReactNode {
+  const showRawDetail = viewMode === "verbose";
+  // Action rows: only toolCall items collapse into Claude-like semantic
+  // pills (Ran <cmd>, Read <file>, …). toolResult items pair with their
+  // call so we don't surface them as a separate row unless verbose mode
+  // explicitly asks for the raw output.
+  const actionRows = segment.items
+    .map((item, index) => ({ item, index, action: summarizeToolAction(item) }))
+    .filter((row) => row.action !== null);
+
   return (
     <details
       key={key}
       className="cdx-mobile-tool-batch"
       data-testid="mobile-tool-batch"
+      data-view-mode={viewMode}
     >
       <summary className="cdx-mobile-tool-batch-summary">
         <span className="cdx-mobile-tool-batch-icon" aria-hidden="true">⚙</span>
         <span className="cdx-mobile-tool-batch-text">{segment.summary}</span>
       </summary>
       <div className="cdx-mobile-tool-batch-body">
-        {segment.items.map((item, index) => {
-          const itemKey = `${key}-item-${index}`;
-          if (item.kind === "toolCall") {
+        <ul className="cdx-mobile-tool-action-list" data-testid="mobile-tool-action-list">
+          {actionRows.map(({ action, index }) => {
+            if (!action) return null;
             return (
-              <section className="cdx-mobile-msg cdx-mobile-msg--detail" key={itemKey}>
-                <header className="cdx-mobile-msg-head">
-                  <strong>Tool call: {item.toolName}</strong>
-                </header>
-                {item.text ? (
-                  <pre className="cdx-turn-body">{truncateText(item.text, 4500)}</pre>
-                ) : null}
-              </section>
+              <li
+                key={`${key}-action-${index}`}
+                className={`cdx-mobile-tool-action cdx-mobile-tool-action--${action.kind}`}
+                data-testid="mobile-tool-action"
+                data-kind={action.kind}
+              >
+                <span className="cdx-mobile-tool-action-label">{action.label}</span>
+              </li>
             );
-          }
-          return (
-            <section className="cdx-mobile-msg cdx-mobile-msg--detail" key={itemKey}>
-              <header className="cdx-mobile-msg-head">
-                <strong>Tool output</strong>
-              </header>
-              <pre className="cdx-turn-body">{truncateText(item.text, 4500)}</pre>
-            </section>
-          );
-        })}
+          })}
+        </ul>
+        {showRawDetail
+          ? segment.items.map((item, index) => {
+              const itemKey = `${key}-raw-${index}`;
+              if (item.kind === "toolCall") {
+                return (
+                  <section
+                    className="cdx-mobile-msg cdx-mobile-msg--detail"
+                    key={itemKey}
+                    data-testid="mobile-tool-raw-call"
+                  >
+                    <header className="cdx-mobile-msg-head">
+                      <strong>Tool call: {item.toolName}</strong>
+                    </header>
+                    {item.text ? (
+                      <pre className="cdx-turn-body">{truncateText(item.text, 4500)}</pre>
+                    ) : null}
+                  </section>
+                );
+              }
+              if (item.kind === "toolResult") {
+                return (
+                  <section
+                    className="cdx-mobile-msg cdx-mobile-msg--detail"
+                    key={itemKey}
+                    data-testid="mobile-tool-raw-output"
+                  >
+                    <header className="cdx-mobile-msg-head">
+                      <strong>Tool output</strong>
+                    </header>
+                    <pre className="cdx-turn-body">{truncateText(item.text, 4500)}</pre>
+                  </section>
+                );
+              }
+              return null;
+            })
+          : null}
       </div>
     </details>
   );
@@ -82,13 +128,19 @@ export default function MobileMessageStream({
   onCopyMessage,
   onOpenMessageDetails,
   renderTurnActions,
+  viewMode = "normal",
 }: MobileMessageStreamProps) {
+  // Thinking segments are reasoning blocks Codex emits between tool batches.
+  // Hidden in normal mode (the default) so the mobile timeline stays focused
+  // on user turns + assistant output + semantic tool pills.
+  const showThinking = viewMode !== "normal";
   return (
     <section
       ref={timelineRef}
       onScroll={onTimelineScroll}
       className="cdx-mobile-message-stream"
       data-testid="timeline"
+      data-view-mode={viewMode}
     >
       {hiddenCount > 0 ? (
         <button
@@ -195,8 +247,15 @@ export default function MobileMessageStream({
                 );
               }
               if (segment.kind === "thinking") {
+                if (!showThinking) {
+                  return null;
+                }
                 return (
-                  <details key={key} className="cdx-mobile-thinking-inline">
+                  <details
+                    key={key}
+                    className="cdx-mobile-thinking-inline"
+                    data-testid="mobile-thinking-inline"
+                  >
                     <summary>Thinking</summary>
                     <div className="cdx-turn-body cdx-turn-body--md">
                       <MarkdownText text={truncateText(segment.text, 6000)} />
@@ -204,7 +263,7 @@ export default function MobileMessageStream({
                   </details>
                 );
               }
-              return renderToolBatch(segment, key);
+              return renderToolBatch(segment, key, viewMode);
             })}
 
             {fallbackAssistant ? (
