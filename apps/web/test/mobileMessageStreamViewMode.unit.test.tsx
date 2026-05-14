@@ -81,12 +81,19 @@ describe("MobileMessageStream view modes (slice 3)", () => {
     expect(actions[0]).toHaveAttribute("data-kind", "command");
     expect(actions[0]).toHaveTextContent("Ran ls -la");
 
+    // Pill MUST be visible at level 0 — not buried inside a collapsed
+    // <details>. The slice 3 promise is "see what Codex just did at a
+    // glance", so re-assert that no ancestor <details> is hiding it.
+    const buriedInsideDetails = actions[0].closest("details");
+    expect(buriedInsideDetails).toBeNull();
+
     // Reasoning is hidden.
     expect(screen.queryByTestId("mobile-thinking-inline")).not.toBeInTheDocument();
 
     // Raw tool call/output detail is hidden in normal mode (only verbose surfaces it).
     expect(screen.queryByTestId("mobile-tool-raw-call")).not.toBeInTheDocument();
     expect(screen.queryByTestId("mobile-tool-raw-output")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("mobile-tool-batch-raw")).not.toBeInTheDocument();
   });
 
   it("thinking: surfaces the reasoning collapsible, but still hides raw tool detail", () => {
@@ -94,7 +101,11 @@ describe("MobileMessageStream view modes (slice 3)", () => {
     expect(screen.getByTestId("mobile-thinking-inline")).toBeInTheDocument();
     expect(screen.queryByTestId("mobile-tool-raw-call")).not.toBeInTheDocument();
     expect(screen.queryByTestId("mobile-tool-raw-output")).not.toBeInTheDocument();
-    expect(screen.getByTestId("mobile-tool-action")).toBeInTheDocument();
+    expect(screen.queryByTestId("mobile-tool-batch-raw")).not.toBeInTheDocument();
+    const action = screen.getByTestId("mobile-tool-action");
+    expect(action).toBeInTheDocument();
+    // Pill remains visible at level 0 in thinking mode.
+    expect(action.closest("details")).toBeNull();
   });
 
   it("verbose: shows reasoning AND raw call/output detail inside the tool batch", () => {

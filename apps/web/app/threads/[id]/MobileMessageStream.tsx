@@ -48,35 +48,45 @@ function renderToolBatch(
     .map((item, index) => ({ item, index, action: summarizeToolAction(item) }))
     .filter((row) => row.action !== null);
 
+  // The semantic pills are the level-2 affordance that makes "what did Codex
+  // just do" legible at a glance — keep them visible outside the collapse.
+  // Only the raw tool call / output text (level-3) lives inside the
+  // <details> so verbose mode can opt into it without flooding the timeline.
   return (
-    <details
+    <section
       key={key}
       className="cdx-mobile-tool-batch"
       data-testid="mobile-tool-batch"
       data-view-mode={viewMode}
     >
-      <summary className="cdx-mobile-tool-batch-summary">
+      <div className="cdx-mobile-tool-batch-summary">
         <span className="cdx-mobile-tool-batch-icon" aria-hidden="true">⚙</span>
         <span className="cdx-mobile-tool-batch-text">{segment.summary}</span>
-      </summary>
-      <div className="cdx-mobile-tool-batch-body">
-        <ul className="cdx-mobile-tool-action-list" data-testid="mobile-tool-action-list">
-          {actionRows.map(({ action, index }) => {
-            if (!action) return null;
-            return (
-              <li
-                key={`${key}-action-${index}`}
-                className={`cdx-mobile-tool-action cdx-mobile-tool-action--${action.kind}`}
-                data-testid="mobile-tool-action"
-                data-kind={action.kind}
-              >
-                <span className="cdx-mobile-tool-action-label">{action.label}</span>
-              </li>
-            );
-          })}
-        </ul>
-        {showRawDetail
-          ? segment.items.map((item, index) => {
+      </div>
+      <ul className="cdx-mobile-tool-action-list" data-testid="mobile-tool-action-list">
+        {actionRows.map(({ action, index }) => {
+          if (!action) return null;
+          return (
+            <li
+              key={`${key}-action-${index}`}
+              className={`cdx-mobile-tool-action cdx-mobile-tool-action--${action.kind}`}
+              data-testid="mobile-tool-action"
+              data-kind={action.kind}
+            >
+              <span className="cdx-mobile-tool-action-label">{action.label}</span>
+            </li>
+          );
+        })}
+      </ul>
+      {showRawDetail ? (
+        <details
+          className="cdx-mobile-tool-batch-raw"
+          data-testid="mobile-tool-batch-raw"
+          open
+        >
+          <summary className="cdx-mobile-tool-batch-raw-summary">Raw call/output</summary>
+          <div className="cdx-mobile-tool-batch-body">
+            {segment.items.map((item, index) => {
               const itemKey = `${key}-raw-${index}`;
               if (item.kind === "toolCall") {
                 return (
@@ -109,10 +119,11 @@ function renderToolBatch(
                 );
               }
               return null;
-            })
-          : null}
-      </div>
-    </details>
+            })}
+          </div>
+        </details>
+      ) : null}
+    </section>
   );
 }
 
