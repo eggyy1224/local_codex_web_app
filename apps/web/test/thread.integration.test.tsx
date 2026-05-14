@@ -4315,4 +4315,137 @@ describe("Thread page integration", () => {
     expect(screen.getByTestId("desktop-tool-raw-call")).toHaveTextContent(/ls -la/);
     expect(screen.getByTestId("desktop-tool-raw-output")).toHaveTextContent(/README/);
   });
+
+  it("desktop renders every assistant segment when a turn emits multiple agent_message events", async () => {
+    // Regression: pre-fix the desktop card rendered only the longest
+    // assistantText, so a turn shaped like
+    //   commentary line → tool batch → final answer line
+    // would lose the commentary line. The mobile MobileMessageStream
+    // already walks `segments`, so this exercises the matching desktop
+    // path: both assistant bubbles must be visible, with the tool batch
+    // pill between them.
+    vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+
+    server.use(
+      http.get("http://127.0.0.1:8795/api/threads/:id", ({ params }) =>
+        HttpResponse.json({
+          thread: {
+            id: String(params.id),
+            title: "Multi-segment desktop turn",
+            preview: "",
+            status: "idle",
+            createdAt: null,
+            updatedAt: null,
+          },
+          turns: [],
+          nextCursor: null,
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/approvals/pending", () =>
+        HttpResponse.json({ data: [] }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads", () =>
+        HttpResponse.json({ data: [], nextCursor: null }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/timeline", () =>
+        HttpResponse.json({
+          data: [
+            {
+              id: "tl-user",
+              ts: "2026-01-01T00:00:00.000Z",
+              turnId: "turn-1",
+              type: "userMessage",
+              title: "You",
+              text: "show me",
+              rawType: "userMessage",
+              toolName: null,
+              callId: null,
+            },
+            {
+              id: "tl-assistant-1",
+              ts: "2026-01-01T00:00:01.000Z",
+              turnId: "turn-1",
+              type: "assistantMessage",
+              title: "Assistant",
+              text: "Sure, let me check the directory first.",
+              rawType: "agentMessage",
+              toolName: null,
+              callId: null,
+            },
+            {
+              id: "tl-toolcall",
+              ts: "2026-01-01T00:00:02.000Z",
+              turnId: "turn-1",
+              type: "toolCall",
+              title: "Tool call",
+              text: JSON.stringify({ command: "ls -la" }),
+              rawType: "item/toolCall/completed",
+              toolName: "exec_command",
+              callId: "call-1",
+            },
+            {
+              id: "tl-toolresult",
+              ts: "2026-01-01T00:00:03.000Z",
+              turnId: "turn-1",
+              type: "toolResult",
+              title: "Tool output",
+              text: "README",
+              rawType: "item/toolResult/completed",
+              toolName: null,
+              callId: "call-1",
+            },
+            {
+              id: "tl-assistant-2",
+              ts: "2026-01-01T00:00:04.000Z",
+              turnId: "turn-1",
+              type: "assistantMessage",
+              title: "Assistant",
+              text: "Found one README — done.",
+              rawType: "agentMessage",
+              toolName: null,
+              callId: null,
+            },
+          ],
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/context", () =>
+        HttpResponse.json({
+          threadId: "thread-1",
+          cwd: "/tmp/project",
+          resolvedCwd: "/tmp/project",
+          isFallback: false,
+          source: "projection",
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/models", () => HttpResponse.json({ data: [] })),
+    );
+
+    render(<ThreadPage params={Promise.resolve({ id: "thread-1" })} />);
+
+    // Both assistant bubbles render — the commentary line is no longer
+    // dropped on the floor.
+    await waitFor(() => {
+      const segments = screen.queryAllByTestId("desktop-assistant-segment");
+      expect(segments.length).toBe(2);
+    });
+    const assistantSegments = screen.getAllByTestId("desktop-assistant-segment");
+    expect(assistantSegments[0]).toHaveTextContent("Sure, let me check");
+    expect(assistantSegments[1]).toHaveTextContent("Found one README");
+
+    // Tool batch pill renders between the two assistant bubbles, not after
+    // both of them.
+    const toolBatch = screen.getByTestId("desktop-tool-batch");
+    expect(toolBatch).toHaveTextContent(/ls -la/);
+
+    const stack = screen.getByTestId("desktop-turn-segments");
+    const orderedSegments = Array.from(
+      stack.querySelectorAll(
+        "[data-testid='desktop-assistant-segment'],[data-testid='desktop-tool-batch']",
+      ),
+    );
+    expect(orderedSegments).toHaveLength(3);
+    expect(orderedSegments[0]).toHaveAttribute("data-testid", "desktop-assistant-segment");
+    expect(orderedSegments[1]).toHaveAttribute("data-testid", "desktop-tool-batch");
+    expect(orderedSegments[2]).toHaveAttribute("data-testid", "desktop-assistant-segment");
+  });
 });

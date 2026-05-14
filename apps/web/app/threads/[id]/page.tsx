@@ -2701,7 +2701,26 @@ export default function ThreadPage({ params }: Props) {
             ) : (
               visibleConversationTurns.map((turn) => {
                 const reviewSlashCommand = reviewSlashCommandByTurnId.get(turn.turnId) ?? null;
-                const userDisplayText = reviewSlashCommand ?? turn.userText;
+                const segments = turn.segments;
+                // Mirror the mobile MobileMessageStream pattern: when the
+                // segment narrative has produced no entries yet (very early
+                // in a stream) we fall back to the aggregated user/assistant
+                // text so the user still sees the most recent output. When
+                // segments exist we walk them in chronological order, so
+                // multi-segment assistant turns (commentary → tools → final)
+                // render each agent_message as its own card instead of
+                // collapsing to the longest one.
+                const fallbackUserDisplayText =
+                  segments.length === 0 ? reviewSlashCommand ?? turn.userText : null;
+                const lastAssistantIndex = (() => {
+                  for (let i = segments.length - 1; i >= 0; i -= 1) {
+                    if (segments[i].kind === "assistant") return i;
+                  }
+                  return -1;
+                })();
+                const hasAssistantSegment = lastAssistantIndex !== -1;
+                const fallbackAssistantText =
+                  !hasAssistantSegment && turn.assistantText ? turn.assistantText : null;
                 return (
                   <article
                     className={`cdx-turn-card cdx-turn-card--conversation ${
@@ -2726,77 +2745,92 @@ export default function ThreadPage({ params }: Props) {
                     <p className="cdx-turn-meta">
                       {formatTimestamp(turn.startedAt)} · turn {turn.turnId}
                     </p>
-                    {userDisplayText ? (
+                    {fallbackUserDisplayText ? (
                       <section className="cdx-message cdx-message--user">
                         <div className="cdx-message-meta">
                           <strong className="cdx-message-role">You</strong>
                           {reviewSlashCommand ? <span className="cdx-status is-pending">slash command</span> : null}
                         </div>
-                        <pre className="cdx-turn-body">{truncateText(userDisplayText, 9000)}</pre>
+                        <pre className="cdx-turn-body">{truncateText(fallbackUserDisplayText, 9000)}</pre>
                       </section>
                     ) : null}
-                    {turn.assistantText ? (
-                      <section
-                        className={`cdx-message cdx-message--assistant ${
-                          turn.isStreaming ? "cdx-message--assistant-streaming" : ""
-                        }`}
-                      >
-                        {turn.isStreaming ? <span className="cdx-message-live-rail" aria-hidden="true" /> : null}
-                        <div className="cdx-message-meta">
-                          <strong className="cdx-message-role">Codex</strong>
-                          <button
-                            type="button"
-                            className="cdx-toolbar-btn cdx-toolbar-btn--small cdx-event-copy"
-                            onClick={() => void copyMessage(turn.assistantText ?? "")}
-                          >
-                            Copy
-                          </button>
-                        </div>
-                        <div className="cdx-turn-body cdx-turn-body--md">
-                          <MarkdownText text={truncateText(turn.assistantText, 9000)} />
-                          {turn.isStreaming ? <span className="cdx-stream-cursor" aria-hidden="true" /> : null}
-                        </div>
-                      </section>
-                    ) : turn.isStreaming ? (
-                      <section className="cdx-thinking-placeholder" aria-live="polite">
-                        <header className="cdx-thinking-placeholder-head">
-                          <span className="cdx-stream-indicator">
-                            <span className="cdx-stream-indicator-dot" aria-hidden="true" />
-                            Codex is responding
-                          </span>
-                        </header>
-                        <div className="cdx-thinking-placeholder-bars" aria-hidden="true">
-                          <span />
-                          <span />
-                          <span />
-                        </div>
-                        <p className="cdx-helper cdx-helper--streaming">Codex is responding...</p>
-                      </section>
-                    ) : (
-                      <p className={`cdx-helper ${turn.isStreaming ? "cdx-helper--streaming" : ""}`}>
-                        {turn.isStreaming ? "Codex is responding..." : "Waiting for response..."}
-                      </p>
-                    )}
                     {/*
-                      Chronological thinking + tool segments. Mirrors the
-                      mobile MobileMessageStream layout: thinking rows hide in
-                      Normal mode, tool batches always show their semantic
-                      pill summary, raw call/output only renders in Verbose.
-                      Assistant text continues to live in the assistant card
-                      above so the desktop `Echo:` smoke test stays green —
-                      we only render `thinking` and `toolBatch` segments here.
+                      Chronological segment loop. Mirrors the mobile
+                      MobileMessageStream layout: every assistant segment
+                      renders its own bubble, tool batches always surface a
+                      semantic pill summary, raw call/output only renders in
+                      Verbose, thinking rows hide in Normal. The desktop
+                      `Echo:` smoke test still finds the text because each
+                      assistant segment renders its markdown inside the
+                      timeline element.
                     */}
-                    {turn.segments.some(
-                      (segment) =>
-                        segment.kind === "thinking" || segment.kind === "toolBatch",
-                    ) ? (
+                    {segments.length > 0 ? (
                       <div
                         className="cdx-message-stack cdx-message-stack--details"
                         data-testid="desktop-turn-segments"
                         data-view-mode={viewMode}
                       >
-                        {turn.segments.map((segment, index) => {
+                        {segments.map((segment, index) => {
                           const key = `${turn.turnId}-desktop-seg-${index}`;
+                          if (segment.kind === "user") {
+                            const isFirstUser =
+                              segments.findIndex((s) => s.kind === "user") === index;
+                            const displayText =
+                              isFirstUser && reviewSlashCommand
+                                ? reviewSlashCommand
+                                : segment.text;
+                            return (
+                              <section
+                                key={key}
+                                className={`cdx-message cdx-message--user ${segment.isSteer ? "is-steer" : ""}`}
+                                data-testid={segment.isSteer ? "desktop-user-steer" : "desktop-user-message"}
+                              >
+                                <div className="cdx-message-meta">
+                                  <strong className="cdx-message-role">
+                                    {segment.isSteer ? "You · steered" : "You"}
+                                  </strong>
+                                  {isFirstUser && reviewSlashCommand ? (
+                                    <span className="cdx-status is-pending">slash command</span>
+                                  ) : null}
+                                </div>
+                                <pre className="cdx-turn-body">
+                                  {truncateText(displayText, 9000)}
+                                </pre>
+                              </section>
+                            );
+                          }
+                          if (segment.kind === "assistant") {
+                            const isLastAssistant = index === lastAssistantIndex;
+                            return (
+                              <section
+                                key={key}
+                                className={`cdx-message cdx-message--assistant ${
+                                  turn.isStreaming && isLastAssistant ? "cdx-message--assistant-streaming" : ""
+                                }`}
+                                data-testid="desktop-assistant-segment"
+                              >
+                                {turn.isStreaming && isLastAssistant ? (
+                                  <span className="cdx-message-live-rail" aria-hidden="true" />
+                                ) : null}
+                                <div className="cdx-message-meta">
+                                  <strong className="cdx-message-role">Codex</strong>
+                                  <button
+                                    type="button"
+                                    className="cdx-toolbar-btn cdx-toolbar-btn--small cdx-event-copy"
+                                    onClick={() => void copyMessage(segment.text)}
+                                  >
+                                    Copy
+                                  </button>
+                                </div>
+                                <div className="cdx-turn-body cdx-turn-body--md">
+                                  <MarkdownText text={truncateText(segment.text, 9000)} />
+                                  {turn.isStreaming && isLastAssistant ? (
+                                    <span className="cdx-stream-cursor" aria-hidden="true" />
+                                  ) : null}
+                                </div>
+                              </section>
+                            );
+                          }
                           if (segment.kind === "thinking") {
                             if (viewMode === "normal") return null;
                             return (
@@ -2911,6 +2945,51 @@ export default function ThreadPage({ params }: Props) {
                           return null;
                         })}
                       </div>
+                    ) : null}
+                    {fallbackAssistantText ? (
+                      <section
+                        className={`cdx-message cdx-message--assistant ${
+                          turn.isStreaming ? "cdx-message--assistant-streaming" : ""
+                        }`}
+                        data-testid="desktop-assistant-fallback"
+                      >
+                        {turn.isStreaming ? (
+                          <span className="cdx-message-live-rail" aria-hidden="true" />
+                        ) : null}
+                        <div className="cdx-message-meta">
+                          <strong className="cdx-message-role">Codex</strong>
+                          <button
+                            type="button"
+                            className="cdx-toolbar-btn cdx-toolbar-btn--small cdx-event-copy"
+                            onClick={() => void copyMessage(fallbackAssistantText)}
+                          >
+                            Copy
+                          </button>
+                        </div>
+                        <div className="cdx-turn-body cdx-turn-body--md">
+                          <MarkdownText text={truncateText(fallbackAssistantText, 9000)} />
+                          {turn.isStreaming ? <span className="cdx-stream-cursor" aria-hidden="true" /> : null}
+                        </div>
+                      </section>
+                    ) : !hasAssistantSegment && turn.isStreaming ? (
+                      <section className="cdx-thinking-placeholder" aria-live="polite">
+                        <header className="cdx-thinking-placeholder-head">
+                          <span className="cdx-stream-indicator">
+                            <span className="cdx-stream-indicator-dot" aria-hidden="true" />
+                            Codex is responding
+                          </span>
+                        </header>
+                        <div className="cdx-thinking-placeholder-bars" aria-hidden="true">
+                          <span />
+                          <span />
+                          <span />
+                        </div>
+                        <p className="cdx-helper cdx-helper--streaming">Codex is responding...</p>
+                      </section>
+                    ) : !hasAssistantSegment ? (
+                      <p className={`cdx-helper ${turn.isStreaming ? "cdx-helper--streaming" : ""}`}>
+                        {turn.isStreaming ? "Codex is responding..." : "Waiting for response..."}
+                      </p>
                     ) : null}
                     {turnProgressByTurnId[turn.turnId] ? (
                       <section
