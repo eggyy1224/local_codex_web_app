@@ -830,7 +830,17 @@ export default function ThreadPage({ params }: Props) {
     return built.map((turn) => {
       if (!turn.isStreaming) return turn;
       const serverStatus = serverStatusByTurnId.get(turn.turnId);
-      if (!serverStatus || serverStatus === "inProgress" || serverStatus === "active") {
+      // Codex returns turn status as a snake-cased string ("in_progress"),
+      // but older internal status enums used camelCase ("inProgress"). Treat
+      // both as "still active" so refresh during a live turn keeps the
+      // streaming indicator on instead of flipping it off the moment the
+      // detail response lands.
+      if (
+        !serverStatus ||
+        serverStatus === "in_progress" ||
+        serverStatus === "inProgress" ||
+        serverStatus === "active"
+      ) {
         return turn;
       }
       return {
