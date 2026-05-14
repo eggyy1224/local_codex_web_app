@@ -631,6 +631,98 @@ describe("proposedPlanFromText", () => {
     expect(turns[0]!.isStreaming).toBe(true);
   });
 
+  it("marks turn_aborted from the rollout as a terminal interrupted turn", () => {
+    // Regression: when codex CLI exited mid-stream (or /control stop was
+    // dispatched) the rollout would record `turn_aborted` instead of
+    // `task_complete`. The old parseTurnStatus returned null for that rawType,
+    // so the turn stayed `inProgress` forever and the desktop / mobile UI
+    // showed a stuck "Waiting for response…" + "Live activity: N turn(s)
+    // streaming" days after the thread actually died.
+    const items: ThreadTimelineItem[] = [
+      {
+        id: "task-started",
+        ts: "2026-05-14T07:29:15.000Z",
+        turnId: "turn-aborted",
+        type: "status",
+        title: "Turn started",
+        text: null,
+        rawType: "task_started",
+        toolName: null,
+        callId: null,
+      },
+      {
+        id: "assistant-partial",
+        ts: "2026-05-14T07:29:30.000Z",
+        turnId: "turn-aborted",
+        type: "assistantMessage",
+        title: "Assistant",
+        text: "我先快速看一下這個",
+        rawType: "agent_message",
+        toolName: null,
+        callId: null,
+      },
+      {
+        id: "turn-aborted",
+        ts: "2026-05-14T07:30:01.000Z",
+        turnId: "turn-aborted",
+        type: "status",
+        title: "Turn interrupted",
+        text: "turn turn-aborted",
+        rawType: "turn_aborted",
+        toolName: null,
+        callId: null,
+      },
+    ];
+
+    const turns = buildConversationTurns(items);
+    expect(turns).toHaveLength(1);
+    expect(turns[0]!.status).toBe("interrupted");
+    expect(turns[0]!.isStreaming).toBe(false);
+  });
+
+  it("marks turn/aborted from live SSE as interrupted (live form)", () => {
+    const items: ThreadTimelineItem[] = [
+      {
+        id: "started",
+        ts: "2026-05-14T07:29:15.000Z",
+        turnId: "turn-z",
+        type: "status",
+        title: "Turn started",
+        text: null,
+        rawType: "turn/started",
+        toolName: null,
+        callId: null,
+      },
+      {
+        id: "partial",
+        ts: "2026-05-14T07:29:20.000Z",
+        turnId: "turn-z",
+        type: "assistantMessage",
+        title: "Assistant",
+        text: "在",
+        rawType: "agent_message",
+        toolName: null,
+        callId: null,
+      },
+      {
+        id: "aborted",
+        ts: "2026-05-14T07:30:00.000Z",
+        turnId: "turn-z",
+        type: "status",
+        title: "Turn interrupted",
+        text: null,
+        rawType: "turn/aborted",
+        toolName: null,
+        callId: null,
+      },
+    ];
+
+    const turns = buildConversationTurns(items);
+    expect(turns).toHaveLength(1);
+    expect(turns[0]!.status).toBe("interrupted");
+    expect(turns[0]!.isStreaming).toBe(false);
+  });
+
   it("marks the turn completed once the rollout task_complete item arrives", () => {
     const items: ThreadTimelineItem[] = [
       {

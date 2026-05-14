@@ -249,6 +249,16 @@ function parseTurnStatus(item: ThreadTimelineItem): TurnStatus | null {
     if (text.includes("completed")) return "completed";
     return "completed";
   }
+  // Codex emits `turn_aborted` (rollout JSONL) / `turn/aborted` (live SSE) when
+  // a turn is interrupted — by /control stop, by codex CLI exit mid-stream, or
+  // by an unrecoverable upstream error. The gateway already maps the rollout
+  // form into a status item with rawType "turn_aborted"; without this branch
+  // the normalizer keeps the turn at "inProgress" forever and the desktop /
+  // mobile UI shows it as streaming with a stuck "Waiting for response..."
+  // helper. Treat both as terminal `interrupted`.
+  if (item.rawType === "turn_aborted" || item.rawType === "turn/aborted") {
+    return "interrupted";
+  }
   return null;
 }
 
