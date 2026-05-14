@@ -3766,6 +3766,90 @@ describe("Thread page integration", () => {
     expect(screen.getByRole("button", { name: "Implement this plan" })).toBeInTheDocument();
   });
 
+  it("desktop renders plan-ready CTA from a replayed reasoning item with rawType 'plan'", async () => {
+    // Gateway projects `item_completed` + `Plan` items as reasoning timeline
+    // entries with `rawType: "plan"` (see gateway commit 38cf963). When a
+    // user reloads a historical thread that contains such an entry, the web
+    // client should still surface the Plan ready CTA — exactly the same way
+    // it does for a live `<proposed_plan>...</proposed_plan>` block.
+    vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+    searchParamsValue = new URLSearchParams("mode=plan");
+
+    server.use(
+      http.get("http://127.0.0.1:8795/api/threads/:id", ({ params }) =>
+        HttpResponse.json({
+          thread: {
+            id: String(params.id),
+            title: "Reloaded Plan Thread",
+            preview: "",
+            status: "idle",
+            createdAt: null,
+            updatedAt: null,
+          },
+          turns: [],
+          nextCursor: null,
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/approvals/pending", () =>
+        HttpResponse.json({ data: [] }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/interactions/pending", () =>
+        HttpResponse.json({ data: [] }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads", () =>
+        HttpResponse.json({ data: [], nextCursor: null }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/timeline", () =>
+        HttpResponse.json({
+          data: [
+            {
+              id: "timeline-user",
+              ts: "2026-05-13T00:00:00.000Z",
+              turnId: "turn-replay",
+              type: "userMessage",
+              title: "You",
+              text: "plan please",
+              rawType: "userMessage",
+              toolName: null,
+              callId: null,
+            },
+            {
+              id: "timeline-plan",
+              ts: "2026-05-13T00:00:01.000Z",
+              turnId: "turn-replay",
+              type: "reasoning",
+              title: "Plan",
+              text: "<proposed_plan>1. Restore schema\n2. Backfill\n3. Verify</proposed_plan>",
+              // Gateway emits the bare "plan" rawType for an item_completed
+              // Plan projection — different from the live "item/plan/delta".
+              rawType: "plan",
+              toolName: null,
+              callId: null,
+            },
+          ],
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/context", () =>
+        HttpResponse.json({
+          threadId: "thread-1",
+          cwd: "/tmp/project",
+          resolvedCwd: "/tmp/project",
+          isFallback: false,
+          source: "projection",
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/models", () => HttpResponse.json({ data: [] })),
+    );
+
+    render(<ThreadPage params={Promise.resolve({ id: "thread-1" })} />);
+
+    await screen.findByText("Plan ready");
+    expect(
+      screen.getByText(/1\. Restore schema/, { selector: ".cdx-turn-body--plan" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Implement this plan" })).toBeInTheDocument();
+  });
+
   it("desktop renders turn/plan/updated as a Codex tasks progress card (not the Plan ready CTA)", async () => {
     vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
     searchParamsValue = new URLSearchParams("mode=plan");
