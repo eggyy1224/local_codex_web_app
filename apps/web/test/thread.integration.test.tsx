@@ -4178,4 +4178,141 @@ describe("Thread page integration", () => {
     const allowBtn = screen.getByTestId("mobile-action-allow");
     expect(allowBtn).toBeEnabled();
   });
+
+  it("desktop thread view renders thinking + tools as segments driven by view mode", async () => {
+    // Mirrors the mobile MobileMessageStream behaviour we already cover in
+    // the mobile slice: tool batches always surface a semantic pill summary,
+    // thinking only shows when the user opts into Thinking/Verbose, and raw
+    // tool call/output only renders in Verbose. This exercises the desktop
+    // topbar Views menu wiring + the segments-driven render path.
+    vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+
+    server.use(
+      http.get("http://127.0.0.1:8795/api/threads/:id", ({ params }) =>
+        HttpResponse.json({
+          thread: {
+            id: String(params.id),
+            title: "Desktop View Mode Thread",
+            preview: "",
+            status: "idle",
+            createdAt: null,
+            updatedAt: null,
+          },
+          turns: [],
+          nextCursor: null,
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/approvals/pending", () =>
+        HttpResponse.json({ data: [] }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads", () =>
+        HttpResponse.json({ data: [], nextCursor: null }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/timeline", () =>
+        HttpResponse.json({
+          data: [
+            {
+              id: "tl-user",
+              ts: "2026-01-01T00:00:00.000Z",
+              turnId: "turn-1",
+              type: "userMessage",
+              title: "You",
+              text: "list files",
+              rawType: "userMessage",
+              toolName: null,
+              callId: null,
+            },
+            {
+              id: "tl-thinking",
+              ts: "2026-01-01T00:00:01.000Z",
+              turnId: "turn-1",
+              type: "reasoning",
+              title: "Thinking",
+              text: "Planning to run ls",
+              rawType: "item/reasoning/completed",
+              toolName: null,
+              callId: null,
+            },
+            {
+              id: "tl-toolcall",
+              ts: "2026-01-01T00:00:02.000Z",
+              turnId: "turn-1",
+              type: "toolCall",
+              title: "Tool call",
+              text: JSON.stringify({ command: "ls -la" }),
+              rawType: "item/toolCall/completed",
+              toolName: "exec_command",
+              callId: "call-1",
+            },
+            {
+              id: "tl-toolresult",
+              ts: "2026-01-01T00:00:03.000Z",
+              turnId: "turn-1",
+              type: "toolResult",
+              title: "Tool output",
+              text: "drwx 4096 .\n-rw- 12 README",
+              rawType: "item/toolResult/completed",
+              toolName: null,
+              callId: "call-1",
+            },
+            {
+              id: "tl-assistant",
+              ts: "2026-01-01T00:00:04.000Z",
+              turnId: "turn-1",
+              type: "assistantMessage",
+              title: "Assistant",
+              text: "Listed two entries.",
+              rawType: "agentMessage",
+              toolName: null,
+              callId: null,
+            },
+          ],
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/context", () =>
+        HttpResponse.json({
+          threadId: "thread-1",
+          cwd: "/tmp/project",
+          resolvedCwd: "/tmp/project",
+          isFallback: false,
+          source: "projection",
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/models", () => HttpResponse.json({ data: [] })),
+    );
+
+    render(<ThreadPage params={Promise.resolve({ id: "thread-1" })} />);
+
+    // Normal: tool batch + semantic pill visible, thinking + raw call/output hidden.
+    await screen.findByTestId("desktop-tool-batch");
+    expect(screen.getByTestId("desktop-tool-batch")).toHaveAttribute("data-view-mode", "normal");
+    expect(screen.getByTestId("desktop-tool-action")).toHaveTextContent("Ran ls -la");
+    expect(screen.queryByTestId("desktop-thinking-segment")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("desktop-tool-batch-raw")).not.toBeInTheDocument();
+
+    // Flip to Thinking via the desktop topbar Views menu.
+    fireEvent.click(screen.getByTestId("desktop-topbar-views-toggle"));
+    await screen.findByTestId("desktop-topbar-views-menu");
+    fireEvent.click(screen.getByTestId("desktop-topbar-views-thinking"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("desktop-tool-batch")).toHaveAttribute(
+        "data-view-mode",
+        "thinking",
+      );
+    });
+    expect(screen.getByTestId("desktop-thinking-segment")).toBeInTheDocument();
+    expect(screen.queryByTestId("desktop-tool-batch-raw")).not.toBeInTheDocument();
+    // Semantic pill stays put across view modes.
+    expect(screen.getByTestId("desktop-tool-action")).toHaveTextContent("Ran ls -la");
+
+    // Verbose: raw call/output now renders.
+    fireEvent.click(screen.getByTestId("desktop-topbar-views-toggle"));
+    await screen.findByTestId("desktop-topbar-views-menu");
+    fireEvent.click(screen.getByTestId("desktop-topbar-views-verbose"));
+
+    await screen.findByTestId("desktop-tool-batch-raw");
+    expect(screen.getByTestId("desktop-tool-raw-call")).toHaveTextContent(/ls -la/);
+    expect(screen.getByTestId("desktop-tool-raw-output")).toHaveTextContent(/README/);
+  });
 });

@@ -50,6 +50,7 @@ import {
   proposedPlanFromText,
   statusClass,
   statusLabel,
+  summarizeToolAction,
   timelineItemFromGatewayEvent,
   truncateText,
   type ConversationTurn,
@@ -2776,52 +2777,140 @@ export default function ThreadPage({ params }: Props) {
                         {turn.isStreaming ? "Codex is responding..." : "Waiting for response..."}
                       </p>
                     )}
-                    {turn.details.length > 0 ? (
-                      <details className="cdx-message-collapsible">
-                        <summary>
-                          <span>Thinking & tools ({turn.details.length})</span>
-                          {turn.isStreaming ? <span className="cdx-collapsible-live">live</span> : null}
-                        </summary>
-                        <div className="cdx-message-stack cdx-message-stack--details">
-                          {turn.details.map((detail, index) => {
-                            const key = `${turn.turnId}-desktop-detail-${index}-${detail.kind}`;
-                            if (detail.kind === "thinking") {
-                              return (
-                                <section className="cdx-message cdx-message--detail" key={key}>
-                                  <div className="cdx-message-meta">
-                                    <strong className="cdx-message-role">Thinking</strong>
-                                  </div>
-                                  <div className="cdx-turn-body cdx-turn-body--md">
-                                    <MarkdownText text={truncateText(detail.text, 6000)} />
-                                  </div>
-                                </section>
-                              );
-                            }
-                            if (detail.kind === "toolCall") {
-                              return (
-                                <section className="cdx-message cdx-message--tool" key={key}>
-                                  <div className="cdx-message-meta">
-                                    <strong className="cdx-message-role">
-                                      Tool call: {detail.toolName}
-                                    </strong>
-                                  </div>
-                                  {detail.text ? (
-                                    <pre className="cdx-turn-body">{truncateText(detail.text, 4500)}</pre>
-                                  ) : null}
-                                </section>
-                              );
-                            }
+                    {/*
+                      Chronological thinking + tool segments. Mirrors the
+                      mobile MobileMessageStream layout: thinking rows hide in
+                      Normal mode, tool batches always show their semantic
+                      pill summary, raw call/output only renders in Verbose.
+                      Assistant text continues to live in the assistant card
+                      above so the desktop `Echo:` smoke test stays green —
+                      we only render `thinking` and `toolBatch` segments here.
+                    */}
+                    {turn.segments.some(
+                      (segment) =>
+                        segment.kind === "thinking" || segment.kind === "toolBatch",
+                    ) ? (
+                      <div
+                        className="cdx-message-stack cdx-message-stack--details"
+                        data-testid="desktop-turn-segments"
+                        data-view-mode={viewMode}
+                      >
+                        {turn.segments.map((segment, index) => {
+                          const key = `${turn.turnId}-desktop-seg-${index}`;
+                          if (segment.kind === "thinking") {
+                            if (viewMode === "normal") return null;
                             return (
-                              <section className="cdx-message cdx-message--detail" key={key}>
-                                <div className="cdx-message-meta">
-                                  <strong className="cdx-message-role">Tool output</strong>
+                              <details
+                                key={key}
+                                className="cdx-message cdx-message--detail cdx-desktop-thinking"
+                                data-testid="desktop-thinking-segment"
+                              >
+                                <summary className="cdx-message-meta">
+                                  <strong className="cdx-message-role">Thinking</strong>
+                                </summary>
+                                <div className="cdx-turn-body cdx-turn-body--md">
+                                  <MarkdownText text={truncateText(segment.text, 6000)} />
                                 </div>
-                                <pre className="cdx-turn-body">{truncateText(detail.text, 4500)}</pre>
+                              </details>
+                            );
+                          }
+                          if (segment.kind === "toolBatch") {
+                            const actionRows = segment.items
+                              .map((item, itemIndex) => ({
+                                item,
+                                itemIndex,
+                                action: summarizeToolAction(item),
+                              }))
+                              .filter((row) => row.action !== null);
+                            const showRawDetail = viewMode === "verbose";
+                            return (
+                              <section
+                                key={key}
+                                className="cdx-message cdx-message--detail cdx-desktop-tool-batch"
+                                data-testid="desktop-tool-batch"
+                                data-view-mode={viewMode}
+                              >
+                                <div className="cdx-desktop-tool-batch-summary">
+                                  <span className="cdx-desktop-tool-batch-icon" aria-hidden="true">⚙</span>
+                                  <span className="cdx-desktop-tool-batch-text">{segment.summary}</span>
+                                </div>
+                                <ul
+                                  className="cdx-desktop-tool-action-list"
+                                  data-testid="desktop-tool-action-list"
+                                >
+                                  {actionRows.map(({ action, itemIndex }) => {
+                                    if (!action) return null;
+                                    return (
+                                      <li
+                                        key={`${key}-action-${itemIndex}`}
+                                        className={`cdx-desktop-tool-action cdx-desktop-tool-action--${action.kind}`}
+                                        data-testid="desktop-tool-action"
+                                        data-kind={action.kind}
+                                      >
+                                        <span className="cdx-desktop-tool-action-label">{action.label}</span>
+                                      </li>
+                                    );
+                                  })}
+                                </ul>
+                                {showRawDetail ? (
+                                  <details
+                                    className="cdx-desktop-tool-batch-raw"
+                                    data-testid="desktop-tool-batch-raw"
+                                    open
+                                  >
+                                    <summary className="cdx-desktop-tool-batch-raw-summary">
+                                      Raw call/output
+                                    </summary>
+                                    <div className="cdx-desktop-tool-batch-body">
+                                      {segment.items.map((item, itemIndex) => {
+                                        const itemKey = `${key}-raw-${itemIndex}`;
+                                        if (item.kind === "toolCall") {
+                                          return (
+                                            <section
+                                              key={itemKey}
+                                              className="cdx-message cdx-message--tool"
+                                              data-testid="desktop-tool-raw-call"
+                                            >
+                                              <div className="cdx-message-meta">
+                                                <strong className="cdx-message-role">
+                                                  Tool call: {item.toolName}
+                                                </strong>
+                                              </div>
+                                              {item.text ? (
+                                                <pre className="cdx-turn-body">
+                                                  {truncateText(item.text, 4500)}
+                                                </pre>
+                                              ) : null}
+                                            </section>
+                                          );
+                                        }
+                                        if (item.kind === "toolResult") {
+                                          return (
+                                            <section
+                                              key={itemKey}
+                                              className="cdx-message cdx-message--detail"
+                                              data-testid="desktop-tool-raw-output"
+                                            >
+                                              <div className="cdx-message-meta">
+                                                <strong className="cdx-message-role">Tool output</strong>
+                                              </div>
+                                              <pre className="cdx-turn-body">
+                                                {truncateText(item.text, 4500)}
+                                              </pre>
+                                            </section>
+                                          );
+                                        }
+                                        return null;
+                                      })}
+                                    </div>
+                                  </details>
+                                ) : null}
                               </section>
                             );
-                          })}
-                        </div>
-                      </details>
+                          }
+                          return null;
+                        })}
+                      </div>
                     ) : null}
                     {turnProgressByTurnId[turn.turnId] ? (
                       <section
