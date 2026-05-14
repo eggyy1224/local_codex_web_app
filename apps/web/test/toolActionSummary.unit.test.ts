@@ -215,4 +215,74 @@ describe("summarizeToolAction", () => {
     );
     expect(action?.callId).toBe("call-42");
   });
+
+  describe("sub-agent control surface (spawn_agent / wait_agent)", () => {
+    it("labels spawn_agent with the prompt preview", () => {
+      const action = summarizeToolAction(
+        toolCall(
+          "spawn_agent",
+          JSON.stringify({
+            agent_type: "explorer",
+            fork_context: true,
+            message: "請審查目前未提交的 Canvas mobile slice 並回報問題",
+          }),
+        ),
+      );
+      expect(action?.kind).toBe("subagent");
+      expect(action?.label).toMatch(/^Spawned sub-agent · /);
+      expect(action?.label).toContain("請審查目前未提交的 Canvas mobile slice");
+    });
+
+    it("falls back to agent_type when message is absent", () => {
+      const action = summarizeToolAction(
+        toolCall("spawn_agent", JSON.stringify({ agent_type: "explorer", fork_context: true })),
+      );
+      expect(action?.kind).toBe("subagent");
+      expect(action?.label).toBe("Spawned sub-agent · explorer");
+    });
+
+    it("labels wait_agent with shortened target ids", () => {
+      const action = summarizeToolAction(
+        toolCall(
+          "wait_agent",
+          JSON.stringify({
+            targets: ["019e271a-9710-77f2-819d-e24efa86204c"],
+            timeout_ms: 120000,
+          }),
+        ),
+      );
+      expect(action?.kind).toBe("subagent");
+      expect(action?.label).toBe("Waiting for sub-agent 019e271a");
+    });
+
+    it("joins multiple wait_agent targets", () => {
+      const action = summarizeToolAction(
+        toolCall(
+          "wait_agent",
+          JSON.stringify({
+            targets: ["019e271a-1234-...", "019e2800-5678-..."],
+          }),
+        ),
+      );
+      expect(action?.label).toBe("Waiting for sub-agent 019e271a, 019e2800");
+    });
+
+    it("labels cancel_agent / list_agents with kind=subagent", () => {
+      expect(
+        summarizeToolAction(toolCall("cancel_agent", JSON.stringify({ targets: ["abc12345"] })))
+          ?.label,
+      ).toBe("Cancelled sub-agent abc12345");
+      expect(summarizeToolAction(toolCall("list_agents", JSON.stringify({})))?.label).toBe(
+        "Listed sub-agents",
+      );
+    });
+
+    it("still works when args aren't JSON (degrades to plain label)", () => {
+      const action = summarizeToolAction(toolCall("spawn_agent", "not-json"));
+      expect(action?.kind).toBe("subagent");
+      // No JSON → no parsed prompt → falls back to plain `Spawned sub-agent`,
+      // detail comes from the first-line trim of rawText.
+      expect(action?.label).toBe("Spawned sub-agent · not-json");
+    });
+  });
 });

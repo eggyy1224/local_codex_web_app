@@ -681,6 +681,7 @@ export type MobileToolActionKind =
   | "read"
   | "edit"
   | "search"
+  | "subagent"
   | "tool";
 
 export type MobileToolAction = {
@@ -729,6 +730,19 @@ function readStringField(obj: Record<string, unknown>, ...keys: string[]): strin
 
 function categorizeToolName(name: string): MobileToolActionKind {
   const lower = name.toLowerCase();
+  // Codex's `spawn_agent` / `wait_agent` (and the rarer `cancel_agent`) form
+  // the sub-agent control surface. Bucket them ahead of the generic
+  // `*_command` match so a tool literally named "spawn_agent" is treated as a
+  // sub-agent action, not as a "command".
+  if (
+    lower === "spawn_agent" ||
+    lower === "wait_agent" ||
+    lower === "cancel_agent" ||
+    lower === "list_agents" ||
+    /^(spawn|wait|cancel|list)_agents?$/.test(lower)
+  ) {
+    return "subagent";
+  }
   if (
     lower === "exec_command" ||
     lower === "shell" ||
@@ -791,6 +805,26 @@ export function summarizeToolAction(item: ConversationDetail): MobileToolAction 
       detail = readStringField(parsed, "path", "file", "file_path", "filename", "input");
     } else if (kind === "search") {
       detail = readStringField(parsed, "query", "pattern", "q", "term");
+    } else if (kind === "subagent") {
+      // For `spawn_agent` the args carry `agent_type` + `message`; we surface
+      // the prompt preview so the pill reads as a real instruction handed to
+      // the sub-agent. For `wait_agent` we surface the agent_id list so the
+      // user can match it against the spawn output's nickname later.
+      if (toolName.toLowerCase().startsWith("spawn")) {
+        detail =
+          readStringField(parsed, "message", "prompt", "task") ??
+          readStringField(parsed, "agent_type", "type");
+      } else if (toolName.toLowerCase().startsWith("wait")) {
+        const targets = parsed.targets;
+        if (Array.isArray(targets) && targets.length > 0) {
+          const ids = targets
+            .filter((t): t is string => typeof t === "string")
+            .map((id) => id.slice(0, 8));
+          detail = ids.length > 0 ? ids.join(", ") : null;
+        }
+      } else {
+        detail = readStringField(parsed, "message", "agent_id", "targets");
+      }
     } else {
       detail = readStringField(parsed, "command", "path", "file", "query", "input");
     }
@@ -808,6 +842,19 @@ export function summarizeToolAction(item: ConversationDetail): MobileToolAction 
     label = detail ? `Edited ${trimOneLine(detail)}` : "Edited file";
   } else if (kind === "search") {
     label = detail ? `Searched ${trimOneLine(detail)}` : "Searched";
+  } else if (kind === "subagent") {
+    const lower = toolName.toLowerCase();
+    if (lower.startsWith("spawn")) {
+      label = detail ? `Spawned sub-agent · ${trimOneLine(detail)}` : "Spawned sub-agent";
+    } else if (lower.startsWith("wait")) {
+      label = detail ? `Waiting for sub-agent ${trimOneLine(detail)}` : "Waiting for sub-agent";
+    } else if (lower.startsWith("cancel")) {
+      label = detail ? `Cancelled sub-agent ${trimOneLine(detail)}` : "Cancelled sub-agent";
+    } else if (lower.startsWith("list")) {
+      label = "Listed sub-agents";
+    } else {
+      label = fallbackLabel(toolName);
+    }
   } else {
     label = fallbackLabel(toolName);
   }
@@ -830,7 +877,18 @@ function summarizeBatch(items: ConversationDetail[]): string {
     if (item.kind !== "toolCall") continue;
     const name = item.toolName.toLowerCase();
     let category: string;
+    // sub-agent control bucket — kept ahead of `command` for the same reason
+    // categorizeToolName puts it first: a tool literally named `spawn_agent`
+    // would otherwise pattern-match into `command`.
     if (
+      name === "spawn_agent" ||
+      name === "wait_agent" ||
+      name === "cancel_agent" ||
+      name === "list_agents" ||
+      /^(spawn|wait|cancel|list)_agents?$/.test(name)
+    ) {
+      category = "subagent";
+    } else if (
       name === "exec_command" ||
       name === "shell" ||
       name === "bash" ||
@@ -862,9 +920,11 @@ function summarizeBatch(items: ConversationDetail[]): string {
     if (category === "read") return count === 1 ? "read 1 file" : `read ${count} files`;
     if (category === "edit") return count === 1 ? "edited 1 file" : `edited ${count} files`;
     if (category === "search") return count === 1 ? "1 search" : `${count} searches`;
+    if (category === "subagent")
+      return count === 1 ? "1 sub-agent step" : `${count} sub-agent steps`;
     return count === 1 ? "1 tool" : `${count} tools`;
   };
-  const order = ["command", "edit", "read", "search", "tool"];
+  const order = ["subagent", "command", "edit", "read", "search", "tool"];
   for (const category of order) {
     const count = categories.get(category);
     if (!count) continue;
