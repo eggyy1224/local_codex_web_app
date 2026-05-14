@@ -1973,11 +1973,21 @@ export default function ThreadPage({ params }: Props) {
         if (payload.warnings?.includes("plan_mode_fallback")) {
           setSubmitError("Plan mode unavailable on this app-server; sent in default mode.");
         }
-        // Clear the just-sent attachments + revoke their blob URLs.
-        for (const att of pendingAttachments) {
-          URL.revokeObjectURL(att.previewUrl);
-        }
-        setPendingAttachments([]);
+        // Clear ONLY the attachments that were actually sent. Without this
+        // narrowing, an attachment the user picks during the POST round-trip
+        // gets wiped along with the sent ones — caught by Codex in review.
+        const sentAttachmentIds = new Set(readyAttachments.map((a) => a.id));
+        setPendingAttachments((current) => {
+          const next: PendingAttachment[] = [];
+          for (const att of current) {
+            if (sentAttachmentIds.has(att.id)) {
+              URL.revokeObjectURL(att.previewUrl);
+            } else {
+              next.push(att);
+            }
+          }
+          return next;
+        });
         return true;
       } catch (submitErr) {
         if (activeThreadIdRef.current === requestThreadId) {
