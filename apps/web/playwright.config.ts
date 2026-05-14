@@ -6,6 +6,10 @@ const gatewayPort = Number(process.env.PLAYWRIGHT_GATEWAY_PORT ?? "8877");
 export default defineConfig({
   testDir: "./e2e",
   timeout: 60_000,
+  // Bump from the 5s default so a Next.js dev cold-compile of /threads/[id]
+  // (the page weighs ~3k lines) doesn't flake the toHaveURL assertions after
+  // a fresh `rm -rf .next`. Tight enough to still surface real client hangs.
+  expect: { timeout: 15_000 },
   fullyParallel: true,
   use: {
     baseURL: `http://127.0.0.1:${port}`,

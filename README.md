@@ -11,9 +11,12 @@
 
 ## 非目標
 
-1. 不做 tmux/terminal 內嵌。
-2. 不做自建聊天歷史資料庫（可索引/快取，但不可取代 SSOT）。
-3. 不追求 IDE 等級編輯器（僅需 patch/diff 檢視能力）。
+1. 不做自建聊天歷史資料庫（可索引/快取，但不可取代 SSOT）。
+2. 不追求 IDE 等級編輯器（僅需 patch/diff 檢視能力）。
+3. 不在手機端開放 terminal pane。
+
+> 桌面端的 terminal dock 是受控的遠端工作面，預設可開、可由 `TERMINAL_DOCK_ENABLED` 關掉，
+> 並以 origin allowlist + audit log 把關。詳見 [docs/security-model.md](docs/security-model.md)。
 
 ## 核心架構
 
