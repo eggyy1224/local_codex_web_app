@@ -581,4 +581,96 @@ describe("proposedPlanFromText", () => {
     expect(proposedPlanFromText(null)).toBeNull();
     expect(proposedPlanFromText("")).toBeNull();
   });
+
+  it("keeps a turn streaming when only the rollout-flavored task_started item has arrived plus a partial assistant message (refresh during active turn)", () => {
+    // Reproduces the bug reported live: after a page refresh during an
+    // in-flight turn, /api/threads/:id/timeline returns task_started +
+    // item_completed (assistantMessage) but the live SSE turn/completed has
+    // not arrived yet. parseTurnStatus must recognize the rollout-style
+    // "task_started" raw type so the partial assistant text doesn't trip the
+    // hasResolvedSignals fallback and mark the turn "completed" prematurely.
+    const items: ThreadTimelineItem[] = [
+      {
+        id: "user-1",
+        ts: "2026-05-14T00:34:12.000Z",
+        turnId: "turn-x",
+        type: "userMessage",
+        title: "User",
+        text: "看一下狀態",
+        rawType: "user_message",
+        toolName: null,
+        callId: null,
+      },
+      {
+        id: "task-started",
+        ts: "2026-05-14T00:34:13.000Z",
+        turnId: "turn-x",
+        type: "status",
+        title: "Turn started",
+        text: null,
+        rawType: "task_started",
+        toolName: null,
+        callId: null,
+      },
+      {
+        id: "assistant-partial",
+        ts: "2026-05-14T00:34:30.000Z",
+        turnId: "turn-x",
+        type: "assistantMessage",
+        title: "Assistant",
+        text: "目前狀態很好，repo 是乾淨的",
+        rawType: "agent_message",
+        toolName: null,
+        callId: null,
+      },
+    ];
+
+    const turns = buildConversationTurns(items);
+    expect(turns).toHaveLength(1);
+    expect(turns[0]!.status).toBe("inProgress");
+    expect(turns[0]!.isStreaming).toBe(true);
+  });
+
+  it("marks the turn completed once the rollout task_complete item arrives", () => {
+    const items: ThreadTimelineItem[] = [
+      {
+        id: "task-started",
+        ts: "2026-05-14T00:34:13.000Z",
+        turnId: "turn-y",
+        type: "status",
+        title: "Turn started",
+        text: null,
+        rawType: "task_started",
+        toolName: null,
+        callId: null,
+      },
+      {
+        id: "assistant-full",
+        ts: "2026-05-14T00:34:30.000Z",
+        turnId: "turn-y",
+        type: "assistantMessage",
+        title: "Assistant",
+        text: "完整回應",
+        rawType: "agent_message",
+        toolName: null,
+        callId: null,
+      },
+      {
+        id: "task-complete",
+        ts: "2026-05-14T00:34:40.000Z",
+        turnId: "turn-y",
+        type: "status",
+        title: "Turn completed",
+        text: "completed",
+        rawType: "task_complete",
+        toolName: null,
+        callId: null,
+      },
+    ];
+
+    const turns = buildConversationTurns(items);
+    expect(turns).toHaveLength(1);
+    expect(turns[0]!.status).toBe("completed");
+    expect(turns[0]!.isStreaming).toBe(false);
+  });
 });

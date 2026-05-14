@@ -201,10 +201,16 @@ function appendUniqueText(target: string[], seen: Set<string>, text: string): vo
 }
 
 function parseTurnStatus(item: ThreadTimelineItem): TurnStatus | null {
-  if (item.rawType === "turn/started") {
+  // Two raw shapes carry the same status signal:
+  // - Live SSE events from the gateway use "turn/started" / "turn/completed".
+  // - Replay items read from the codex rollout JSONL via /api/threads/:id/timeline
+  //   use codex's own "task_started" / "task_complete" payload types.
+  // Treat both as authoritative or the normalizer below would fall back to
+  // "completed" the moment a partial assistant message lands during a live turn.
+  if (item.rawType === "turn/started" || item.rawType === "task_started") {
     return "inProgress";
   }
-  if (item.rawType === "turn/completed") {
+  if (item.rawType === "turn/completed" || item.rawType === "task_complete") {
     const text = (item.text ?? "").toLowerCase();
     if (text.includes("failed")) return "failed";
     if (text.includes("interrupted")) return "interrupted";
