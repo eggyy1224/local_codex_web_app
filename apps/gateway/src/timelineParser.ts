@@ -1,3 +1,4 @@
+import path from "node:path";
 import type { ThreadTimelineItem } from "@lcwa/shared-types";
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -5,6 +6,34 @@ function asRecord(value: unknown): Record<string, unknown> | null {
     return null;
   }
   return value as Record<string, unknown>;
+}
+
+function pickStringArray(
+  obj: Record<string, unknown> | null,
+  key: string,
+): string[] {
+  if (!obj) return [];
+  const value = obj[key];
+  if (!Array.isArray(value)) return [];
+  const out: string[] = [];
+  for (const entry of value) {
+    if (typeof entry === "string" && entry) {
+      out.push(entry);
+    }
+  }
+  return out;
+}
+
+function collectUserMessageImages(
+  payload: Record<string, unknown> | null,
+): string[] | undefined {
+  if (!payload) return undefined;
+  const direct = pickStringArray(payload, "images");
+  const locals = pickStringArray(payload, "local_images").map(
+    (p) => `/api/uploads/${path.basename(p)}`,
+  );
+  const combined = [...direct, ...locals];
+  return combined.length > 0 ? combined : undefined;
 }
 
 function pickString(
@@ -223,6 +252,7 @@ export function parseTimelineItemsFromLines(
           rawType: payloadType,
           toolName: null,
           callId: null,
+          images: collectUserMessageImages(payload),
         });
         continue;
       }

@@ -34,6 +34,7 @@ import { uploadAttachments, UploadClientError } from "../../lib/upload-client";
 import type { PendingAttachment } from "./AttachmentStrip";
 import { MarkdownText } from "../../lib/MarkdownText";
 import { resolveGatewayUrl } from "../../lib/gateway-url";
+import { resolveImageSrc } from "../../lib/resolve-image-src";
 import { useGatewayConfig } from "../../lib/use-gateway-config";
 import { applyFileMention, useFileMentionSearch } from "../../lib/use-file-mention-search";
 import { useComposerKeyboard } from "../../lib/use-composer-keyboard";
@@ -2290,6 +2291,7 @@ export default function ThreadPage({ params }: Props) {
             onCopyMessage={(text) => void copyMessage(text)}
             onOpenMessageDetails={openMessageDetails}
             viewMode={viewMode}
+            gatewayUrl={gatewayUrl}
             renderTurnActions={(turnId) => {
               const planText = actionablePlanByTurnId[turnId];
               const progressText = turnProgressByTurnId[turnId];
@@ -3044,9 +3046,26 @@ export default function ThreadPage({ params }: Props) {
                                     <span className="cdx-status is-pending">slash command</span>
                                   ) : null}
                                 </div>
-                                <pre className="cdx-turn-body">
-                                  {truncateText(displayText, 9000)}
-                                </pre>
+                                {segment.images && segment.images.length > 0 ? (
+                                  <div
+                                    className="cdx-message-images"
+                                    data-testid="desktop-user-images"
+                                  >
+                                    {segment.images.map((src, imgIdx) => (
+                                      <img
+                                        key={`${key}-img-${imgIdx}`}
+                                        src={resolveImageSrc(src, gatewayUrl)}
+                                        alt={`attachment ${imgIdx + 1}`}
+                                        className="cdx-message-image"
+                                      />
+                                    ))}
+                                  </div>
+                                ) : null}
+                                {displayText ? (
+                                  <pre className="cdx-turn-body">
+                                    {truncateText(displayText, 9000)}
+                                  </pre>
+                                ) : null}
                               </section>
                             );
                           }

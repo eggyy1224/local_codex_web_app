@@ -15,7 +15,7 @@ export type ConversationDetail =
 export type TurnSegmentBatchItem = ConversationDetail;
 
 export type TurnSegment =
-  | { kind: "user"; ts: string; text: string; isSteer: boolean }
+  | { kind: "user"; ts: string; text: string; isSteer: boolean; images?: string[] }
   | { kind: "assistant"; ts: string; text: string }
   | { kind: "thinking"; ts: string; text: string }
   | {
@@ -86,7 +86,7 @@ type MutableConversationTurn = {
 };
 
 type NarrativeEntry =
-  | { kind: "user"; ts: string; text: string }
+  | { kind: "user"; ts: string; text: string; images?: string[] }
   | { kind: "assistant"; ts: string; text: string }
   | { kind: "thinking"; ts: string; text: string }
   | { kind: "toolCall"; ts: string; toolName: string; text: string | null; callId: string | null }
@@ -171,6 +171,38 @@ function extractUserMessageText(item: Record<string, unknown>): string | null {
     }
   }
   return normalizeText(parts.join("\n"));
+}
+
+function basenameOfPath(value: string): string {
+  const lastSlash = Math.max(value.lastIndexOf("/"), value.lastIndexOf("\\"));
+  return lastSlash >= 0 ? value.slice(lastSlash + 1) : value;
+}
+
+function extractUserMessageImages(item: Record<string, unknown>): string[] {
+  // SSE path: `item/started`/`item/completed` carries `UserMessageItem` with a
+  // `content: UserInput[]` array. Walk it and turn each image/localImage entry
+  // into something the browser can fetch — direct URL (data:, http(s):) for
+  // `image`, gateway-relative `/api/uploads/<filename>` for `localImage`.
+  const content = item.content;
+  if (!Array.isArray(content)) {
+    return [];
+  }
+  const out: string[] = [];
+  for (const part of content) {
+    if (!part || typeof part !== "object") continue;
+    const record = part as Record<string, unknown>;
+    const partType = readString(record, "type");
+    if (partType === "image") {
+      const url = readString(record, "url");
+      if (url) out.push(url);
+    } else if (partType === "localImage") {
+      const localPath = readString(record, "path");
+      if (localPath) {
+        out.push(`/api/uploads/${basenameOfPath(localPath)}`);
+      }
+    }
+  }
+  return out;
 }
 
 function stringifyUnknown(value: unknown): string | null {
@@ -496,19 +528,22 @@ export function timelineItemFromGatewayEvent(event: GatewayEvent): ThreadTimelin
 
     if (itemType === "userMessage") {
       const text = extractUserMessageText(item);
-      return text
-        ? {
-            id: `${eventId}-user`,
-            ts: event.serverTs,
-            turnId: itemTurnId,
-            type: "userMessage",
-            title: "User",
-            text,
-            rawType: itemType,
-            toolName: null,
-            callId,
-          }
-        : null;
+      const images = extractUserMessageImages(item);
+      if (!text && images.length === 0) {
+        return null;
+      }
+      return {
+        id: `${eventId}-user`,
+        ts: event.serverTs,
+        turnId: itemTurnId,
+        type: "userMessage",
+        title: "User",
+        text,
+        rawType: itemType,
+        toolName: null,
+        callId,
+        ...(images.length > 0 ? { images } : {}),
+      };
     }
 
     if (itemType === "agentMessage") {
@@ -868,6 +903,7 @@ function buildSegmentsFromNarrative(narrative: NarrativeEntry[]): TurnSegment[] 
         ts: entry.ts,
         text: entry.text,
         isSteer: userMessageCount > 0,
+        ...(entry.images && entry.images.length > 0 ? { images: entry.images } : {}),
       });
       userMessageCount += 1;
       continue;
@@ -966,17 +1002,32 @@ export function buildConversationTurns(items: ThreadTimelineItem[]): Conversatio
       turn.status = nextStatus;
     }
 
-    if (!item.text) {
+    if (item.type === "userMessage") {
+      // User messages with only images and no text are valid (multimodal
+      // models accept image-only inputs); fall through so the bubble still
+      // renders. Other item types still bail when text is empty below.
+      const text = item.text ?? "";
+      const images = item.images ?? [];
+      if (!text && images.length === 0) {
+        continue;
+      }
+      if (text) {
+        appendUniqueText(turn.userTexts, turn.userSeen, text);
+      }
+      const narrativeKey = `user|${comparableText(text)}|${images.join(",")}`;
+      if (!turn.narrativeKeys.has(narrativeKey)) {
+        turn.narrativeKeys.add(narrativeKey);
+        turn.narrative.push({
+          kind: "user",
+          ts: item.ts,
+          text,
+          ...(images.length > 0 ? { images } : {}),
+        });
+      }
       continue;
     }
 
-    if (item.type === "userMessage") {
-      appendUniqueText(turn.userTexts, turn.userSeen, item.text);
-      const narrativeKey = `user|${comparableText(item.text)}`;
-      if (!turn.narrativeKeys.has(narrativeKey)) {
-        turn.narrativeKeys.add(narrativeKey);
-        turn.narrative.push({ kind: "user", ts: item.ts, text: item.text });
-      }
+    if (!item.text) {
       continue;
     }
 

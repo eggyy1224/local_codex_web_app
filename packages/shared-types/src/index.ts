@@ -113,6 +113,13 @@ export type ThreadTimelineItem = {
   rawType: string;
   toolName: string | null;
   callId: string | null;
+  /**
+   * For `userMessage` items: URLs (data:, http(s):) and gateway-relative
+   * upload paths (`/api/uploads/<filename>`) for images the user attached to
+   * this turn. The web client resolves relative paths against the gateway
+   * base URL before rendering. Other item types leave this `undefined`.
+   */
+  images?: string[];
 };
 
 export type ThreadTimelineResponse = {

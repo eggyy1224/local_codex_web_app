@@ -2682,6 +2682,23 @@ textarea {
   border: 0;
 }
 
+.cdx-message-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 6px 0 4px;
+}
+
+.cdx-message-image {
+  max-width: 260px;
+  max-height: 220px;
+  border-radius: 8px;
+  border: 1px solid var(--border-soft);
+  object-fit: cover;
+  display: block;
+  background: rgba(0, 0, 0, 0.2);
+}
+
 .cdx-attachment-strip {
   display: flex;
   flex-wrap: nowrap;

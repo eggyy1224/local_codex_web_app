@@ -9,6 +9,7 @@ import {
   truncateText,
 } from "../../lib/thread-logic";
 import { MarkdownText } from "../../lib/MarkdownText";
+import { resolveImageSrc } from "../../lib/resolve-image-src";
 import type { ThreadViewMode } from "./MobileChatTopBar";
 
 type MobileMessageStreamProps = {
@@ -24,6 +25,7 @@ type MobileMessageStreamProps = {
   onOpenMessageDetails: (turnId: string) => void;
   renderTurnActions?: (turnId: string) => ReactNode;
   viewMode?: ThreadViewMode;
+  gatewayUrl: string;
 };
 
 function statusLabelCompact(status: TurnStatus): string {
@@ -140,6 +142,7 @@ export default function MobileMessageStream({
   onOpenMessageDetails,
   renderTurnActions,
   viewMode = "normal",
+  gatewayUrl,
 }: MobileMessageStreamProps) {
   // Thinking segments are reasoning blocks Codex emits between tool batches.
   // Hidden in normal mode (the default) so the mobile timeline stays focused
@@ -219,7 +222,24 @@ export default function MobileMessageStream({
                     <header className="cdx-mobile-msg-head">
                       <span>{segment.isSteer ? "You · steered" : "You"}</span>
                     </header>
-                    <pre className="cdx-turn-body">{displayText}</pre>
+                    {segment.images && segment.images.length > 0 ? (
+                      <div
+                        className="cdx-message-images"
+                        data-testid="mobile-user-images"
+                      >
+                        {segment.images.map((src, imgIdx) => (
+                          <img
+                            key={`${key}-img-${imgIdx}`}
+                            src={resolveImageSrc(src, gatewayUrl)}
+                            alt={`attachment ${imgIdx + 1}`}
+                            className="cdx-message-image"
+                          />
+                        ))}
+                      </div>
+                    ) : null}
+                    {displayText ? (
+                      <pre className="cdx-turn-body">{displayText}</pre>
+                    ) : null}
                   </section>
                 );
               }
