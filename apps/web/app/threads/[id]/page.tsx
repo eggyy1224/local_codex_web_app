@@ -31,7 +31,7 @@ import type {
   UserInputItem,
 } from "@lcwa/shared-types";
 import { uploadAttachments, UploadClientError } from "../../lib/upload-client";
-import type { PendingAttachment } from "./AttachmentStrip";
+import AttachmentStrip, { type PendingAttachment } from "./AttachmentStrip";
 import { MarkdownText } from "../../lib/MarkdownText";
 import { resolveGatewayUrl } from "../../lib/gateway-url";
 import { resolveImageSrc } from "../../lib/resolve-image-src";
@@ -225,6 +225,7 @@ export default function ThreadPage({ params }: Props) {
   const [viewMode, setViewMode] = useState<ThreadViewMode>("normal");
   const [desktopViewMenuOpen, setDesktopViewMenuOpen] = useState(false);
   const desktopViewMenuRef = useRef<HTMLDivElement | null>(null);
+  const desktopFileInputRef = useRef<HTMLInputElement | null>(null);
   const [threadContext, setThreadContext] = useState<ThreadContextResponse | null>(null);
   const gatewayConfig = useGatewayConfig();
   const [showAllTurns, setShowAllTurns] = useState(false);
@@ -1785,6 +1786,46 @@ export default function ThreadPage({ params }: Props) {
       return prev.filter((a) => a.id !== id);
     });
   }, []);
+
+  // Desktop composer counterparts to MobileComposerDock's file-input + paste
+  // handlers. Same shape — the mobile component owns its own ref so it can't
+  // be shared.
+  const handleDesktopFileInputChange = useCallback(
+    (event: React.ChangeEvent<HTMLInputElement>) => {
+      const list = event.target.files;
+      if (!list || list.length === 0) return;
+      const files: File[] = [];
+      for (let i = 0; i < list.length; i += 1) {
+        const file = list[i];
+        if (file) files.push(file);
+      }
+      if (files.length > 0) {
+        void handlePickFiles(files);
+      }
+      event.target.value = "";
+    },
+    [handlePickFiles],
+  );
+
+  const handleDesktopTextareaPaste = useCallback(
+    (event: React.ClipboardEvent<HTMLTextAreaElement>) => {
+      const items = event.clipboardData?.items;
+      if (!items) return;
+      const files: File[] = [];
+      for (let i = 0; i < items.length; i += 1) {
+        const item = items[i];
+        if (item && item.kind === "file" && item.type.startsWith("image/")) {
+          const file = item.getAsFile();
+          if (file) files.push(file);
+        }
+      }
+      if (files.length > 0) {
+        event.preventDefault();
+        void handlePickFiles(files);
+      }
+    },
+    [handlePickFiles],
+  );
 
   const submitTurnText = useCallback(
     async (
@@ -3427,6 +3468,37 @@ export default function ThreadPage({ params }: Props) {
           ) : null}
 
           <section className="cdx-composer">
+            <input
+              ref={desktopFileInputRef}
+              type="file"
+              accept="image/*"
+              multiple
+              className="cdx-mobile-file-input"
+              data-testid="desktop-composer-file-input"
+              onChange={handleDesktopFileInputChange}
+            />
+            <div className="cdx-composer-tools">
+              <button
+                type="button"
+                className="cdx-toolbar-btn"
+                data-testid="desktop-composer-add-image"
+                onClick={() => desktopFileInputRef.current?.click()}
+                disabled={runningTurnId !== null}
+                title={
+                  runningTurnId !== null
+                    ? "Wait for the current turn to finish"
+                    : "Attach images (or just paste a screenshot)"
+                }
+              >
+                📎 Add image
+              </button>
+            </div>
+            {pendingAttachments.length > 0 ? (
+              <AttachmentStrip
+                attachments={pendingAttachments}
+                onRemove={handleRemoveAttachment}
+              />
+            ) : null}
             <textarea
               id="turn-input"
               data-testid="turn-input"
@@ -3436,6 +3508,7 @@ export default function ThreadPage({ params }: Props) {
                 setSlashMenuDismissed(false);
               }}
               onKeyDown={handlePromptKeyDown}
+              onPaste={handleDesktopTextareaPaste}
               placeholder="Ask Codex anything, / for commands"
               rows={3}
             />
@@ -3561,7 +3634,12 @@ export default function ThreadPage({ params }: Props) {
                   data-testid="turn-submit"
                   className={`cdx-send-btn ${isMobileViewport ? "cdx-send-btn--mobile" : ""}`}
                   onClick={() => void sendTurn()}
-                  disabled={submitting || prompt.trim().length === 0}
+                  disabled={
+                    submitting
+                    || pendingAttachments.some((a) => a.status === "uploading")
+                    || (prompt.trim().length === 0
+                      && !pendingAttachments.some((a) => a.status === "ready"))
+                  }
                 >
                   {submitting ? "Working..." : "Send"}
                 </button>
