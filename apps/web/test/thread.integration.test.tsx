@@ -4546,4 +4546,302 @@ describe("Thread page integration", () => {
     // Still no completed thinking segment — only the live fallback.
     expect(screen.queryByTestId("desktop-thinking-segment")).not.toBeInTheDocument();
   });
+
+  describe("desktop sidebar thread switcher (parity with mobile drawer)", () => {
+    function setDesktopViewport() {
+      // useThreadViewportShell marks the viewport "compact" when
+      // window.innerWidth <= 1024, which collapses the desktop sidebar (since
+      // jsdom defaults to 1024). Push past that boundary so the sidebar
+      // actually renders for these tests.
+      Object.defineProperty(window, "innerWidth", {
+        configurable: true,
+        writable: true,
+        value: 1440,
+      });
+      Object.defineProperty(window, "innerHeight", {
+        configurable: true,
+        writable: true,
+        value: 900,
+      });
+      setMobileViewport(false);
+      // jsdom doesn't implement Element.prototype.scrollIntoView; without
+      // this stub the rAF-scheduled scroll on the active sidebar card raises
+      // an unhandled exception which marks the whole file as failed even
+      // when every assertion passes.
+      if (typeof (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView !== "function") {
+        (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView = () => {};
+      }
+    }
+
+    function stubMultiThreadList() {
+      setDesktopViewport();
+      vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+      const createCalls: unknown[] = [];
+      server.use(
+        http.get("http://127.0.0.1:8795/api/threads/:id", ({ params }) =>
+          HttpResponse.json({
+            thread: {
+              id: String(params.id),
+              title: "Alpha Running",
+              preview: "",
+              status: "active",
+              createdAt: null,
+              updatedAt: null,
+            },
+            turns: [],
+            nextCursor: null,
+          }),
+        ),
+        http.get("http://127.0.0.1:8795/api/threads/:id/approvals/pending", () =>
+          HttpResponse.json({ data: [] }),
+        ),
+        http.get("http://127.0.0.1:8795/api/threads/:id/interactions/pending", () =>
+          HttpResponse.json({ data: [] }),
+        ),
+        http.get("http://127.0.0.1:8795/api/threads", () =>
+          HttpResponse.json({
+            data: [
+              {
+                id: "thread-1",
+                projectKey: "/repos/alpha",
+                title: "Alpha Running",
+                preview: "alpha preview",
+                status: "active",
+                lastActiveAt: "2026-01-04T00:00:00.000Z",
+                archived: false,
+                waitingApprovalCount: 0,
+                errorCount: 0,
+              },
+              {
+                id: "thread-2",
+                projectKey: "/repos/alpha",
+                title: "Alpha Idle",
+                preview: "alpha idle preview",
+                status: "idle",
+                lastActiveAt: "2026-01-03T00:00:00.000Z",
+                archived: false,
+                waitingApprovalCount: 0,
+                errorCount: 0,
+              },
+              {
+                id: "thread-3",
+                projectKey: "/repos/beta",
+                title: "Beta Waiting",
+                preview: "beta preview",
+                status: "idle",
+                lastActiveAt: "2026-01-02T00:00:00.000Z",
+                archived: false,
+                waitingApprovalCount: 2,
+                errorCount: 0,
+              },
+              {
+                id: "thread-4",
+                projectKey: "/repos/beta",
+                title: "Beta Broken",
+                preview: "beta broken preview",
+                status: "systemError",
+                lastActiveAt: "2026-01-01T00:00:00.000Z",
+                archived: false,
+                waitingApprovalCount: 0,
+                errorCount: 0,
+              },
+            ],
+            nextCursor: null,
+          }),
+        ),
+        http.get("http://127.0.0.1:8795/api/threads/:id/timeline", () =>
+          HttpResponse.json({ data: [] }),
+        ),
+        http.get("http://127.0.0.1:8795/api/threads/:id/context", () =>
+          HttpResponse.json({
+            threadId: "thread-1",
+            cwd: "/repos/alpha",
+            resolvedCwd: "/repos/alpha",
+            isFallback: false,
+            source: "projection",
+          }),
+        ),
+        http.get("http://127.0.0.1:8795/api/models", () => HttpResponse.json({ data: [] })),
+        http.post("http://127.0.0.1:8795/api/threads", async ({ request }) => {
+          const body = await request.json();
+          createCalls.push(body);
+          return HttpResponse.json({ threadId: "thread-new" });
+        }),
+      );
+      return { createCalls };
+    }
+
+    it("renders one status badge per thread row matching the mobile priority", async () => {
+      stubMultiThreadList();
+      render(<ThreadPage params={Promise.resolve({ id: "thread-1" })} />);
+
+      // Wait for the sidebar list to populate.
+      await screen.findByTestId("thread-status-badge-thread-1");
+
+      // active without pending → Running
+      expect(screen.getByTestId("thread-status-badge-thread-1")).toHaveTextContent(
+        "Running",
+      );
+      // idle with waitingApprovalCount > 0 → "2 pending"
+      expect(screen.getByTestId("thread-status-badge-thread-3")).toHaveTextContent(
+        "2 pending",
+      );
+      // systemError → Error
+      expect(screen.getByTestId("thread-status-badge-thread-4")).toHaveTextContent(
+        "Error",
+      );
+      // idle → Idle
+      expect(screen.getByTestId("thread-status-badge-thread-2")).toHaveTextContent(
+        "Idle",
+      );
+    });
+
+    it("New thread button creates a thread and routes to it", async () => {
+      const { createCalls } = stubMultiThreadList();
+      render(<ThreadPage params={Promise.resolve({ id: "thread-1" })} />);
+
+      // Wait for the thread list to land — activeProjectKey only resolves to
+      // /repos/alpha once thread-1's row is in threadList; before that we'd
+      // POST with an empty body. The list response is what derives cwd.
+      await screen.findByTestId("thread-status-badge-thread-1");
+
+      const btn = screen.getByTestId("desktop-sidebar-new-thread");
+      fireEvent.click(btn);
+      await waitFor(() => {
+        // The default project key for an active thread is /repos/alpha.
+        expect(createCalls).toEqual([{ cwd: "/repos/alpha" }]);
+        expect(pushMock).toHaveBeenCalledWith("/threads/thread-new");
+      });
+    });
+
+    it("per-project + buttons scope creates to the chosen project cwd", async () => {
+      const { createCalls } = stubMultiThreadList();
+      render(<ThreadPage params={Promise.resolve({ id: "thread-1" })} />);
+
+      const betaPlus = await screen.findByTestId(
+        "desktop-thread-group-new-/repos/beta",
+      );
+      fireEvent.click(betaPlus);
+      await waitFor(() => {
+        expect(createCalls).toEqual([{ cwd: "/repos/beta" }]);
+      });
+    });
+
+    it("Waiting filter hides idle + running + error rows", async () => {
+      stubMultiThreadList();
+      render(<ThreadPage params={Promise.resolve({ id: "thread-1" })} />);
+
+      await screen.findByTestId("thread-status-badge-thread-1");
+
+      fireEvent.click(screen.getByTestId("desktop-thread-filter-waiting"));
+
+      await waitFor(() => {
+        // thread-3 has waitingApprovalCount > 0; everything else is hidden.
+        expect(screen.getByTestId("thread-status-badge-thread-3")).toBeInTheDocument();
+        expect(
+          screen.queryByTestId("thread-status-badge-thread-1"),
+        ).not.toBeInTheDocument();
+        expect(
+          screen.queryByTestId("thread-status-badge-thread-2"),
+        ).not.toBeInTheDocument();
+        expect(
+          screen.queryByTestId("thread-status-badge-thread-4"),
+        ).not.toBeInTheDocument();
+      });
+    });
+
+    it("search filters by title and shows the empty state when no matches", async () => {
+      stubMultiThreadList();
+      render(<ThreadPage params={Promise.resolve({ id: "thread-1" })} />);
+
+      await screen.findByTestId("thread-status-badge-thread-1");
+
+      const search = screen.getByTestId("desktop-thread-search");
+      fireEvent.change(search, { target: { value: "broken" } });
+
+      await waitFor(() => {
+        // Only the Beta Broken row remains.
+        expect(screen.getByTestId("thread-status-badge-thread-4")).toBeInTheDocument();
+        expect(
+          screen.queryByTestId("thread-status-badge-thread-1"),
+        ).not.toBeInTheDocument();
+      });
+
+      // Type a term nothing matches → "No matches for …" empty-state banner.
+      fireEvent.change(search, { target: { value: "no-such-thread-xyz" } });
+      await waitFor(() => {
+        expect(screen.getByTestId("desktop-thread-empty")).toHaveTextContent(
+          /No matches/,
+        );
+      });
+    });
+
+    it("Running filter empty result surfaces a filter-specific empty state", async () => {
+      setDesktopViewport();
+      vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+      server.use(
+        http.get("http://127.0.0.1:8795/api/threads/:id", ({ params }) =>
+          HttpResponse.json({
+            thread: {
+              id: String(params.id),
+              title: "Only Idle",
+              preview: "",
+              status: "idle",
+              createdAt: null,
+              updatedAt: null,
+            },
+            turns: [],
+            nextCursor: null,
+          }),
+        ),
+        http.get("http://127.0.0.1:8795/api/threads/:id/approvals/pending", () =>
+          HttpResponse.json({ data: [] }),
+        ),
+        http.get("http://127.0.0.1:8795/api/threads/:id/interactions/pending", () =>
+          HttpResponse.json({ data: [] }),
+        ),
+        http.get("http://127.0.0.1:8795/api/threads", () =>
+          HttpResponse.json({
+            data: [
+              {
+                id: "thread-1",
+                projectKey: "/repos/alpha",
+                title: "Only Idle",
+                preview: "",
+                status: "idle",
+                lastActiveAt: "2026-01-01T00:00:00.000Z",
+                archived: false,
+                waitingApprovalCount: 0,
+                errorCount: 0,
+              },
+            ],
+            nextCursor: null,
+          }),
+        ),
+        http.get("http://127.0.0.1:8795/api/threads/:id/timeline", () =>
+          HttpResponse.json({ data: [] }),
+        ),
+        http.get("http://127.0.0.1:8795/api/threads/:id/context", () =>
+          HttpResponse.json({
+            threadId: "thread-1",
+            cwd: "/repos/alpha",
+            resolvedCwd: "/repos/alpha",
+            isFallback: false,
+            source: "projection",
+          }),
+        ),
+        http.get("http://127.0.0.1:8795/api/models", () => HttpResponse.json({ data: [] })),
+      );
+
+      render(<ThreadPage params={Promise.resolve({ id: "thread-1" })} />);
+      await screen.findByTestId("thread-status-badge-thread-1");
+
+      fireEvent.click(screen.getByTestId("desktop-thread-filter-running"));
+      await waitFor(() => {
+        expect(screen.getByTestId("desktop-thread-empty")).toHaveTextContent(
+          /No running threads/,
+        );
+      });
+    });
+  });
 });

@@ -73,6 +73,14 @@ import MobileMessageStream from "./MobileMessageStream";
 import MobileThreadSwitcherOverlay, {
   type MobileThreadSwitcherGroup,
 } from "./MobileThreadSwitcherOverlay";
+import {
+  THREAD_SWITCHER_FILTERS,
+  badgeForThreadItem,
+  emptyStateMessage,
+  filterThreadSwitcherGroups,
+  type ThreadSwitcherFilter,
+  type ThreadSwitcherGroup,
+} from "./thread-switcher-shared";
 import TerminalDock from "./TerminalDock";
 import InteractionQuestionForm, {
   answersForInteractionQuestions,
@@ -188,6 +196,11 @@ export default function ThreadPage({ params }: Props) {
   const [threadList, setThreadList] = useState<ThreadListItem[]>([]);
   const [threadListLoading, setThreadListLoading] = useState(true);
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  // Desktop sidebar — own copies of search + filter state so the mobile drawer
+  // resetting on close doesn't blow away what the user typed on desktop, and
+  // vice versa.
+  const [sidebarSearchQuery, setSidebarSearchQuery] = useState("");
+  const [sidebarStatusFilter, setSidebarStatusFilter] = useState<ThreadSwitcherFilter>("all");
   const [isThreadSwitcherOpen, setIsThreadSwitcherOpen] = useState(false);
   const [switcherCollapsedGroups, setSwitcherCollapsedGroups] = useState<Set<string>>(() => new Set());
   const [isControlSheetOpen, setIsControlSheetOpen] = useState(false);
@@ -899,6 +912,43 @@ export default function ThreadPage({ params }: Props) {
         })),
       })),
     [groupedThreads, threadId],
+  );
+  // Desktop sidebar reuses the same switcher group shape as the mobile drawer
+  // but keeps preview text alongside so the row body looks the same as before.
+  // Stored as Map<projectKey, Map<threadId, preview>> so the JSX can look up
+  // the preview without re-traversing groupedThreads inside each map().
+  const threadPreviewById = useMemo<Map<string, Map<string, string>>>(() => {
+    const result = new Map<string, Map<string, string>>();
+    for (const group of groupedThreads) {
+      const inner = new Map<string, string>();
+      for (const thread of group.threads) {
+        inner.set(thread.id, thread.preview ?? "");
+      }
+      result.set(group.key, inner);
+    }
+    return result;
+  }, [groupedThreads]);
+  const sidebarFilteredGroups = useMemo<ThreadSwitcherGroup[]>(
+    () =>
+      filterThreadSwitcherGroups(
+        mobileThreadSwitcherGroups,
+        sidebarStatusFilter,
+        sidebarSearchQuery,
+      ),
+    [mobileThreadSwitcherGroups, sidebarStatusFilter, sidebarSearchQuery],
+  );
+  const sidebarListIsEmpty = useMemo(
+    () => sidebarFilteredGroups.every((group) => group.items.length === 0),
+    [sidebarFilteredGroups],
+  );
+  const sidebarEmptyMessage = useMemo(
+    () =>
+      emptyStateMessage(
+        mobileThreadSwitcherGroups,
+        sidebarStatusFilter,
+        sidebarSearchQuery,
+      ),
+    [mobileThreadSwitcherGroups, sidebarStatusFilter, sidebarSearchQuery],
   );
   const activeProjectKey = useMemo(() => {
     if (activeThread?.projectKey) {
@@ -2537,7 +2587,12 @@ export default function ThreadPage({ params }: Props) {
         {sidebarVisible ? (
           <aside className="cdx-sidebar" ref={sidebarRef}>
             <div className="cdx-sidebar-actions">
-              <button type="button" className="cdx-sidebar-action cdx-sidebar-action--active">
+              <button
+                type="button"
+                className="cdx-sidebar-action cdx-sidebar-action--active"
+                data-testid="desktop-sidebar-new-thread"
+                onClick={() => void createThread()}
+              >
                 New thread
               </button>
               <button type="button" className="cdx-sidebar-action" disabled>
@@ -2548,34 +2603,106 @@ export default function ThreadPage({ params }: Props) {
               </button>
             </div>
             <div className="cdx-sidebar-label">Threads</div>
+            <div className="cdx-sidebar-search">
+              <input
+                type="search"
+                className="cdx-sidebar-search-input"
+                data-testid="desktop-thread-search"
+                placeholder="Search threads"
+                value={sidebarSearchQuery}
+                onChange={(event) => setSidebarSearchQuery(event.target.value)}
+                aria-label="Search threads"
+              />
+            </div>
+            <div
+              className="cdx-sidebar-filters"
+              role="tablist"
+              aria-label="Filter threads by status"
+            >
+              {THREAD_SWITCHER_FILTERS.map((option) => {
+                const active = option.value === sidebarStatusFilter;
+                return (
+                  <button
+                    key={option.value}
+                    type="button"
+                    role="tab"
+                    aria-selected={active}
+                    className={`cdx-sidebar-filter ${active ? "is-active" : ""}`}
+                    data-testid={`desktop-thread-filter-${option.value}`}
+                    onClick={() => setSidebarStatusFilter(option.value)}
+                  >
+                    {option.label}
+                  </button>
+                );
+              })}
+            </div>
             <div className="cdx-project-tree">
-              {groupedThreads.map((group) => (
-                <section key={group.key} className="cdx-project-group">
-                  <div className="cdx-project-title">
-                    <span>{group.label}</span>
-                    <span className="cdx-helper">{group.threads.length}</span>
-                  </div>
-                  <div className="cdx-thread-list">
-                    {group.threads.map((thread) => (
-                      <Link
-                        href={`/threads/${thread.id}`}
-                        key={thread.id}
-                        data-testid={`thread-link-${thread.id}`}
-                      >
-                        <article
-                          ref={thread.id === threadId ? registerActiveThreadCard : null}
-                          className={`cdx-thread-item ${thread.id === threadId ? "is-active" : ""}`}
+              {sidebarFilteredGroups.map((group) => {
+                if (group.items.length === 0) {
+                  // Hide entirely-empty groups so collapsed/filtered project
+                  // headers don't pile up under the search bar.
+                  return null;
+                }
+                const previewByThreadId = threadPreviewById.get(group.key) ?? new Map<string, string>();
+                return (
+                  <section key={group.key} className="cdx-project-group">
+                    <div className="cdx-project-title">
+                      <span>{group.label}</span>
+                      <span className="cdx-project-title-actions">
+                        <span className="cdx-helper">{group.items.length}</span>
+                        <button
+                          type="button"
+                          className="cdx-mini-btn"
+                          data-testid={`desktop-thread-group-new-${group.key}`}
+                          aria-label={`New thread in ${group.label}`}
+                          title={`New thread in ${group.label}`}
+                          onClick={() => void createThread(group.key)}
                         >
-                          <h3 title={thread.title}>{thread.title}</h3>
-                          <p>{thread.preview || "(empty preview)"}</p>
-                          <span>{thread.lastActiveAt}</span>
-                        </article>
-                      </Link>
-                    ))}
-                  </div>
-                </section>
-              ))}
+                          +
+                        </button>
+                      </span>
+                    </div>
+                    <div className="cdx-thread-list">
+                      {group.items.map((item) => {
+                        const badge = badgeForThreadItem(item);
+                        const preview = previewByThreadId.get(item.id) ?? "";
+                        return (
+                          <Link
+                            href={`/threads/${item.id}`}
+                            key={item.id}
+                            data-testid={`thread-link-${item.id}`}
+                          >
+                            <article
+                              ref={item.id === threadId ? registerActiveThreadCard : null}
+                              className={`cdx-thread-item ${item.isActive ? "is-active" : ""}`}
+                              data-status={badge.kind}
+                              data-testid={`thread-status-${item.id}`}
+                            >
+                              <div className="cdx-thread-item-head">
+                                <h3 title={item.title}>{item.title}</h3>
+                                <span
+                                  className={`cdx-thread-item-badge cdx-thread-item-badge--${badge.kind}`}
+                                  data-testid={`thread-status-badge-${item.id}`}
+                                >
+                                  {badge.label}
+                                </span>
+                              </div>
+                              <p>{preview || "(empty preview)"}</p>
+                              <span>{item.lastActiveAt}</span>
+                            </article>
+                          </Link>
+                        );
+                      })}
+                    </div>
+                  </section>
+                );
+              })}
               {threadListLoading ? <p className="cdx-helper">Loading thread list...</p> : null}
+              {!threadListLoading && sidebarListIsEmpty ? (
+                <p className="cdx-helper" data-testid="desktop-thread-empty">
+                  {sidebarEmptyMessage}
+                </p>
+              ) : null}
             </div>
           </aside>
         ) : null}

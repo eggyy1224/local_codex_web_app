@@ -238,6 +238,63 @@ textarea {
   margin: 8px 0 8px;
 }
 
+.cdx-sidebar-search {
+  margin: 0 0 6px;
+}
+
+.cdx-sidebar-search-input {
+  width: 100%;
+  border: 1px solid var(--border-soft);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text);
+  padding: 6px 9px;
+  border-radius: 9px;
+  font-size: 12px;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.cdx-sidebar-search-input::placeholder {
+  color: var(--muted);
+}
+
+.cdx-sidebar-search-input:focus {
+  outline: none;
+  border-color: rgba(122, 162, 247, 0.5);
+}
+
+.cdx-sidebar-filters {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 2px;
+  border: 1px solid var(--border-soft);
+  background: rgba(255, 255, 255, 0.02);
+  border-radius: 999px;
+  padding: 2px;
+  margin: 0 0 10px;
+}
+
+.cdx-sidebar-filter {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  padding: 4px 2px;
+  border-radius: 999px;
+  cursor: pointer;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cdx-sidebar-filter.is-active {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text);
+}
+
 .cdx-project-tree {
   display: grid;
   gap: 10px;
@@ -256,6 +313,12 @@ textarea {
   color: rgba(255, 255, 255, 0.7);
   min-height: 24px;
   padding: 0 2px;
+}
+
+.cdx-project-title-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .cdx-mini-btn {
@@ -320,6 +383,52 @@ textarea {
 .cdx-thread-item span {
   color: rgba(255, 255, 255, 0.42);
   font-size: 11px;
+}
+
+.cdx-thread-item-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.cdx-thread-item-head h3 {
+  flex: 1;
+  min-width: 0;
+}
+
+.cdx-thread-item-badge {
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  font-size: 10px;
+  line-height: 14px;
+  letter-spacing: 0.02em;
+  flex-shrink: 0;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.cdx-thread-item-badge--running {
+  background: rgba(102, 230, 158, 0.14);
+  border-color: rgba(102, 230, 158, 0.42);
+  color: rgba(196, 248, 220, 0.95);
+}
+
+.cdx-thread-item-badge--waiting {
+  background: rgba(247, 178, 122, 0.14);
+  border-color: rgba(247, 178, 122, 0.4);
+  color: rgba(255, 220, 196, 0.95);
+}
+
+.cdx-thread-item-badge--error {
+  background: rgba(231, 92, 92, 0.14);
+  border-color: rgba(231, 92, 92, 0.4);
+  color: rgba(255, 196, 196, 0.95);
+}
+
+.cdx-thread-item-badge--idle {
+  color: rgba(255, 255, 255, 0.46);
+  border-color: rgba(255, 255, 255, 0.14);
 }
 
 .cdx-main {
