@@ -4011,4 +4011,87 @@ describe("Thread page integration", () => {
     });
     expect(replaceMock).toHaveBeenCalled();
   });
+
+  it("mobile pending approval stays foreground over view menu and thread drawer", async () => {
+    setMobileViewport(true);
+    vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+
+    server.use(
+      http.get("http://127.0.0.1:8795/api/threads/:id", ({ params }) =>
+        HttpResponse.json({
+          thread: {
+            id: String(params.id),
+            title: "Foreground Approval",
+            preview: "",
+            status: "idle",
+            createdAt: null,
+            updatedAt: null,
+          },
+          turns: [],
+          nextCursor: null,
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/approvals/pending", () =>
+        HttpResponse.json({
+          data: [
+            {
+              approvalId: "ap-foreground-1",
+              threadId: "thread-1",
+              turnId: "turn-1",
+              itemId: null,
+              type: "commandExecution",
+              status: "pending",
+              reason: "needs decision",
+              commandPreview: "rm -rf dist",
+              fileChangePreview: null,
+              createdAt: "2026-05-01T00:00:00.000Z",
+              resolvedAt: null,
+            },
+          ],
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads", () =>
+        HttpResponse.json({ data: [], nextCursor: null }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/timeline", () =>
+        HttpResponse.json({ data: [] }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/context", () =>
+        HttpResponse.json({
+          threadId: "thread-1",
+          cwd: "/tmp/project",
+          resolvedCwd: "/tmp/project",
+          isFallback: false,
+          source: "projection",
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/models", () => HttpResponse.json({ data: [] })),
+    );
+
+    render(<ThreadPage params={Promise.resolve({ id: "thread-1" })} />);
+
+    const layer = await screen.findByTestId("mobile-action-layer");
+    expect(layer).toHaveAttribute("data-kind", "approval");
+
+    // Opening the view menu while pending: the menu auto-collapses so it
+    // cannot overlap the action buttons. The action layer remains
+    // interactive.
+    fireEvent.click(screen.getByTestId("mobile-topbar-views-toggle"));
+    await waitFor(() => {
+      expect(screen.queryByTestId("mobile-topbar-views-menu")).not.toBeInTheDocument();
+    });
+    expect(screen.getByTestId("mobile-action-layer")).toBeInTheDocument();
+    expect(screen.getByTestId("mobile-action-allow")).toBeEnabled();
+
+    // Opening the thread switcher drawer with a pending approval on screen
+    // is allowed (drawer is real navigation), but the action layer keeps
+    // its stacking-context lead so its buttons remain in the foreground
+    // even while the drawer is mounted.
+    fireEvent.click(screen.getByLabelText("Open threads"));
+    await screen.findByTestId("mobile-thread-switcher-overlay");
+    const layerWithDrawer = screen.getByTestId("mobile-action-layer");
+    expect(layerWithDrawer).toBeInTheDocument();
+    const allowBtn = screen.getByTestId("mobile-action-allow");
+    expect(allowBtn).toBeEnabled();
+  });
 });

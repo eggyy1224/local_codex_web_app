@@ -1038,6 +1038,17 @@ export default function ThreadPage({ params }: Props) {
   }, [pendingNewTurn]);
   const hiddenTimelineCount = Math.max(0, allConversationTurns.length - visibleConversationTurns.length);
   const pendingActionCount = pendingApprovalList.length + pendingInteractionList.length;
+
+  // Pending approval / interaction is the most-foreground UI on mobile.
+  // While the action layer is now stacked above the drawer in CSS, we still
+  // collapse the drawer when something pending arrives so the user lands
+  // straight on the Allow/Deny/Answer affordance instead of having to
+  // dismiss the drawer first.
+  useEffect(() => {
+    if (pendingActionCount > 0) {
+      setIsThreadSwitcherOpen(false);
+    }
+  }, [pendingActionCount]);
   const latestStreamingTurn = useMemo(() => {
     for (let index = visibleConversationTurns.length - 1; index >= 0; index -= 1) {
       const candidate = visibleConversationTurns[index];

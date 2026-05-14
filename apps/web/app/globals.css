@@ -2100,7 +2100,11 @@ textarea {
   left: 12px;
   right: 12px;
   bottom: calc(140px + env(safe-area-inset-bottom));
-  z-index: 36;
+  /* Pending approval / interaction is the most-foreground UI on mobile —
+   * the user's next move has to be Allow/Deny/Answer. Sit above the view
+   * menu (50), the thread switcher drawer overlay (60), and any other
+   * incidental panels so it can never be covered by an exploration UI. */
+  z-index: 70;
   display: grid;
   gap: 10px;
   padding: 14px 16px 12px;

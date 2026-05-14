@@ -68,6 +68,16 @@ export default function MobileChatTopBar({
     return () => document.removeEventListener("mousedown", handler);
   }, [viewMenuOpen]);
 
+  // A pending approval or interaction is a blocking foreground action — the
+  // user's next move has to be approve/deny/answer. The view menu would
+  // otherwise sit on top of the action layer (z-index 50 vs 70) and cover
+  // the buttons, so collapse it as soon as something pending appears.
+  useEffect(() => {
+    if (pendingActionCount > 0) {
+      setViewMenuOpen(false);
+    }
+  }, [pendingActionCount]);
+
   return (
     <header className="cdx-mobile-chat-topbar" data-testid="mobile-chat-topbar">
       <button
@@ -126,11 +136,19 @@ export default function MobileChatTopBar({
             aria-haspopup="menu"
             aria-expanded={viewMenuOpen}
             aria-label="Switch view mode"
-            onClick={() => setViewMenuOpen((value) => !value)}
+            aria-disabled={pendingActionCount > 0 ? true : undefined}
+            data-suppressed={pendingActionCount > 0 ? "pending" : undefined}
+            onClick={() => {
+              // While pending approvals/interactions are on screen the
+              // action layer is the user's only valid next move — never
+              // pop a competing menu over it.
+              if (pendingActionCount > 0) return;
+              setViewMenuOpen((value) => !value);
+            }}
           >
             ◐
           </button>
-          {viewMenuOpen ? (
+          {viewMenuOpen && pendingActionCount === 0 ? (
             <div
               className="cdx-mobile-view-menu"
               role="menu"
