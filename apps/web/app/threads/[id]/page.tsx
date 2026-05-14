@@ -2194,6 +2194,7 @@ export default function ThreadPage({ params }: Props) {
           groups={mobileThreadSwitcherGroups}
           collapsedGroups={switcherCollapsedGroups}
           loading={threadListLoading}
+          defaultProjectKey={activeProjectKey}
           onClose={() => setIsThreadSwitcherOpen(false)}
           onSelect={selectThreadFromMobileSwitcher}
           onToggleGroup={(key) =>
