@@ -171,6 +171,84 @@ describe("parseTimelineItemsFromLines", () => {
     });
   });
 
+  it("maps completed Plan items so historical proposed plans render after reload", () => {
+    const lines = [
+      line({
+        type: "event_msg",
+        timestamp: "2026-01-01T00:00:00.000Z",
+        payload: { type: "task_started", turn_id: "turn-plan" },
+      }),
+      line({
+        type: "event_msg",
+        timestamp: "2026-01-01T00:00:01.000Z",
+        payload: {
+          type: "item_completed",
+          turn_id: "turn-plan",
+          item: {
+            type: "Plan",
+            id: "turn-plan-plan",
+            text: "# Plan\n\n1. Fix gateway projection\n2. Verify web rendering",
+          },
+        },
+      }),
+    ];
+
+    const items = parseTimelineItemsFromLines(lines, "thread-1", 50);
+    expect(items).toHaveLength(2);
+    expect(items[1]).toMatchObject({
+      type: "reasoning",
+      title: "Plan",
+      rawType: "plan",
+      turnId: "turn-plan",
+    });
+    expect(items[1].text).toContain("<proposed_plan>");
+    expect(items[1].text).toContain("# Plan");
+    expect(items[1].text).toContain("</proposed_plan>");
+  });
+
+  it("does not turn non-proposal plan progress or empty Plan items into proposed plans", () => {
+    const lines = [
+      line({
+        type: "event_msg",
+        timestamp: "2026-01-01T00:00:00.000Z",
+        payload: {
+          type: "turn/plan/updated",
+          turn_id: "turn-plan",
+          explanation: "In-flight task status",
+        },
+      }),
+      line({
+        type: "event_msg",
+        timestamp: "2026-01-01T00:00:01.000Z",
+        payload: {
+          type: "item_completed",
+          turn_id: "turn-plan",
+          item: {
+            type: "agentMessage",
+            id: "item-agent",
+            text: "ordinary reply",
+          },
+        },
+      }),
+      line({
+        type: "event_msg",
+        timestamp: "2026-01-01T00:00:02.000Z",
+        payload: {
+          type: "item_completed",
+          turn_id: "turn-plan",
+          item: {
+            type: "Plan",
+            id: "turn-plan-empty",
+            text: "",
+          },
+        },
+      }),
+    ];
+
+    const items = parseTimelineItemsFromLines(lines, "thread-1", 50);
+    expect(items).toHaveLength(0);
+  });
+
   it("truncates reasoning text past the 2000-char cap with the ...newline marker", () => {
     const longThought = "r".repeat(2500);
     const lines = [

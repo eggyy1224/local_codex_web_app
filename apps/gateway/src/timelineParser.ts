@@ -186,6 +186,28 @@ export function parseTimelineItemsFromLines(
         continue;
       }
 
+      if (payloadType === "item_completed") {
+        const item = asRecord(payload?.item);
+        const itemType = pickString(item, "type")?.toLowerCase();
+        if (itemType === "plan") {
+          const text = pickString(item, "text");
+          if (text) {
+            pushTimelineItem(items, {
+              id: buildId("plan"),
+              ts: timestamp,
+              turnId: eventTurnId,
+              type: "reasoning",
+              title: "Plan",
+              text: `<proposed_plan>\n${text}\n</proposed_plan>`,
+              rawType: "plan",
+              toolName: null,
+              callId: null,
+            });
+          }
+        }
+        continue;
+      }
+
       if (payloadType === "user_message") {
         pushTimelineItem(items, {
           id: buildId("user"),
