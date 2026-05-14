@@ -1,35 +1,28 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { ThreadStatus } from "@lcwa/shared-types";
+import {
+  THREAD_SWITCHER_FILTERS,
+  badgeForThreadItem,
+  emptyStateMessage,
+  filterThreadSwitcherGroups,
+  type ThreadStatusBadge,
+  type ThreadSwitcherFilter,
+  type ThreadSwitcherGroup,
+  type ThreadSwitcherItem,
+} from "./thread-switcher-shared";
 
-export type MobileThreadSwitcherItem = {
-  id: string;
-  title: string;
-  lastActiveAt: string;
-  isActive: boolean;
-  status: ThreadStatus;
-  waitingApprovalCount: number;
-  errorCount: number;
-};
+// Re-exported under the historical mobile-prefixed names so existing tests
+// and call sites keep working without churn. The implementations now live in
+// `thread-switcher-shared.ts` and are reused by the desktop sidebar.
+export type MobileThreadSwitcherItem = ThreadSwitcherItem;
+export type MobileThreadSwitcherGroup = ThreadSwitcherGroup;
+export type MobileSwitcherFilter = ThreadSwitcherFilter;
 
-export type MobileThreadSwitcherGroup = {
-  key: string;
-  label: string;
-  items: MobileThreadSwitcherItem[];
-};
+export const MOBILE_SWITCHER_FILTERS = THREAD_SWITCHER_FILTERS;
 
-export type MobileSwitcherFilter = "all" | "running" | "waiting" | "error";
-
-export const MOBILE_SWITCHER_FILTERS: Array<{
-  value: MobileSwitcherFilter;
-  label: string;
-}> = [
-  { value: "all", label: "All" },
-  { value: "running", label: "Running" },
-  { value: "waiting", label: "Waiting" },
-  { value: "error", label: "Error" },
-];
+export const badgeForItem = badgeForThreadItem;
+export const filterSwitcherGroups = filterThreadSwitcherGroups;
 
 type MobileThreadSwitcherOverlayProps = {
   open: boolean;
@@ -43,54 +36,8 @@ type MobileThreadSwitcherOverlayProps = {
   onCreateThread: (projectKey: string) => void;
 };
 
-type StatusBadge = {
-  kind: "running" | "waiting" | "error" | "idle";
-  label: string;
-};
-
-export function badgeForItem(item: MobileThreadSwitcherItem): StatusBadge {
-  // A thread that's running AND has a pending approval is paused waiting on
-  // the user — pending wins over running here because the action item is
-  // what matters to the reader of the switcher.
-  if (item.waitingApprovalCount > 0) {
-    return {
-      kind: "waiting",
-      label: item.waitingApprovalCount === 1 ? "1 pending" : `${item.waitingApprovalCount} pending`,
-    };
-  }
-  if (item.status === "active") {
-    return { kind: "running", label: "Running" };
-  }
-  if (item.status === "systemError" || item.errorCount > 0) {
-    return { kind: "error", label: "Error" };
-  }
-  return { kind: "idle", label: "Idle" };
-}
-
-function itemMatchesFilter(item: MobileThreadSwitcherItem, filter: MobileSwitcherFilter): boolean {
-  if (filter === "all") return true;
-  const badge = badgeForItem(item);
-  return badge.kind === filter;
-}
-
-function itemMatchesSearch(item: MobileThreadSwitcherItem, normalizedQuery: string): boolean {
-  if (!normalizedQuery) return true;
-  return item.title.toLowerCase().includes(normalizedQuery);
-}
-
-export function filterSwitcherGroups(
-  groups: MobileThreadSwitcherGroup[],
-  filter: MobileSwitcherFilter,
-  query: string,
-): MobileThreadSwitcherGroup[] {
-  const normalized = query.trim().toLowerCase();
-  return groups.map((group) => ({
-    ...group,
-    items: group.items.filter(
-      (item) => itemMatchesFilter(item, filter) && itemMatchesSearch(item, normalized),
-    ),
-  }));
-}
+type StatusBadge = ThreadStatusBadge;
+export type { StatusBadge };
 
 export default function MobileThreadSwitcherOverlay({
   open,
@@ -137,21 +84,7 @@ export default function MobileThreadSwitcherOverlay({
   }
 
   const isEmpty = filteredGroups.every((group) => group.items.length === 0);
-  const hasAnyThread = groups.some((group) => group.items.length > 0);
-
-  const emptyMessage = (() => {
-    if (!hasAnyThread) {
-      return "No threads yet.";
-    }
-    const trimmed = query.trim();
-    if (trimmed.length > 0) {
-      return `No matches for "${trimmed}".`;
-    }
-    if (filter === "running") return "No running threads.";
-    if (filter === "waiting") return "No waiting threads.";
-    if (filter === "error") return "No threads with errors.";
-    return "No threads match the current filters.";
-  })();
+  const emptyMessage = emptyStateMessage(groups, filter, query);
 
   const createTargetProjectKey = defaultProjectKey ?? groups[0]?.key ?? null;
 
