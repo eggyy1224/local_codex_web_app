@@ -112,6 +112,53 @@ export default function MobileChatTopBar({
         ) : null}
       </div>
       <div className="cdx-mobile-chat-topbar-actions">
+        {/*
+          Views must stay reachable even while a turn is running — that's
+          precisely when the user most needs to flip to Thinking/Verbose to
+          inspect reasoning or tool detail. Stop is rendered alongside Views
+          (instead of replacing it) so the two actions never collide.
+        */}
+        <div className="cdx-mobile-view-menu-anchor" ref={viewMenuRef}>
+          <button
+            type="button"
+            className="cdx-mobile-icon-btn"
+            data-testid="mobile-topbar-views-toggle"
+            aria-haspopup="menu"
+            aria-expanded={viewMenuOpen}
+            aria-label="Switch view mode"
+            onClick={() => setViewMenuOpen((value) => !value)}
+          >
+            ◐
+          </button>
+          {viewMenuOpen ? (
+            <div
+              className="cdx-mobile-view-menu"
+              role="menu"
+              data-testid="mobile-topbar-views-menu"
+            >
+              {VIEW_MODE_OPTIONS.map((option) => {
+                const active = option.value === viewMode;
+                return (
+                  <button
+                    key={option.value}
+                    type="button"
+                    role="menuitemradio"
+                    aria-checked={active}
+                    className={`cdx-mobile-view-menu-item ${active ? "is-active" : ""}`}
+                    data-testid={`mobile-topbar-views-${option.value}`}
+                    onClick={() => {
+                      onViewModeChange(option.value);
+                      setViewMenuOpen(false);
+                    }}
+                  >
+                    <span className="cdx-mobile-view-menu-item-label">{option.label}</span>
+                    <span className="cdx-mobile-view-menu-item-desc">{option.description}</span>
+                  </button>
+                );
+              })}
+            </div>
+          ) : null}
+        </div>
         {isRunning ? (
           <button
             type="button"
@@ -128,59 +175,16 @@ export default function MobileChatTopBar({
             {stopBusy ? "…" : "■"}
           </button>
         ) : (
-          <>
-            <div className="cdx-mobile-view-menu-anchor" ref={viewMenuRef}>
-              <button
-                type="button"
-                className="cdx-mobile-icon-btn"
-                data-testid="mobile-topbar-views-toggle"
-                aria-haspopup="menu"
-                aria-expanded={viewMenuOpen}
-                aria-label="Switch view mode"
-                onClick={() => setViewMenuOpen((value) => !value)}
-              >
-                ◐
-              </button>
-              {viewMenuOpen ? (
-                <div
-                  className="cdx-mobile-view-menu"
-                  role="menu"
-                  data-testid="mobile-topbar-views-menu"
-                >
-                  {VIEW_MODE_OPTIONS.map((option) => {
-                    const active = option.value === viewMode;
-                    return (
-                      <button
-                        key={option.value}
-                        type="button"
-                        role="menuitemradio"
-                        aria-checked={active}
-                        className={`cdx-mobile-view-menu-item ${active ? "is-active" : ""}`}
-                        data-testid={`mobile-topbar-views-${option.value}`}
-                        onClick={() => {
-                          onViewModeChange(option.value);
-                          setViewMenuOpen(false);
-                        }}
-                      >
-                        <span className="cdx-mobile-view-menu-item-label">{option.label}</span>
-                        <span className="cdx-mobile-view-menu-item-desc">{option.description}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              ) : null}
-            </div>
-            <button
-              type="button"
-              className="cdx-mobile-icon-btn"
-              data-testid="mobile-topbar-control-toggle"
-              onClick={onOpenControls}
-              aria-label="Open controls"
-            >
-              ⋯
-              {pendingActionCount > 0 ? <span className="cdx-mobile-dot" aria-hidden="true" /> : null}
-            </button>
-          </>
+          <button
+            type="button"
+            className="cdx-mobile-icon-btn"
+            data-testid="mobile-topbar-control-toggle"
+            onClick={onOpenControls}
+            aria-label="Open controls"
+          >
+            ⋯
+            {pendingActionCount > 0 ? <span className="cdx-mobile-dot" aria-hidden="true" /> : null}
+          </button>
         )}
       </div>
     </header>

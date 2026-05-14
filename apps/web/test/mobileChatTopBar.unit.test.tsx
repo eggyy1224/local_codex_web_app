@@ -72,10 +72,28 @@ describe("MobileChatTopBar slice 1: project label + view menu", () => {
     expect(screen.queryByTestId("mobile-topbar-views-menu")).not.toBeInTheDocument();
   });
 
-  it("hides the Views and More buttons while a turn is running, and surfaces Stop", () => {
+  it("keeps the Views toggle visible alongside Stop while a turn is running", () => {
+    // Running is exactly when the user most needs to flip to Thinking/Verbose
+    // to watch reasoning land — so Views must stay reachable. The More button
+    // (which routes into the control sheet) is the only entry that yields to
+    // Stop, because both share the same right-cluster slot semantics and the
+    // control sheet is still reachable via the composer swipe gesture.
     renderTopBar({ runningTurnId: "turn-123" });
-    expect(screen.queryByTestId("mobile-topbar-views-toggle")).not.toBeInTheDocument();
+    expect(screen.getByTestId("mobile-topbar-views-toggle")).toBeInTheDocument();
     expect(screen.queryByTestId("mobile-topbar-control-toggle")).not.toBeInTheDocument();
+    expect(screen.getByTestId("mobile-topbar-stop")).toBeInTheDocument();
+  });
+
+  it("lets the user switch view mode while a turn is running", () => {
+    const { onViewModeChange } = renderTopBar({ runningTurnId: "turn-running" });
+    fireEvent.click(screen.getByTestId("mobile-topbar-views-toggle"));
+    const menu = screen.getByTestId("mobile-topbar-views-menu");
+    expect(menu).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("mobile-topbar-views-thinking"));
+    expect(onViewModeChange).toHaveBeenCalledWith("thinking");
+    expect(screen.queryByTestId("mobile-topbar-views-menu")).not.toBeInTheDocument();
+    // Stop should still be present — Views and Stop are two independent
+    // actions, not mutually exclusive.
     expect(screen.getByTestId("mobile-topbar-stop")).toBeInTheDocument();
   });
 });
