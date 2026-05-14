@@ -13,6 +13,18 @@
   --ok: #0b5a2a;
   --warn: #8b6400;
   --danger: #7c2424;
+  /* Semantic accent dots — only color source for status indicators in mono UI */
+  --dot-running: rgba(102, 230, 158, 0.95);
+  --dot-waiting: rgba(247, 178, 122, 0.95);
+  --dot-error: rgba(231, 92, 92, 0.95);
+  --dot-info: rgba(122, 162, 247, 0.95);
+  /* Radius scale — Linear-style sharp + dense */
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-pill: 999px;
+  /* Mono font for command strings, file paths, raw inputs */
+  --font-mono: ui-monospace, SFMono-Regular, "Cascadia Mono", Menlo, monospace;
 }
 
 * {
@@ -84,15 +96,17 @@ textarea {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  height: 28px;
-  border-radius: 12.5px;
+  height: 26px;
+  border-radius: var(--radius-sm);
   border: 1px solid transparent;
   background: transparent;
-  padding: 0 8px;
-  font-size: 13px;
-  line-height: 18px;
+  padding: 0 7px;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 16px;
+  letter-spacing: 0.005em;
   color: var(--muted);
-  transition: background-color 140ms ease, border-color 140ms ease, color 140ms ease;
+  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
 }
 
 .cdx-toolbar-btn:hover:not(:disabled) {
@@ -108,17 +122,17 @@ textarea {
 }
 
 .cdx-toolbar-btn--icon {
-  min-width: 28px;
-  width: 28px;
+  min-width: 26px;
+  width: 26px;
   padding: 0;
   font-size: 12px;
   color: var(--muted);
 }
 
 .cdx-toolbar-btn--small {
-  height: 24px;
-  padding: 0 8px;
-  font-size: 12px;
+  height: 22px;
+  padding: 0 7px;
+  font-size: 11.5px;
 }
 
 .cdx-toolbar-btn--thread {
@@ -129,7 +143,7 @@ textarea {
   display: inline-flex;
   align-items: stretch;
   border: 1px solid var(--border-soft);
-  border-radius: 12.5px;
+  border-radius: var(--radius-sm);
   overflow: hidden;
   background: rgba(0, 0, 0, 0);
 }
@@ -161,15 +175,27 @@ textarea {
 }
 
 .cdx-toolbar-btn--positive {
-  border-color: rgba(28, 183, 89, 0.45);
-  background: rgba(16, 87, 46, 0.6);
-  color: rgba(233, 255, 243, 0.95);
+  border-color: rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--text);
+  font-weight: 500;
+}
+
+.cdx-toolbar-btn--positive:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.13);
+  border-color: rgba(255, 255, 255, 0.26);
 }
 
 .cdx-toolbar-btn--danger {
-  border-color: rgba(255, 95, 95, 0.45);
-  background: rgba(124, 36, 36, 0.55);
-  color: rgba(255, 236, 236, 0.95);
+  border-color: transparent;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.58);
+}
+
+.cdx-toolbar-btn--danger:hover:not(:disabled) {
+  color: rgba(255, 200, 200, 0.95);
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.12);
 }
 
 .cdx-workspace {
@@ -209,13 +235,14 @@ textarea {
   align-items: center;
   justify-content: flex-start;
   width: 100%;
-  height: 29.5px;
+  height: 28px;
   border: 1px solid transparent;
   background: transparent;
   color: rgba(255, 255, 255, 0.95);
-  border-radius: 12.5px;
-  padding: 5px 8px;
+  border-radius: var(--radius-sm);
+  padding: 4px 8px;
   font-size: 12px;
+  font-weight: 500;
 }
 
 .cdx-sidebar-action:hover:not(:disabled) {
@@ -248,7 +275,7 @@ textarea {
   background: rgba(255, 255, 255, 0.03);
   color: var(--text);
   padding: 6px 9px;
-  border-radius: 9px;
+  border-radius: var(--radius-sm);
   font-size: 12px;
   -webkit-appearance: none;
   appearance: none;
@@ -323,7 +350,7 @@ textarea {
 
 .cdx-mini-btn {
   border: 1px solid transparent;
-  border-radius: 10px;
+  border-radius: var(--radius-xs);
   width: 18px;
   height: 18px;
   background: transparent;
@@ -343,9 +370,9 @@ textarea {
 
 .cdx-thread-item {
   border: 1px solid transparent;
-  border-radius: 12.5px;
+  border-radius: var(--radius-sm);
   background: transparent;
-  padding: 7px 8px;
+  padding: 6px 8px;
   display: grid;
   gap: 3px;
 }
@@ -398,7 +425,10 @@ textarea {
 }
 
 .cdx-thread-item-badge {
-  padding: 1px 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 1px 6px 1px 4px;
   border-radius: 999px;
   border: 1px solid transparent;
   font-size: 10px;
@@ -408,27 +438,29 @@ textarea {
   color: rgba(255, 255, 255, 0.7);
 }
 
-.cdx-thread-item-badge--running {
-  background: rgba(102, 230, 158, 0.14);
-  border-color: rgba(102, 230, 158, 0.42);
-  color: rgba(196, 248, 220, 0.95);
+.cdx-thread-item-badge::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.22);
+  flex-shrink: 0;
 }
 
-.cdx-thread-item-badge--waiting {
-  background: rgba(247, 178, 122, 0.14);
-  border-color: rgba(247, 178, 122, 0.4);
-  color: rgba(255, 220, 196, 0.95);
+.cdx-thread-item-badge--running::before {
+  background: var(--dot-running);
 }
 
-.cdx-thread-item-badge--error {
-  background: rgba(231, 92, 92, 0.14);
-  border-color: rgba(231, 92, 92, 0.4);
-  color: rgba(255, 196, 196, 0.95);
+.cdx-thread-item-badge--waiting::before {
+  background: var(--dot-waiting);
+}
+
+.cdx-thread-item-badge--error::before {
+  background: var(--dot-error);
 }
 
 .cdx-thread-item-badge--idle {
   color: rgba(255, 255, 255, 0.46);
-  border-color: rgba(255, 255, 255, 0.14);
 }
 
 .cdx-main {
@@ -565,12 +597,12 @@ textarea {
   align-items: center;
   gap: 8px;
   justify-content: flex-start;
-  padding: 8px 12px;
-  border-radius: 12px;
+  padding: 7px 10px;
+  border-radius: var(--radius-sm);
   border: 1px dashed rgba(255, 255, 255, 0.22);
   background: rgba(255, 255, 255, 0.04);
   color: rgba(255, 255, 255, 0.92);
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 500;
   cursor: pointer;
 }
@@ -596,7 +628,7 @@ textarea {
   background: rgba(255, 255, 255, 0.03);
   color: var(--text);
   padding: 7px 10px;
-  border-radius: 10px;
+  border-radius: var(--radius-sm);
   font-size: 13px;
   -webkit-appearance: none;
   appearance: none;
@@ -746,7 +778,7 @@ textarea {
 .cdx-mobile-thread-switcher-item {
   width: 100%;
   border: 1px solid transparent;
-  border-radius: 12px;
+  border-radius: var(--radius-sm);
   background: rgba(255, 255, 255, 0.03);
   padding: 10px;
   text-align: left;
@@ -832,36 +864,42 @@ textarea {
 }
 
 .cdx-mobile-thread-switcher-badge {
-  padding: 1px 7px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 1px 7px 1px 5px;
   border-radius: 999px;
   border: 1px solid transparent;
   font-size: 10px;
   line-height: 14px;
   letter-spacing: 0.02em;
   flex-shrink: 0;
+  color: rgba(255, 255, 255, 0.78);
 }
 
-.cdx-mobile-thread-switcher-badge--running {
-  background: rgba(102, 230, 158, 0.14);
-  border-color: rgba(102, 230, 158, 0.42);
-  color: rgba(196, 248, 220, 0.95);
+.cdx-mobile-thread-switcher-badge::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.22);
+  flex-shrink: 0;
 }
 
-.cdx-mobile-thread-switcher-badge--waiting {
-  background: rgba(247, 178, 122, 0.14);
-  border-color: rgba(247, 178, 122, 0.4);
-  color: rgba(255, 220, 196, 0.95);
+.cdx-mobile-thread-switcher-badge--running::before {
+  background: var(--dot-running);
 }
 
-.cdx-mobile-thread-switcher-badge--error {
-  background: rgba(231, 92, 92, 0.14);
-  border-color: rgba(231, 92, 92, 0.4);
-  color: rgba(255, 196, 196, 0.95);
+.cdx-mobile-thread-switcher-badge--waiting::before {
+  background: var(--dot-waiting);
+}
+
+.cdx-mobile-thread-switcher-badge--error::before {
+  background: var(--dot-error);
 }
 
 .cdx-mobile-thread-switcher-badge--idle {
   color: rgba(255, 255, 255, 0.46);
-  border-color: rgba(255, 255, 255, 0.14);
 }
 
 .cdx-status-banner {
@@ -945,19 +983,30 @@ textarea {
   padding: 12px;
 }
 
-.cdx-status.is-online {
-  background: rgba(15, 88, 43, 0.45);
-  border-color: rgba(45, 190, 110, 0.4);
+.cdx-status {
+  gap: 6px;
+  background: transparent;
 }
 
-.cdx-status.is-pending {
-  background: rgba(133, 96, 2, 0.45);
-  border-color: rgba(243, 190, 24, 0.42);
+.cdx-status::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.22);
+  flex-shrink: 0;
 }
 
-.cdx-status.is-offline {
-  background: rgba(108, 31, 31, 0.45);
-  border-color: rgba(241, 108, 108, 0.42);
+.cdx-status.is-online::before {
+  background: var(--dot-running);
+}
+
+.cdx-status.is-pending::before {
+  background: var(--dot-waiting);
+}
+
+.cdx-status.is-offline::before {
+  background: var(--dot-error);
 }
 
 .cdx-explore-grid {
@@ -1546,12 +1595,15 @@ textarea {
 }
 
 .cdx-send-btn {
-  height: 30px;
-  border-radius: 999px;
+  height: 28px;
+  border-radius: var(--radius-sm);
   border: 1px solid rgba(255, 255, 255, 0.18);
-  background: rgba(255, 255, 255, 0.15);
+  background: rgba(255, 255, 255, 0.13);
   color: rgba(235, 247, 255, 0.95);
-  padding: 0 14px;
+  padding: 0 12px;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
 }
 
 .cdx-send-btn:disabled {
@@ -1993,16 +2045,31 @@ textarea {
   letter-spacing: 0.02em;
 }
 
-.cdx-mobile-chat-pill--plan {
-  background: rgba(122, 162, 247, 0.16);
-  color: rgba(196, 214, 255, 0.95);
-  border: 1px solid rgba(122, 162, 247, 0.32);
+.cdx-mobile-chat-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px 2px 6px;
+  border: 1px solid var(--border-soft);
+  background: transparent;
+  color: rgba(255, 255, 255, 0.78);
 }
 
-.cdx-mobile-chat-pill--flex {
-  background: rgba(247, 178, 122, 0.16);
-  color: rgba(255, 220, 196, 0.95);
-  border: 1px solid rgba(247, 178, 122, 0.32);
+.cdx-mobile-chat-pill::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.22);
+  flex-shrink: 0;
+}
+
+.cdx-mobile-chat-pill--plan::before {
+  background: var(--dot-info);
+}
+
+.cdx-mobile-chat-pill--flex::before {
+  background: var(--dot-waiting);
 }
 
 .cdx-mobile-icon-btn {
@@ -2025,13 +2092,13 @@ textarea {
 }
 
 .cdx-mobile-icon-btn--stop {
-  background: rgba(231, 92, 92, 0.18);
-  border-color: rgba(231, 92, 92, 0.45);
-  color: rgba(255, 196, 196, 0.95);
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.16);
+  color: var(--dot-error);
 }
 
 .cdx-mobile-icon-btn--stop:active:not(:disabled) {
-  background: rgba(231, 92, 92, 0.32);
+  background: rgba(255, 255, 255, 0.12);
 }
 
 .cdx-mobile-icon-btn--stop:disabled {
@@ -2167,7 +2234,7 @@ textarea {
 
 .cdx-mobile-inline-btn {
   border: 1px solid transparent;
-  border-radius: 10px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--muted);
   font-size: 11px;
