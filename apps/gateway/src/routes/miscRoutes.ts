@@ -3,6 +3,7 @@ import type {
   AccountRateLimitsResponse,
   FuzzyFileMatch,
   FuzzyFileSearchResponse,
+  GatewayStatusResponse,
   HealthResponse,
   ModelOption,
   ModelsResponse,
@@ -10,8 +11,15 @@ import type {
 import type { GatewayAppServerPort } from "../appServerPort.js";
 import { asRecord, readString, toModelOption, type RawModel } from "../gatewayHelpers.js";
 
+export type GatewayStatusSnapshot = () => GatewayStatusResponse;
+
 export type MiscRoutesDeps = {
   appServer: GatewayAppServerPort;
+  /**
+   * Optional snapshot fn for /api/gateway/status. Routes without this dep
+   * simply don't expose the endpoint (keeps the test stub minimal).
+   */
+  gatewayStatus?: GatewayStatusSnapshot;
 };
 
 type RawModelListResult = {
@@ -23,7 +31,7 @@ const FUZZY_FILE_SEARCH_LIMIT = 50;
 
 export function registerMiscRoutes(
   app: FastifyInstance,
-  { appServer }: MiscRoutesDeps,
+  { appServer, gatewayStatus }: MiscRoutesDeps,
 ): void {
   app.get("/health", async (): Promise<HealthResponse> => {
     const connected = appServer.isConnected;
@@ -34,6 +42,10 @@ export function registerMiscRoutes(
       message: appServer.errorMessage ?? undefined,
     };
   });
+
+  if (gatewayStatus) {
+    app.get("/api/gateway/status", async (): Promise<GatewayStatusResponse> => gatewayStatus());
+  }
 
   app.get("/api/models", async (request): Promise<ModelsResponse> => {
     const query = request.query as { includeHidden?: string };

@@ -45,6 +45,8 @@ export type AppServerProjection = {
   subscribe(threadId: string, fn: (event: GatewayEvent) => void): () => void;
   broadcast(event: GatewayEvent): void;
   reconcilePendingInteractionsOnStartup(): void;
+  /** Counts for the /api/gateway/status observability endpoint. */
+  stats(): { subscriberThreadCount: number; subscriberTotal: number };
 };
 
 export function extractThreadId(params: unknown): string | null {
@@ -331,9 +333,18 @@ export function attachAppServerProjection({
     broadcast({ ...eventBase, seq });
   });
 
+  function stats(): { subscriberThreadCount: number; subscriberTotal: number } {
+    let total = 0;
+    for (const listeners of subscribers.values()) {
+      total += listeners.size;
+    }
+    return { subscriberThreadCount: subscribers.size, subscriberTotal: total };
+  }
+
   return {
     subscribe,
     broadcast,
     reconcilePendingInteractionsOnStartup,
+    stats,
   };
 }

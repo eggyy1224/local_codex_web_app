@@ -5,6 +5,32 @@ export type HealthResponse = {
   message?: string;
 };
 
+export type GatewayStatusResponse = {
+  status: "ok" | "degraded";
+  timestamp: string;
+  uptimeSeconds: number;
+  appServer: {
+    connected: boolean;
+    lastError: string | null;
+  };
+  terminal: {
+    enabled: boolean;
+    sessionCount: number;
+  };
+  events: {
+    subscriberThreadCount: number;
+    subscriberTotal: number;
+    activeTurnCount: number;
+  };
+  sessionIndex: {
+    size: number;
+  };
+  pending: {
+    approvals: number;
+    interactions: number;
+  };
+};
+
 export type ThreadStatus =
   | "notLoaded"
   | "idle"

@@ -133,6 +133,11 @@ export class TerminalManager {
     this.sessionEndedListener = listener;
   }
 
+  /** Live session count for the /api/gateway/status observability endpoint. */
+  sessionCount(): number {
+    return this.sessionsByThreadId.size;
+  }
+
   private emitSessionEnded(event: TerminalSessionEndedEvent): void {
     if (!this.sessionEndedListener) {
       return;

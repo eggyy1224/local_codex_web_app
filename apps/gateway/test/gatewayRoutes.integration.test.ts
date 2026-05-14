@@ -112,6 +112,54 @@ describe("gateway integration routes", () => {
     }
   });
 
+  it("GET /api/gateway/status returns the live observability snapshot", async () => {
+    const ctx = await createTestContext();
+    try {
+      ctx.stub.isConnected = true;
+      const okRes = await ctx.app.inject({ method: "GET", url: "/api/gateway/status" });
+      expect(okRes.statusCode).toBe(200);
+      const body = okRes.json() as Record<string, unknown>;
+      expect(body).toMatchObject({
+        status: "ok",
+        appServer: { connected: true, lastError: null },
+        terminal: { enabled: true, sessionCount: 0 },
+        events: {
+          subscriberThreadCount: 0,
+          subscriberTotal: 0,
+          activeTurnCount: 0,
+        },
+        pending: { approvals: 0, interactions: 0 },
+      });
+      expect(typeof body.timestamp).toBe("string");
+      expect(typeof body.uptimeSeconds).toBe("number");
+      expect((body.sessionIndex as { size?: unknown })?.size).toBeTypeOf("number");
+
+      ctx.stub.isConnected = false;
+      ctx.stub.errorMessage = "spawn error";
+      const degradedRes = await ctx.app.inject({ method: "GET", url: "/api/gateway/status" });
+      expect(degradedRes.statusCode).toBe(200);
+      expect(degradedRes.json()).toMatchObject({
+        status: "degraded",
+        appServer: { connected: false, lastError: "spawn error" },
+      });
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  it("GET /api/gateway/status reports terminal.enabled=false when the dock is gated off", async () => {
+    const ctx = await createTestContext({ appConfig: { terminalEnabled: false } });
+    try {
+      const res = await ctx.app.inject({ method: "GET", url: "/api/gateway/status" });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toMatchObject({
+        terminal: { enabled: false, sessionCount: 0 },
+      });
+    } finally {
+      await ctx.close();
+    }
+  });
+
   it("GET /api/models paginates, deduplicates, and forwards includeHidden", async () => {
     const ctx = await createTestContext();
     try {

@@ -67,6 +67,11 @@ export class ThreadContextResolver {
     this.contextByThreadId.delete(threadId);
   }
 
+  /** Indexed session-file count for the /api/gateway/status endpoint. */
+  sessionIndexSize(): number {
+    return this.sessionFileByThreadId.size;
+  }
+
   async resolveProjectKey(threadId: string, projectedProjectKey?: string): Promise<string> {
     const context = await this.resolveThreadContext(threadId, projectedProjectKey);
     if (context.isFallback || !context.cwd) {

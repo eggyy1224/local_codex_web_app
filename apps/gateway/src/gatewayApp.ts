@@ -133,7 +133,7 @@ export async function createGatewayApp(
   const pendingInteractions = new Map<string, PendingInteractionEntry>();
   const collaborationModeListSupported: { value: boolean | null } = { value: null };
 
-  const { subscribe, broadcast, reconcilePendingInteractionsOnStartup } =
+  const { subscribe, broadcast, reconcilePendingInteractionsOnStartup, stats: projectionStats } =
     attachAppServerProjection({
       appServer,
       db,
@@ -153,7 +153,45 @@ if (config.startAppServerOnBoot ?? true) {
   }
 }
 
-registerMiscRoutes(app, { appServer });
+registerMiscRoutes(app, {
+  appServer,
+  gatewayStatus: () => {
+    const projection = projectionStats();
+    const connected = appServer.isConnected;
+    return {
+      status: connected ? "ok" : "degraded",
+      timestamp: new Date().toISOString(),
+      uptimeSeconds: Math.round(process.uptime()),
+      appServer: {
+        connected,
+        lastError: appServer.errorMessage ?? null,
+      },
+      terminal: {
+        enabled: terminalEnabled,
+        // Test stubs may not implement sessionCount(); guard defensively.
+        sessionCount:
+          terminalManager && typeof terminalManager.sessionCount === "function"
+            ? terminalManager.sessionCount()
+            : 0,
+      },
+      events: {
+        subscriberThreadCount: projection.subscriberThreadCount,
+        subscriberTotal: projection.subscriberTotal,
+        activeTurnCount: activeTurnByThread.size,
+      },
+      sessionIndex: {
+        size:
+          typeof threadContextResolver.sessionIndexSize === "function"
+            ? threadContextResolver.sessionIndexSize()
+            : 0,
+      },
+      pending: {
+        approvals: pendingApprovals.size,
+        interactions: pendingInteractions.size,
+      },
+    };
+  },
+});
 
 registerThreadsRoutes(app, {
   appServer,
