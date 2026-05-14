@@ -2706,6 +2706,22 @@ textarea {
   margin-bottom: 6px;
 }
 
+.cdx-composer.is-drag-over {
+  border-color: rgba(129, 187, 255, 0.85);
+  background: rgba(31, 31, 31, 0.85);
+  box-shadow: 0 0 0 2px rgba(129, 187, 255, 0.18) inset;
+}
+
+.cdx-mobile-composer-shell.is-drag-over {
+  background:
+    linear-gradient(180deg, rgba(129, 187, 255, 0.08) 0%, rgba(9, 9, 9, 0.96) 35%, rgba(9, 9, 9, 0.98) 100%);
+}
+
+.cdx-mobile-composer-shell.is-drag-over .cdx-mobile-composer {
+  border-color: rgba(129, 187, 255, 0.85);
+  box-shadow: 0 0 0 2px rgba(129, 187, 255, 0.18) inset;
+}
+
 .cdx-md-image {
   max-width: 100%;
   max-height: 360px;

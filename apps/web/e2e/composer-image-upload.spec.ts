@@ -16,6 +16,96 @@ test.beforeEach(async ({ page }) => {
   }, gatewayUrl);
 });
 
+test("desktop composer: pick + drag-drop, see thumbnails, send a turn with localImage", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop");
+
+  await page.goto("/");
+  await expect(page.getByText("Gateway connected")).toBeVisible();
+
+  await page.getByRole("button", { name: "New thread" }).first().click();
+  await expect(page).toHaveURL(/\/threads\//);
+  await expect(page.getByTestId("turn-input")).toBeVisible();
+
+  const sendButton = page.getByTestId("turn-submit");
+  await expect(sendButton).toBeDisabled();
+
+  // Path 1: Add image button → hidden file input.
+  await expect(page.getByTestId("desktop-composer-add-image")).toBeVisible();
+  await page
+    .getByTestId("desktop-composer-file-input")
+    .setInputFiles({
+      name: "picked.png",
+      mimeType: "image/png",
+      buffer: samplePngBytes,
+    });
+
+  const firstThumb = page.getByTestId("composer-attachment-thumb").first();
+  await expect(firstThumb).toBeVisible();
+  await expect
+    .poll(() => firstThumb.getAttribute("data-attachment-status"), {
+      timeout: 5_000,
+    })
+    .toBe("ready");
+
+  // Path 2: simulate a drag-drop onto the composer card. Playwright can't
+  // forge a real DataTransfer.files, so build one in-page and dispatch the
+  // drop event so the React handler still sees `dataTransfer.files`.
+  await page.evaluate(async ({ b64 }) => {
+    const composer = document.querySelector('[data-testid="desktop-composer"]') as HTMLElement;
+    if (!composer) throw new Error("composer not found");
+    const binary = atob(b64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+    const file = new File([bytes], "dropped.png", { type: "image/png" });
+    const dt = new DataTransfer();
+    dt.items.add(file);
+    composer.dispatchEvent(
+      new DragEvent("dragenter", { bubbles: true, dataTransfer: dt }),
+    );
+    composer.dispatchEvent(
+      new DragEvent("dragover", { bubbles: true, dataTransfer: dt }),
+    );
+    composer.dispatchEvent(
+      new DragEvent("drop", { bubbles: true, dataTransfer: dt }),
+    );
+  }, { b64: samplePngBytes.toString("base64") });
+
+  // After drop there should be 2 thumbs and the new one should reach ready.
+  await expect
+    .poll(() => page.getByTestId("composer-attachment-thumb").count(), {
+      timeout: 5_000,
+    })
+    .toBe(2);
+  await expect
+    .poll(
+      () =>
+        page
+          .getByTestId("composer-attachment-thumb")
+          .nth(1)
+          .getAttribute("data-attachment-status"),
+      { timeout: 5_000 },
+    )
+    .toBe("ready");
+
+  await expect(sendButton).not.toBeDisabled();
+
+  const turnRequestPromise = page.waitForRequest(
+    (req) => req.method() === "POST" && /\/api\/threads\/[^/]+\/turns$/.test(req.url()),
+  );
+  await sendButton.click();
+  const turnRequest = await turnRequestPromise;
+  const body = JSON.parse(turnRequest.postData() ?? "{}") as {
+    input: Array<{ type: string; path?: string; text?: string }>;
+  };
+  const localImageItems = body.input.filter((item) => item.type === "localImage");
+  expect(localImageItems.length).toBe(2);
+  expect(localImageItems.every((item) => item.path?.startsWith("/"))).toBe(true);
+
+  await expect(page.getByTestId("composer-attachment-strip")).toHaveCount(0);
+});
+
 test("mobile composer: pick an image, see thumbnail, send a turn with localImage", async ({
   page,
 }, testInfo) => {

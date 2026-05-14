@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import type {
   ChangeEvent as ReactChangeEvent,
   ClipboardEvent as ReactClipboardEvent,
+  DragEvent as ReactDragEvent,
   KeyboardEvent as ReactKeyboardEvent,
   PointerEvent as ReactPointerEvent,
 } from "react";
@@ -101,6 +102,42 @@ export default function MobileComposerDock({
     event.target.value = "";
   };
 
+  const [isDragOver, setIsDragOver] = useState(false);
+
+  const handleDragOver = (event: ReactDragEvent<HTMLElement>) => {
+    if (!event.dataTransfer?.types?.includes("Files")) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+  };
+
+  const handleDragEnter = (event: ReactDragEvent<HTMLElement>) => {
+    if (!event.dataTransfer?.types?.includes("Files")) return;
+    event.preventDefault();
+    setIsDragOver(true);
+  };
+
+  const handleDragLeave = (event: ReactDragEvent<HTMLElement>) => {
+    const next = event.relatedTarget as Node | null;
+    if (!next || !event.currentTarget.contains(next)) {
+      setIsDragOver(false);
+    }
+  };
+
+  const handleDrop = (event: ReactDragEvent<HTMLElement>) => {
+    if (!event.dataTransfer?.types?.includes("Files")) return;
+    event.preventDefault();
+    setIsDragOver(false);
+    if (!onPickFiles) return;
+    const dropped = event.dataTransfer.files;
+    if (!dropped || dropped.length === 0) return;
+    const files: File[] = [];
+    for (let i = 0; i < dropped.length; i += 1) {
+      const file = dropped[i];
+      if (file && file.type.startsWith("image/")) files.push(file);
+    }
+    if (files.length > 0) onPickFiles(files);
+  };
+
   const handleTextareaPaste = (event: ReactClipboardEvent<HTMLTextAreaElement>) => {
     if (!onPickFiles) return;
     const items = event.clipboardData?.items;
@@ -169,9 +206,13 @@ export default function MobileComposerDock({
 
   return (
     <section
-      className={`cdx-mobile-composer-shell ${steerActive ? "is-steer" : ""}`}
+      className={`cdx-mobile-composer-shell ${steerActive ? "is-steer" : ""} ${isDragOver ? "is-drag-over" : ""}`}
       data-testid="mobile-composer-dock"
       data-mode={steerActive ? "steer" : "idle"}
+      onDragOver={handleDragOver}
+      onDragEnter={handleDragEnter}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
     >
       <div
         className="cdx-mobile-composer-swipe-handle"

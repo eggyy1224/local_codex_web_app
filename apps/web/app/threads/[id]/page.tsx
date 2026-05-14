@@ -1827,6 +1827,60 @@ export default function ThreadPage({ params }: Props) {
     [handlePickFiles],
   );
 
+  const [isComposerDragOver, setIsComposerDragOver] = useState(false);
+
+  const handleComposerDragOver = useCallback(
+    (event: React.DragEvent<HTMLElement>) => {
+      // Only react to file drags — text-only drags (selection from textarea)
+      // should keep their default behavior so users can still rearrange text.
+      if (!event.dataTransfer?.types?.includes("Files")) return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "copy";
+    },
+    [],
+  );
+
+  const handleComposerDragEnter = useCallback(
+    (event: React.DragEvent<HTMLElement>) => {
+      if (!event.dataTransfer?.types?.includes("Files")) return;
+      event.preventDefault();
+      setIsComposerDragOver(true);
+    },
+    [],
+  );
+
+  const handleComposerDragLeave = useCallback(
+    (event: React.DragEvent<HTMLElement>) => {
+      // dragenter/leave fire repeatedly as the cursor crosses child elements;
+      // only clear the highlight when the drag actually exits the composer.
+      const next = event.relatedTarget as Node | null;
+      if (!next || !event.currentTarget.contains(next)) {
+        setIsComposerDragOver(false);
+      }
+    },
+    [],
+  );
+
+  const handleComposerDrop = useCallback(
+    (event: React.DragEvent<HTMLElement>) => {
+      if (!event.dataTransfer?.types?.includes("Files")) return;
+      event.preventDefault();
+      setIsComposerDragOver(false);
+      // Steer mode is text-only; drop with no effect (same rule as the
+      // Add image button).
+      if (runningTurnId !== null) return;
+      const dropped = event.dataTransfer.files;
+      if (!dropped || dropped.length === 0) return;
+      const files: File[] = [];
+      for (let i = 0; i < dropped.length; i += 1) {
+        const file = dropped[i];
+        if (file && file.type.startsWith("image/")) files.push(file);
+      }
+      if (files.length > 0) void handlePickFiles(files);
+    },
+    [handlePickFiles, runningTurnId],
+  );
+
   const submitTurnText = useCallback(
     async (
       rawText: string,
@@ -3467,7 +3521,14 @@ export default function ThreadPage({ params }: Props) {
             </aside>
           ) : null}
 
-          <section className="cdx-composer">
+          <section
+            className={`cdx-composer ${isComposerDragOver ? "is-drag-over" : ""}`}
+            data-testid="desktop-composer"
+            onDragOver={handleComposerDragOver}
+            onDragEnter={handleComposerDragEnter}
+            onDragLeave={handleComposerDragLeave}
+            onDrop={handleComposerDrop}
+          >
             <input
               ref={desktopFileInputRef}
               type="file"
