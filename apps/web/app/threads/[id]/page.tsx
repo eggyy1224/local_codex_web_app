@@ -81,13 +81,18 @@ import {
   asRecord,
   formatRateLimitStatus,
   formatTimestamp,
+  implementPlanPrompt,
   interactionFromEvent,
   isCollaborationModeKind,
+  isImplementPlanPromptForPlan,
+  isStoredPlanAction,
+  planActionStorageKey,
   readString,
   THREAD_MODE_STORAGE_KEY_PREFIX,
   threadModeStorageKey,
   tokenUsageFromEvent,
   type CollaborationModeKind,
+  type PlanActionState,
   type PendingApprovalCard,
   type PendingInteractionCard,
   type ThreadTokenUsageSummary,
@@ -194,9 +199,10 @@ export default function ThreadPage({ params }: Props) {
   const [showAllTurns, setShowAllTurns] = useState(false);
   const [latestTokenUsage, setLatestTokenUsage] = useState<ThreadTokenUsageSummary | null>(null);
   const [statusBanner, setStatusBanner] = useState<StatusBanner | null>(null);
-  const [dismissedPlanReadyByTurn, setDismissedPlanReadyByTurn] = useState<
-    Record<string, boolean>
+  const [planActionByStorageKey, setPlanActionByStorageKey] = useState<
+    Record<string, PlanActionState>
   >({});
+  const [planActionStorageReadyKey, setPlanActionStorageReadyKey] = useState("");
   const [desktopDockTab, setDesktopDockTab] = useState<"questions" | "approvals">("questions");
   const [desktopQuestionDrafts, setDesktopQuestionDrafts] = useState<InteractionQuestionDrafts>(
     {},
@@ -204,6 +210,7 @@ export default function ThreadPage({ params }: Props) {
   const [implementDialogOpen, setImplementDialogOpen] = useState(false);
   const [implementDraft, setImplementDraft] = useState("");
   const [implementTargetTurnId, setImplementTargetTurnId] = useState<string | null>(null);
+  const [implementTargetPlanText, setImplementTargetPlanText] = useState<string | null>(null);
   const [activeSlashIndex, setActiveSlashIndex] = useState(0);
   const [slashMenuDismissed, setSlashMenuDismissed] = useState(false);
   const slashSuggestions = useMemo(
@@ -415,10 +422,12 @@ export default function ThreadPage({ params }: Props) {
     setPendingNewTurn(null);
     setDesktopDockTab("questions");
     setDesktopQuestionDrafts({});
-    setDismissedPlanReadyByTurn({});
+    setPlanActionByStorageKey({});
+    setPlanActionStorageReadyKey("");
     setImplementDialogOpen(false);
     setImplementDraft("");
     setImplementTargetTurnId(null);
+    setImplementTargetPlanText(null);
   }, [threadId]);
 
   useEffect(() => {
@@ -949,6 +958,89 @@ export default function ThreadPage({ params }: Props) {
     return result;
   }, [allConversationTurns]);
 
+  const implementedPlanReadyByTurnId = useMemo(() => {
+    const result: Record<string, boolean> = {};
+    const turnIndexById = new Map(
+      allConversationTurns.map((turn, index) => [turn.turnId, index] as const),
+    );
+    for (const [turnId, planText] of Object.entries(planReadyByTurnId)) {
+      const planTurnIndex = turnIndexById.get(turnId);
+      if (planTurnIndex === undefined) {
+        continue;
+      }
+      const wasImplemented = allConversationTurns
+        .slice(planTurnIndex + 1)
+        .some((turn) => isImplementPlanPromptForPlan(turn.userText, planText));
+      if (wasImplemented) {
+        result[turnId] = true;
+      }
+    }
+    return result;
+  }, [allConversationTurns, planReadyByTurnId]);
+
+  const planActionStorageReadinessKey = useMemo(() => {
+    if (!threadId) {
+      return "";
+    }
+    return Object.entries(planReadyByTurnId)
+      .sort(([leftTurnId], [rightTurnId]) => leftTurnId.localeCompare(rightTurnId))
+      .map(([turnId, planText]) => planActionStorageKey(threadId, turnId, planText))
+      .join("|");
+  }, [planReadyByTurnId, threadId]);
+
+  useEffect(() => {
+    if (!threadId) {
+      setPlanActionStorageReadyKey("");
+      return;
+    }
+
+    setPlanActionByStorageKey((previous) => {
+      const next: Record<string, PlanActionState> = {};
+      for (const [turnId, planText] of Object.entries(planReadyByTurnId)) {
+        const key = planActionStorageKey(threadId, turnId, planText);
+        let stored: string | null = null;
+        try {
+          stored = window.localStorage.getItem(key);
+        } catch {
+          stored = null;
+        }
+        if (isStoredPlanAction(stored)) {
+          next[key] = stored;
+        } else if (previous[key]) {
+          next[key] = previous[key];
+        }
+      }
+      return next;
+    });
+    setPlanActionStorageReadyKey(planActionStorageReadinessKey);
+  }, [planActionStorageReadinessKey, threadId, planReadyByTurnId]);
+
+  const actionablePlanByTurnId = useMemo(() => {
+    const result: Record<string, string> = {};
+    const storageReady = !threadId || planActionStorageReadyKey === planActionStorageReadinessKey;
+    for (const [turnId, planText] of Object.entries(planReadyByTurnId)) {
+      if (implementedPlanReadyByTurnId[turnId]) {
+        continue;
+      }
+      if (!storageReady) {
+        continue;
+      }
+      const storageKey = threadId ? planActionStorageKey(threadId, turnId, planText) : turnId;
+      if (planActionByStorageKey[storageKey]) {
+        continue;
+      }
+      result[turnId] = planText;
+    }
+    return result;
+  }, [
+    implementedPlanReadyByTurnId,
+    planActionByStorageKey,
+    planActionStorageReadyKey,
+    planActionStorageReadinessKey,
+    planReadyByTurnId,
+    threadId,
+  ]);
+
   // Per-turn in-flight task checklist (latest snapshot of turn/plan/updated).
   // Rendered as a non-actionable progress box — distinct from a Plan-ready
   // CTA. Updated live as Codex marks items completed.
@@ -970,8 +1062,7 @@ export default function ThreadPage({ params }: Props) {
       : [
           ...allConversationTurns.filter(
             (turn) =>
-              Boolean(planReadyByTurnId[turn.turnId]) &&
-              !dismissedPlanReadyByTurn[turn.turnId] &&
+              Boolean(actionablePlanByTurnId[turn.turnId]) &&
               !latestTurns.some((candidate) => candidate.turnId === turn.turnId),
           ),
           ...latestTurns,
@@ -1010,7 +1101,7 @@ export default function ThreadPage({ params }: Props) {
       ],
     };
     return [...base, optimisticTurn];
-  }, [allConversationTurns, dismissedPlanReadyByTurn, pendingNewTurn, planReadyByTurnId, showAllTurns]);
+  }, [actionablePlanByTurnId, allConversationTurns, pendingNewTurn, showAllTurns]);
 
   // Clear the optimistic turn as soon as a real SSE user_message with the
   // same text arrives for this thread.
@@ -1255,7 +1346,8 @@ export default function ThreadPage({ params }: Props) {
 
   const openImplementDialog = useCallback((turnId: string, planText: string) => {
     setImplementTargetTurnId(turnId);
-    setImplementDraft(`Implement this plan:\n\n${planText}`);
+    setImplementTargetPlanText(planText);
+    setImplementDraft(implementPlanPrompt(planText));
     setImplementDialogOpen(true);
   }, []);
 
@@ -1722,12 +1814,36 @@ export default function ThreadPage({ params }: Props) {
     }
   }, [latestTokenUsage, threadId]);
 
-  const keepPlanning = useCallback((turnId: string) => {
-    setDismissedPlanReadyByTurn((prev) => ({
-      ...prev,
-      [turnId]: true,
-    }));
-  }, []);
+  const markPlanAction = useCallback(
+    (turnId: string, planText: string, action: PlanActionState) => {
+      if (!threadId || !planText) {
+        return;
+      }
+      const key = planActionStorageKey(threadId, turnId, planText);
+      setPlanActionByStorageKey((prev) => ({
+        ...prev,
+        [key]: action,
+      }));
+      try {
+        window.localStorage.setItem(key, action);
+      } catch {
+        // localStorage can be unavailable in private/restricted contexts; the
+        // in-memory state still keeps this page from immediately re-showing it.
+      }
+    },
+    [threadId],
+  );
+
+  const keepPlanning = useCallback(
+    (turnId: string, planText?: string) => {
+      const targetPlanText = planText ?? planReadyByTurnId[turnId];
+      if (!targetPlanText) {
+        return;
+      }
+      markPlanAction(turnId, targetPlanText, "dismissed");
+    },
+    [markPlanAction, planReadyByTurnId],
+  );
 
   const confirmImplementPlan = useCallback(async (): Promise<void> => {
     if (!implementDraft.trim()) {
@@ -1738,17 +1854,22 @@ export default function ThreadPage({ params }: Props) {
       return;
     }
     applyCollaborationMode("default");
-    if (implementTargetTurnId) {
-      setDismissedPlanReadyByTurn((prev) => ({
-        ...prev,
-        [implementTargetTurnId]: true,
-      }));
+    if (implementTargetTurnId && implementTargetPlanText) {
+      markPlanAction(implementTargetTurnId, implementTargetPlanText, "implemented");
     }
     setImplementDialogOpen(false);
     setImplementTargetTurnId(null);
+    setImplementTargetPlanText(null);
     setImplementDraft("");
     setPrompt("");
-  }, [applyCollaborationMode, implementDraft, implementTargetTurnId, submitTurnText]);
+  }, [
+    applyCollaborationMode,
+    implementDraft,
+    implementTargetPlanText,
+    implementTargetTurnId,
+    markPlanAction,
+    submitTurnText,
+  ]);
 
   const applyPromptSlash = useCallback((command: KnownSlashCommand) => {
     setPrompt((previous) => applySlashSuggestion(previous, command));
@@ -1993,9 +2114,9 @@ export default function ThreadPage({ params }: Props) {
             onOpenMessageDetails={openMessageDetails}
             viewMode={mobileViewMode}
             renderTurnActions={(turnId) => {
-              const planText = planReadyByTurnId[turnId];
+              const planText = actionablePlanByTurnId[turnId];
               const progressText = turnProgressByTurnId[turnId];
-              const showPlan = planText && !dismissedPlanReadyByTurn[turnId];
+              const showPlan = Boolean(planText);
               return (
                 <>
                   {progressText ? (
@@ -2030,7 +2151,7 @@ export default function ThreadPage({ params }: Props) {
                         <button
                           type="button"
                           className="cdx-toolbar-btn"
-                          onClick={() => keepPlanning(turnId)}
+                          onClick={() => keepPlanning(turnId, planText)}
                         >
                           Keep planning
                         </button>
@@ -2208,10 +2329,12 @@ export default function ThreadPage({ params }: Props) {
                 type="button"
                 className="cdx-toolbar-btn"
                 onClick={() => {
-                  if (implementTargetTurnId) {
-                    keepPlanning(implementTargetTurnId);
+                  if (implementTargetTurnId && implementTargetPlanText) {
+                    keepPlanning(implementTargetTurnId, implementTargetPlanText);
                   }
                   setImplementDialogOpen(false);
+                  setImplementTargetTurnId(null);
+                  setImplementTargetPlanText(null);
                 }}
               >
                 Keep planning
@@ -2644,26 +2767,26 @@ export default function ThreadPage({ params }: Props) {
                         </pre>
                       </section>
                     ) : null}
-                    {planReadyByTurnId[turn.turnId] && !dismissedPlanReadyByTurn[turn.turnId] ? (
+                    {actionablePlanByTurnId[turn.turnId] ? (
                       <section className="cdx-message cdx-message--detail cdx-plan-ready-card">
                         <div className="cdx-message-meta">
                           <strong className="cdx-message-role">Plan ready</strong>
                         </div>
                         <pre className="cdx-turn-body cdx-turn-body--plan">
-                          {truncateText(planReadyByTurnId[turn.turnId], 4000)}
+                          {truncateText(actionablePlanByTurnId[turn.turnId], 4000)}
                         </pre>
                         <div className="cdx-inline-actions">
                           <button
                             type="button"
                             className="cdx-toolbar-btn cdx-toolbar-btn--positive"
-                            onClick={() => openImplementDialog(turn.turnId, planReadyByTurnId[turn.turnId])}
+                            onClick={() => openImplementDialog(turn.turnId, actionablePlanByTurnId[turn.turnId])}
                           >
                             Implement this plan
                           </button>
                           <button
                             type="button"
                             className="cdx-toolbar-btn"
-                            onClick={() => keepPlanning(turn.turnId)}
+                            onClick={() => keepPlanning(turn.turnId, actionablePlanByTurnId[turn.turnId])}
                           >
                             Keep planning
                           </button>
@@ -2966,10 +3089,12 @@ export default function ThreadPage({ params }: Props) {
                 type="button"
                 className="cdx-toolbar-btn"
                 onClick={() => {
-                  if (implementTargetTurnId) {
-                    keepPlanning(implementTargetTurnId);
+                  if (implementTargetTurnId && implementTargetPlanText) {
+                    keepPlanning(implementTargetTurnId, implementTargetPlanText);
                   }
                   setImplementDialogOpen(false);
+                  setImplementTargetTurnId(null);
+                  setImplementTargetPlanText(null);
                 }}
               >
                 Keep planning

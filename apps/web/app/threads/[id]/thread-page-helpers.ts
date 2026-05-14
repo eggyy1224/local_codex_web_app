@@ -8,6 +8,7 @@ import type {
 export type PendingApprovalCard = ApprovalView;
 export type PendingInteractionCard = InteractionView;
 export type CollaborationModeKind = "plan" | "default";
+export type PlanActionState = "dismissed" | "implemented";
 
 export type ThreadTokenUsageSummary = {
   threadId: string;
@@ -20,6 +21,7 @@ export type ThreadTokenUsageSummary = {
 };
 
 export const THREAD_MODE_STORAGE_KEY_PREFIX = "lcwa.thread.mode.v1";
+export const PLAN_ACTION_STORAGE_KEY_PREFIX = "lcwa.thread.planAction.v1";
 
 export function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== "object") {
@@ -155,6 +157,63 @@ export function isCollaborationModeKind(
 
 export function threadModeStorageKey(threadId: string): string {
   return `${THREAD_MODE_STORAGE_KEY_PREFIX}.${threadId}`;
+}
+
+export function normalizePlanActionText(text: string): string {
+  return text.replace(/\r\n?/g, "\n").trim();
+}
+
+export function planActionHash(text: string): string {
+  let hash = 2166136261;
+  const normalized = normalizePlanActionText(text);
+  for (let index = 0; index < normalized.length; index += 1) {
+    hash ^= normalized.charCodeAt(index);
+    hash = Math.imul(hash, 16777619) >>> 0;
+  }
+  return hash.toString(36);
+}
+
+export function planActionStorageKey(
+  threadId: string,
+  turnId: string,
+  planText: string,
+): string {
+  return [
+    PLAN_ACTION_STORAGE_KEY_PREFIX,
+    encodeURIComponent(threadId),
+    encodeURIComponent(turnId),
+    planActionHash(planText),
+  ].join(".");
+}
+
+export function implementPlanPrompt(planText: string): string {
+  return `Implement this plan:\n\n${planText}`;
+}
+
+export function isStoredPlanAction(value: string | null): value is PlanActionState {
+  return value === "dismissed" || value === "implemented";
+}
+
+export function isImplementPlanPromptForPlan(
+  userText: string | null,
+  planText: string,
+): boolean {
+  if (!userText) {
+    return false;
+  }
+  const normalizedPlan = normalizePlanActionText(planText);
+  if (!normalizedPlan) {
+    return false;
+  }
+
+  const normalizedUserText = normalizePlanActionText(userText);
+  const prefix = "Implement this plan:";
+  if (!normalizedUserText.toLowerCase().startsWith(prefix.toLowerCase())) {
+    return false;
+  }
+
+  const body = normalizePlanActionText(normalizedUserText.slice(prefix.length));
+  return body === normalizedPlan || body.includes(normalizedPlan);
 }
 
 export function tokenUsageFromEvent(event: GatewayEvent): ThreadTokenUsageSummary | null {

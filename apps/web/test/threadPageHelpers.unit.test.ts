@@ -5,8 +5,15 @@ import {
   asRecord,
   formatRateLimitStatus,
   formatTimestamp,
+  implementPlanPrompt,
   interactionFromEvent,
   isCollaborationModeKind,
+  isImplementPlanPromptForPlan,
+  isStoredPlanAction,
+  normalizePlanActionText,
+  PLAN_ACTION_STORAGE_KEY_PREFIX,
+  planActionHash,
+  planActionStorageKey,
   readString,
   THREAD_MODE_STORAGE_KEY_PREFIX,
   threadModeStorageKey,
@@ -76,6 +83,41 @@ describe("thread-page-helpers", () => {
   describe("threadModeStorageKey", () => {
     it("combines the prefix with the thread id", () => {
       expect(threadModeStorageKey("abc")).toBe(`${THREAD_MODE_STORAGE_KEY_PREFIX}.abc`);
+    });
+  });
+
+  describe("plan action helpers", () => {
+    it("builds stable per-plan storage keys from normalized plan text", () => {
+      const plan = "  1. Add UI\r\n2. Verify  ";
+      const normalized = "1. Add UI\n2. Verify";
+
+      expect(normalizePlanActionText(plan)).toBe(normalized);
+      expect(planActionHash(plan)).toBe(planActionHash(normalized));
+      expect(planActionStorageKey("thread/1", "turn 1", plan)).toBe(
+        `${PLAN_ACTION_STORAGE_KEY_PREFIX}.thread%2F1.turn%201.${planActionHash(normalized)}`,
+      );
+    });
+
+    it("recognizes only stored plan action states", () => {
+      expect(isStoredPlanAction("dismissed")).toBe(true);
+      expect(isStoredPlanAction("implemented")).toBe(true);
+      expect(isStoredPlanAction("pending")).toBe(false);
+      expect(isStoredPlanAction(null)).toBe(false);
+    });
+
+    it("matches implemented-plan prompts against the original plan body", () => {
+      const plan = "1. Add API\n2. Verify";
+
+      expect(implementPlanPrompt(plan)).toBe("Implement this plan:\n\n1. Add API\n2. Verify");
+      expect(isImplementPlanPromptForPlan(implementPlanPrompt(plan), plan)).toBe(true);
+      expect(
+        isImplementPlanPromptForPlan(
+          `implement this plan:\n\nPlease do it carefully.\n\n${plan}`,
+          plan,
+        ),
+      ).toBe(true);
+      expect(isImplementPlanPromptForPlan("Keep planning:\n\n1. Add API\n2. Verify", plan)).toBe(false);
+      expect(isImplementPlanPromptForPlan(implementPlanPrompt("1. Different"), plan)).toBe(false);
     });
   });
 
