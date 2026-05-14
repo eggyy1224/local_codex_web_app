@@ -2059,13 +2059,21 @@ export default function ThreadPage({ params }: Props) {
           </div>
         ) : null}
 
-        <MobileActionLayer
-          pendingApprovals={pendingApprovalList}
-          pendingInteractions={pendingInteractionList}
-          approvalBusy={approvalBusy}
-          onDecision={(approvalId, decision) => void decideApproval(approvalId, decision)}
-          onOpenQuestion={() => openControlSheet("pending", "full")}
-        />
+        {/* The control sheet, the message details sheet, and the implement
+            dialog are themselves the canonical "answer / approve" surface
+            once they open — keep the floating action layer hidden while any
+            of them is up so it can't intercept clicks on the actual form
+            underneath (the action layer now sits at a higher z-index than
+            the sheet backdrop). */}
+        {isControlSheetOpen || isMessageDetailsOpen || implementDialogOpen ? null : (
+          <MobileActionLayer
+            pendingApprovals={pendingApprovalList}
+            pendingInteractions={pendingInteractionList}
+            approvalBusy={approvalBusy}
+            onDecision={(approvalId, decision) => void decideApproval(approvalId, decision)}
+            onOpenQuestion={() => openControlSheet("pending", "full")}
+          />
+        )}
 
         <MobileComposerDock
           prompt={prompt}
