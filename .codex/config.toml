@@ -1,0 +1,13 @@
+# Project-scoped MCP servers for local_codex_web_app.
+#
+# Codex reads this when the codex app-server is started with this directory
+# as cwd (which is what apps/gateway/src/appServerClient.ts does when it
+# spawns `codex app-server`). Restarting the gateway is enough to pick up
+# changes to this file — codex caches its config at startup.
+
+# Tieshan image library. FastMCP server lives at
+#   /Volumes/2024data/鐵山誌相關/tools/image_library
+# Start it with: `cd /Volumes/2024data/鐵山誌相關/tools/image_library && uv run image-library serve`
+# Exposes search/lineage/picks/SigLIP tools over HTTP.
+[mcp_servers.tieshan-images]
+url = "http://127.0.0.1:8794/mcp"
