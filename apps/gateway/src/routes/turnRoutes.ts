@@ -722,6 +722,10 @@ export function registerTurnRoutes(
       await interruptTurn();
     }
 
+    if (activeTurnByThread.get(params.id) === activeTurnId) {
+      activeTurnByThread.delete(params.id);
+    }
+
     return { ok: true, appliedToTurnId: activeTurnId };
   });
 }

@@ -57,7 +57,10 @@ function pushTimelineItem(
     previous.type === next.type &&
     previous.turnId === next.turnId &&
     previous.text === next.text &&
-    previous.rawType === next.rawType
+    previous.rawType === next.rawType &&
+    previous.title === next.title &&
+    previous.toolName === next.toolName &&
+    previous.callId === next.callId
   ) {
     return;
   }

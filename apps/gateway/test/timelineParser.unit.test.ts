@@ -66,6 +66,34 @@ describe("parseTimelineItemsFromLines", () => {
     expect(items[0].type).toBe("assistantMessage");
   });
 
+  it("keeps consecutive tool calls with same args but different call_id", () => {
+    // Regression: dedup keyed only on type/turnId/text/rawType collapsed two
+    // distinct tool calls whose payloads happened to share the same arguments.
+    const lines = [
+      line({
+        type: "event_msg",
+        timestamp: "2026-01-01T00:00:00.000Z",
+        payload: { type: "task_started", turn_id: "turn-1" },
+      }),
+      line({
+        type: "response_item",
+        timestamp: "2026-01-01T00:00:01.000Z",
+        payload: { type: "function_call", name: "read_file", arguments: "{}", call_id: "call-a" },
+      }),
+      line({
+        type: "response_item",
+        timestamp: "2026-01-01T00:00:02.000Z",
+        payload: { type: "function_call", name: "read_file", arguments: "{}", call_id: "call-b" },
+      }),
+    ];
+
+    const items = parseTimelineItemsFromLines(lines, "thread-1", 50);
+    const toolCalls = items.filter((item) => item.type === "toolCall");
+    expect(toolCalls).toHaveLength(2);
+    expect(toolCalls[0].callId).toBe("call-a");
+    expect(toolCalls[1].callId).toBe("call-b");
+  });
+
   it("emits turn_aborted as interrupted status and clears active turn", () => {
     const lines = [
       line({
