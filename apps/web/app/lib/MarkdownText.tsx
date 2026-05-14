@@ -3,6 +3,7 @@
 import { memo, type ReactElement } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { resolveMarkdownImageSrc } from "./resolve-image-src";
 
 type MarkdownTextProps = {
   text: string;
@@ -11,9 +12,16 @@ type MarkdownTextProps = {
    * `cdx-md` so global styles apply consistently across desktop + mobile.
    */
   className?: string;
+  /**
+   * Gateway base URL used to rewrite local filesystem image srcs (e.g.
+   * `![](/Volumes/.../photo.jpg)`) through `/api/files/preview`. When
+   * omitted, image srcs render verbatim — fine for non-assistant contexts
+   * where the markdown is known not to reference local paths.
+   */
+  gatewayUrl?: string;
 };
 
-function MarkdownTextInner({ text, className }: MarkdownTextProps): ReactElement {
+function MarkdownTextInner({ text, className, gatewayUrl }: MarkdownTextProps): ReactElement {
   const composed = className ? `cdx-md ${className}` : "cdx-md";
   return (
     <div className={composed}>
@@ -36,6 +44,24 @@ function MarkdownTextInner({ text, className }: MarkdownTextProps): ReactElement
               >
                 {children}
               </a>
+            );
+          },
+          // Codex assistant output frequently references images by local
+          // filesystem path (e.g. `![](/Volumes/.../foo.jpg)`). Rewrite those
+          // through the gateway's preview endpoint so they actually load.
+          img({ src, alt, ...rest }) {
+            const resolved =
+              typeof src === "string" && gatewayUrl
+                ? resolveMarkdownImageSrc(src, gatewayUrl)
+                : src;
+            return (
+              <img
+                src={resolved}
+                alt={alt ?? ""}
+                {...rest}
+                className="cdx-md-image"
+                loading="lazy"
+              />
             );
           },
         }}

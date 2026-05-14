@@ -2583,4 +2583,77 @@ describe("gateway integration routes", () => {
       await ctx.close();
     }
   });
+
+  it("GET /api/files/preview serves a local PNG when sniff matches", async () => {
+    const ctx = await createTestContext();
+    try {
+      const localPng = path.join(ctx.tmpDir, "preview-sample.png");
+      const { writeFileSync } = await import("node:fs");
+      writeFileSync(localPng, fakePngBuffer());
+      const res = await ctx.app.inject({
+        method: "GET",
+        url: `/api/files/preview?path=${encodeURIComponent(localPng)}`,
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.headers["content-type"]).toBe("image/png");
+      expect(res.rawPayload.byteLength).toBeGreaterThan(0);
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  it("GET /api/files/preview rejects non-image files with 415", async () => {
+    const ctx = await createTestContext();
+    try {
+      const textFile = path.join(ctx.tmpDir, "secrets.txt");
+      const { writeFileSync } = await import("node:fs");
+      writeFileSync(textFile, "totally not an image");
+      const res = await ctx.app.inject({
+        method: "GET",
+        url: `/api/files/preview?path=${encodeURIComponent(textFile)}`,
+      });
+      expect(res.statusCode).toBe(415);
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  it("GET /api/files/preview rejects relative path with 400", async () => {
+    const ctx = await createTestContext();
+    try {
+      const res = await ctx.app.inject({
+        method: "GET",
+        url: "/api/files/preview?path=relative/file.png",
+      });
+      expect(res.statusCode).toBe(400);
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  it("GET /api/files/preview returns 404 for missing file", async () => {
+    const ctx = await createTestContext();
+    try {
+      const res = await ctx.app.inject({
+        method: "GET",
+        url: `/api/files/preview?path=${encodeURIComponent(path.join(ctx.tmpDir, "does-not-exist.png"))}`,
+      });
+      expect(res.statusCode).toBe(404);
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  it("GET /api/files/preview returns 400 for missing path query", async () => {
+    const ctx = await createTestContext();
+    try {
+      const res = await ctx.app.inject({
+        method: "GET",
+        url: "/api/files/preview",
+      });
+      expect(res.statusCode).toBe(400);
+    } finally {
+      await ctx.close();
+    }
+  });
 });

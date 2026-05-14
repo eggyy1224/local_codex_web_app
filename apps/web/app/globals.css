@@ -2699,6 +2699,17 @@ textarea {
   background: rgba(0, 0, 0, 0.2);
 }
 
+.cdx-md-image {
+  max-width: 100%;
+  max-height: 360px;
+  border-radius: 8px;
+  border: 1px solid var(--border-soft);
+  object-fit: contain;
+  display: block;
+  margin: 6px 0;
+  background: rgba(0, 0, 0, 0.2);
+}
+
 .cdx-attachment-strip {
   display: flex;
   flex-wrap: nowrap;

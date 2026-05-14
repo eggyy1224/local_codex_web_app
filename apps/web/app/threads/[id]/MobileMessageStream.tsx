@@ -269,7 +269,7 @@ export default function MobileMessageStream({
                       ) : null}
                     </header>
                     <div className="cdx-turn-body cdx-turn-body--md">
-                      <MarkdownText text={segment.text} />
+                      <MarkdownText text={segment.text} gatewayUrl={gatewayUrl} />
                       {turn.isStreaming && isLastAssistant ? (
                         <span className="cdx-stream-cursor" aria-hidden="true" />
                       ) : null}
@@ -289,7 +289,7 @@ export default function MobileMessageStream({
                   >
                     <summary>Thinking</summary>
                     <div className="cdx-turn-body cdx-turn-body--md">
-                      <MarkdownText text={truncateText(segment.text, 6000)} />
+                      <MarkdownText text={truncateText(segment.text, 6000)} gatewayUrl={gatewayUrl} />
                     </div>
                   </details>
                 );
@@ -315,7 +315,7 @@ export default function MobileMessageStream({
                   </div>
                 </header>
                 <div className="cdx-turn-body cdx-turn-body--md">
-                  <MarkdownText text={fallbackAssistant} />
+                  <MarkdownText text={fallbackAssistant} gatewayUrl={gatewayUrl} />
                   {turn.isStreaming ? <span className="cdx-stream-cursor" aria-hidden="true" /> : null}
                 </div>
               </section>

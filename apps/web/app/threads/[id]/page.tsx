@@ -3093,7 +3093,7 @@ export default function ThreadPage({ params }: Props) {
                                   </button>
                                 </div>
                                 <div className="cdx-turn-body cdx-turn-body--md">
-                                  <MarkdownText text={truncateText(segment.text, 9000)} />
+                                  <MarkdownText text={truncateText(segment.text, 9000)} gatewayUrl={gatewayUrl} />
                                   {turn.isStreaming && isLastAssistant ? (
                                     <span className="cdx-stream-cursor" aria-hidden="true" />
                                   ) : null}
@@ -3113,7 +3113,7 @@ export default function ThreadPage({ params }: Props) {
                                   <strong className="cdx-message-role">Thinking</strong>
                                 </summary>
                                 <div className="cdx-turn-body cdx-turn-body--md">
-                                  <MarkdownText text={truncateText(segment.text, 6000)} />
+                                  <MarkdownText text={truncateText(segment.text, 6000)} gatewayUrl={gatewayUrl} />
                                 </div>
                               </details>
                             );
@@ -3230,7 +3230,7 @@ export default function ThreadPage({ params }: Props) {
                           </span>
                         </summary>
                         <div className="cdx-turn-body cdx-turn-body--md">
-                          <MarkdownText text={truncateText(turn.thinkingText ?? "", 6000)} />
+                          <MarkdownText text={truncateText(turn.thinkingText ?? "", 6000)} gatewayUrl={gatewayUrl} />
                           <span className="cdx-stream-cursor" aria-hidden="true" />
                         </div>
                       </details>
@@ -3256,7 +3256,7 @@ export default function ThreadPage({ params }: Props) {
                           </button>
                         </div>
                         <div className="cdx-turn-body cdx-turn-body--md">
-                          <MarkdownText text={truncateText(fallbackAssistantText, 9000)} />
+                          <MarkdownText text={truncateText(fallbackAssistantText, 9000)} gatewayUrl={gatewayUrl} />
                           {turn.isStreaming ? <span className="cdx-stream-cursor" aria-hidden="true" /> : null}
                         </div>
                       </section>
