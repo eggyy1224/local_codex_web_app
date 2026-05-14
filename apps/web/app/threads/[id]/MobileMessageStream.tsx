@@ -3,6 +3,7 @@
 import type { ReactNode, RefObject } from "react";
 import type { ConversationTurn, TurnSegment, TurnStatus } from "../../lib/thread-logic";
 import { statusClass, statusLabel, truncateText } from "../../lib/thread-logic";
+import { MarkdownText } from "../../lib/MarkdownText";
 
 type MobileMessageStreamProps = {
   turns: ConversationTurn[];
@@ -184,12 +185,12 @@ export default function MobileMessageStream({
                         </div>
                       ) : null}
                     </header>
-                    <pre className="cdx-turn-body">
-                      {segment.text}
+                    <div className="cdx-turn-body cdx-turn-body--md">
+                      <MarkdownText text={segment.text} />
                       {turn.isStreaming && isLastAssistant ? (
                         <span className="cdx-stream-cursor" aria-hidden="true" />
                       ) : null}
-                    </pre>
+                    </div>
                   </section>
                 );
               }
@@ -197,7 +198,9 @@ export default function MobileMessageStream({
                 return (
                   <details key={key} className="cdx-mobile-thinking-inline">
                     <summary>Thinking</summary>
-                    <pre className="cdx-turn-body">{truncateText(segment.text, 6000)}</pre>
+                    <div className="cdx-turn-body cdx-turn-body--md">
+                      <MarkdownText text={truncateText(segment.text, 6000)} />
+                    </div>
                   </details>
                 );
               }
@@ -221,10 +224,10 @@ export default function MobileMessageStream({
                     </button>
                   </div>
                 </header>
-                <pre className="cdx-turn-body">
-                  {fallbackAssistant}
+                <div className="cdx-turn-body cdx-turn-body--md">
+                  <MarkdownText text={fallbackAssistant} />
                   {turn.isStreaming ? <span className="cdx-stream-cursor" aria-hidden="true" /> : null}
-                </pre>
+                </div>
               </section>
             ) : null}
 

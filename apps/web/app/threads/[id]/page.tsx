@@ -29,6 +29,7 @@ import type {
   ThreadTimelineResponse,
   TurnPermissionMode,
 } from "@lcwa/shared-types";
+import { MarkdownText } from "../../lib/MarkdownText";
 import { resolveGatewayUrl } from "../../lib/gateway-url";
 import { useGatewayConfig } from "../../lib/use-gateway-config";
 import { applyFileMention, useFileMentionSearch } from "../../lib/use-file-mention-search";
@@ -2516,10 +2517,10 @@ export default function ThreadPage({ params }: Props) {
                             Copy
                           </button>
                         </div>
-                        <pre className="cdx-turn-body">
-                          {truncateText(turn.assistantText, 9000)}
+                        <div className="cdx-turn-body cdx-turn-body--md">
+                          <MarkdownText text={truncateText(turn.assistantText, 9000)} />
                           {turn.isStreaming ? <span className="cdx-stream-cursor" aria-hidden="true" /> : null}
-                        </pre>
+                        </div>
                       </section>
                     ) : turn.isStreaming ? (
                       <section className="cdx-thinking-placeholder" aria-live="polite">
@@ -2556,7 +2557,9 @@ export default function ThreadPage({ params }: Props) {
                                   <div className="cdx-message-meta">
                                     <strong className="cdx-message-role">Thinking</strong>
                                   </div>
-                                  <pre className="cdx-turn-body">{truncateText(detail.text, 6000)}</pre>
+                                  <div className="cdx-turn-body cdx-turn-body--md">
+                                    <MarkdownText text={truncateText(detail.text, 6000)} />
+                                  </div>
                                 </section>
                               );
                             }

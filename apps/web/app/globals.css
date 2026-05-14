@@ -899,6 +899,133 @@ textarea {
   font-family: "SF Pro Text", "Segoe UI", "Noto Sans TC", sans-serif;
 }
 
+/* Markdown-rendered assistant / thinking bodies: drop the pre-wrap so block
+ * elements (p, ul, code blocks) own their own spacing, and tighten typography
+ * for chat. Inline code stays monospace; fenced code blocks scroll horizontally
+ * instead of wrapping so long commands stay legible. */
+.cdx-turn-body--md {
+  white-space: normal;
+}
+
+.cdx-md > :first-child {
+  margin-top: 0;
+}
+.cdx-md > :last-child {
+  margin-bottom: 0;
+}
+.cdx-md p,
+.cdx-md ul,
+.cdx-md ol,
+.cdx-md blockquote,
+.cdx-md pre,
+.cdx-md table {
+  margin: 0 0 8px;
+}
+.cdx-md p:last-child,
+.cdx-md ul:last-child,
+.cdx-md ol:last-child,
+.cdx-md blockquote:last-child,
+.cdx-md pre:last-child,
+.cdx-md table:last-child {
+  margin-bottom: 0;
+}
+.cdx-md h1,
+.cdx-md h2,
+.cdx-md h3,
+.cdx-md h4,
+.cdx-md h5,
+.cdx-md h6 {
+  margin: 12px 0 6px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+.cdx-md h1 { font-size: 17px; }
+.cdx-md h2 { font-size: 15px; }
+.cdx-md h3 { font-size: 14px; }
+.cdx-md h4,
+.cdx-md h5,
+.cdx-md h6 { font-size: 13px; }
+.cdx-md ul,
+.cdx-md ol {
+  padding-left: 20px;
+}
+.cdx-md li + li {
+  margin-top: 2px;
+}
+.cdx-md li > p {
+  margin: 0;
+}
+.cdx-md a {
+  color: rgba(122, 162, 247, 0.95);
+  text-decoration: underline;
+  text-decoration-color: rgba(122, 162, 247, 0.4);
+  text-underline-offset: 2px;
+}
+.cdx-md a:hover {
+  text-decoration-color: rgba(122, 162, 247, 0.85);
+}
+.cdx-md strong {
+  color: rgba(255, 255, 255, 0.95);
+  font-weight: 600;
+}
+.cdx-md em {
+  font-style: italic;
+}
+.cdx-md code {
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 5px;
+  padding: 0 4px;
+  font-family: "SF Mono", "Consolas", "Noto Sans Mono CJK TC", monospace;
+  font-size: 0.9em;
+}
+.cdx-md pre {
+  background: rgba(0, 0, 0, 0.32);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  padding: 10px 12px;
+  overflow-x: auto;
+  white-space: pre;
+}
+.cdx-md pre code {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.cdx-md blockquote {
+  margin-left: 0;
+  padding: 4px 10px;
+  border-left: 3px solid rgba(255, 255, 255, 0.18);
+  color: rgba(255, 255, 255, 0.78);
+}
+.cdx-md hr {
+  border: 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  margin: 12px 0;
+}
+.cdx-md table {
+  border-collapse: collapse;
+  display: block;
+  overflow-x: auto;
+  max-width: 100%;
+}
+.cdx-md th,
+.cdx-md td {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  padding: 4px 8px;
+  text-align: left;
+}
+.cdx-md th {
+  background: rgba(255, 255, 255, 0.04);
+  font-weight: 600;
+}
+.cdx-md input[type="checkbox"] {
+  margin-right: 6px;
+  vertical-align: middle;
+}
+
 .cdx-message-stack {
   display: grid;
   gap: 8px;
