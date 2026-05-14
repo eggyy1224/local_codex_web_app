@@ -133,6 +133,7 @@ describe("gateway integration routes", () => {
       expect(typeof body.timestamp).toBe("string");
       expect(typeof body.uptimeSeconds).toBe("number");
       expect((body.sessionIndex as { size?: unknown })?.size).toBeTypeOf("number");
+      expect((body.sessionIndex as { ready?: unknown })?.ready).toBeTypeOf("boolean");
 
       ctx.stub.isConnected = false;
       ctx.stub.errorMessage = "spawn error";

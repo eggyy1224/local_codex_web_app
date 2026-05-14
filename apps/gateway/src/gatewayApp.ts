@@ -180,6 +180,10 @@ registerMiscRoutes(app, {
         activeTurnCount: activeTurnByThread.size,
       },
       sessionIndex: {
+        ready:
+          typeof threadContextResolver.isSessionIndexReady === "function"
+            ? threadContextResolver.isSessionIndexReady()
+            : true,
         size:
           typeof threadContextResolver.sessionIndexSize === "function"
             ? threadContextResolver.sessionIndexSize()

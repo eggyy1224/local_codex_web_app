@@ -23,6 +23,8 @@ export type GatewayStatusResponse = {
     activeTurnCount: number;
   };
   sessionIndex: {
+    /** False until the rollout-session file index has finished its first scan. */
+    ready: boolean;
     size: number;
   };
   pending: {

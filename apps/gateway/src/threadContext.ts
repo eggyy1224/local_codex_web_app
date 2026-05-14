@@ -44,6 +44,7 @@ export class ThreadContextResolver {
   private readonly lookupInFlight = new Map<string, Promise<ThreadContextResponse>>();
   private sessionIndexPromise: Promise<void> | null = null;
   private sessionIndexRefreshPromise: Promise<void> | null = null;
+  private sessionIndexReady = false;
 
   constructor(options: ResolverOptions = {}) {
     this.codexSessionsDir =
@@ -70,6 +71,14 @@ export class ThreadContextResolver {
   /** Indexed session-file count for the /api/gateway/status endpoint. */
   sessionIndexSize(): number {
     return this.sessionFileByThreadId.size;
+  }
+
+  /**
+   * True once the initial rollout-session index build has resolved. Disambiguates
+   * `sessionIndexSize() === 0` between "still indexing" and "no sessions on disk".
+   */
+  isSessionIndexReady(): boolean {
+    return this.sessionIndexReady;
   }
 
   async resolveProjectKey(threadId: string, projectedProjectKey?: string): Promise<string> {
@@ -180,6 +189,7 @@ export class ThreadContextResolver {
 
     this.sessionIndexPromise = (async () => {
       await this.buildSessionFileIndex(this.codexSessionsDir);
+      this.sessionIndexReady = true;
       this.logger?.info(
         { indexed: this.sessionFileByThreadId.size },
         "thread context session file index ready",

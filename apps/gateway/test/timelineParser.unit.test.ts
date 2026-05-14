@@ -319,6 +319,54 @@ describe("parseTimelineItemsFromLines", () => {
     expect(items.map((item) => item.text)).toEqual(["m25", "m26", "m27", "m28", "m29"]);
   });
 
+  it("skips event_msg / response_item lines when payload is missing or not an object", () => {
+    // Defends parseTimelineItemsFromLines against malformed rollout rows: the
+    // helper must neither crash nor emit half-populated entries when the
+    // payload field is absent or a primitive.
+    const lines = [
+      line({ type: "event_msg", timestamp: "2026-01-01T00:00:00.000Z" }),
+      line({
+        type: "event_msg",
+        timestamp: "2026-01-01T00:00:01.000Z",
+        payload: "not an object",
+      }),
+      line({ type: "response_item", timestamp: "2026-01-01T00:00:02.000Z" }),
+      line({
+        type: "response_item",
+        timestamp: "2026-01-01T00:00:03.000Z",
+        payload: 42,
+      }),
+      // Sentinel: a well-formed event after the malformed batch still parses.
+      line({
+        type: "event_msg",
+        timestamp: "2026-01-01T00:00:04.000Z",
+        payload: { type: "task_started", turn_id: "turn-1" },
+      }),
+    ];
+    const items = parseTimelineItemsFromLines(lines, "thread-1", 50);
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({ rawType: "task_started", turnId: "turn-1" });
+  });
+
+  it("emits toolCall/toolResult with callId=null when payload omits call_id", () => {
+    const lines = [
+      line({
+        type: "response_item",
+        timestamp: "2026-01-01T00:00:00.000Z",
+        payload: { type: "function_call", name: "read_file", arguments: "{}" },
+      }),
+      line({
+        type: "response_item",
+        timestamp: "2026-01-01T00:00:01.000Z",
+        payload: { type: "function_call_output", output: "ok" },
+      }),
+    ];
+    const items = parseTimelineItemsFromLines(lines, "thread-1", 50);
+    expect(items.map((item) => item.type)).toEqual(["toolCall", "toolResult"]);
+    expect(items[0].callId).toBeNull();
+    expect(items[1].callId).toBeNull();
+  });
+
   it("passes through long user and assistant messages without truncation", () => {
     // Reproduces the gap exposed by the codex review: the gateway used to
     // truncate user_message at 4000 and agent_message at 6000 chars, so the
