@@ -64,7 +64,7 @@ describe("useGatewayConfig", () => {
       .mockResolvedValueOnce(
         fakeResponse({
           payload: {
-            config: { serviceTier: "flex", model: null, reasoningEffort: null },
+            config: { serviceTier: "standard", model: null, reasoningEffort: null },
           },
         }),
       )
@@ -85,7 +85,7 @@ describe("useGatewayConfig", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const { result } = renderHook(() => useGatewayConfig());
-    await waitFor(() => expect(result.current.config?.serviceTier).toBe("flex"));
+    await waitFor(() => expect(result.current.config?.serviceTier).toBe("standard"));
 
     let body: Awaited<ReturnType<typeof result.current.writeValue>> = null;
     await act(async () => {
@@ -203,7 +203,7 @@ describe("useGatewayConfig", () => {
       )
       .mockResolvedValueOnce(
         fakeResponse({
-          payload: { config: { serviceTier: "flex", model: null, reasoningEffort: null } },
+          payload: { config: { serviceTier: "standard", model: null, reasoningEffort: null } },
         }),
       );
     vi.stubGlobal("fetch", fetchMock);
@@ -214,7 +214,7 @@ describe("useGatewayConfig", () => {
     await act(async () => {
       await result.current.refresh();
     });
-    expect(result.current.config?.serviceTier).toBe("flex");
+    expect(result.current.config?.serviceTier).toBe("standard");
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });

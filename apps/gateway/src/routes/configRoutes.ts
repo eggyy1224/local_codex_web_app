@@ -13,7 +13,7 @@ type ConfigRoutesDeps = {
 };
 
 function pickServiceTier(value: unknown): ServiceTier | null {
-  return value === "fast" || value === "flex" ? value : null;
+  return value === "fast" || value === "standard" ? value : null;
 }
 
 function pickString(value: unknown): string | null {
@@ -32,15 +32,15 @@ function snapshotFromAppServerConfig(raw: unknown): GatewayConfigSnapshot {
 // Allowlist of config keys the gateway will forward writes for. Tight by design:
 // the UI only needs to flip a small set of safe knobs. Extend deliberately.
 //
-// service_tier intentionally allows ONLY "fast". "flex" is a real OpenAI tier
-// but is rejected by the API on several plans (e.g. prolite returns HTTP 400
-// "Unsupported service_tier: flex"). A write here persists into the *global*
-// ~/.codex/config.toml, so a bad value silently bricks every codex turn for
-// the whole machine (every thread → systemError), not just this app. The
-// gateway must value-validate writes, never pass the UI's choice through —
-// the UI is not the security boundary.
+// service_tier allows codex's two documented values: "fast" (1.5x, ChatGPT
+// sign-in only) and "standard" (default). It must NEVER accept "flex": that
+// is the OpenAI *API* service tier, not a codex value, and the API rejects
+// it on this plan (HTTP 400 "Unsupported service_tier: flex"). A write here
+// persists into the *global* ~/.codex/config.toml, so a bad value silently
+// bricks every codex turn machine-wide. The gateway must value-validate
+// writes, never pass the UI's choice through — the UI is not the boundary.
 const ALLOWED_CONFIG_WRITE_KEYS: ReadonlyMap<string, (value: unknown) => boolean> = new Map([
-  ["service_tier", (value) => value === "fast"],
+  ["service_tier", (value) => value === "fast" || value === "standard"],
 ]);
 
 export function registerConfigRoutes(app: FastifyInstance, { appServer }: ConfigRoutesDeps): void {

@@ -1030,17 +1030,15 @@ describe("Thread page integration", () => {
     );
   });
 
-  it("mobile advanced tab no longer offers the poisoning flex service tier", async () => {
-    // Regression: the mobile Speed control used to offer fast + flex. Tapping
-    // Flex wrote service_tier="flex" into the global ~/.codex/config.toml,
-    // which the API rejects on this plan → every codex turn died machine-wide.
-    // Flex must no longer be selectable; only "fast" is offered and no Flex
-    // pill is surfaced.
+  it("mobile Speed control offers Standard + Fast and writes the picked service tier", async () => {
+    // codex has two service tiers: "standard" (default) and "fast" (1.5x,
+    // ChatGPT sign-in). Both must be selectable. "flex" is the OpenAI API
+    // tier, never a codex value — it must never appear or be writable.
     setMobileViewport(true);
     vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
 
-    let currentTier: "fast" | "flex" = "fast";
-    let writeBody: unknown = null;
+    let currentTier: "fast" | "standard" = "fast";
+    let writeBody: { keyPath: string; value: string } | null = null;
 
     server.use(
       http.get("http://127.0.0.1:8795/api/config", () =>
@@ -1053,7 +1051,10 @@ describe("Thread page integration", () => {
       http.post("http://127.0.0.1:8795/api/config/value", async ({ request }) => {
         const body = (await request.json()) as { keyPath: string; value: string };
         writeBody = body;
-        if (body.keyPath === "service_tier" && (body.value === "fast" || body.value === "flex")) {
+        if (
+          body.keyPath === "service_tier" &&
+          (body.value === "fast" || body.value === "standard")
+        ) {
           currentTier = body.value;
         }
         return HttpResponse.json({ status: "ok", filePath: null, version: null });
@@ -1099,15 +1100,32 @@ describe("Thread page integration", () => {
     await screen.findByTestId("mobile-control-sheet");
     fireEvent.click(screen.getByTestId("mobile-control-tab-advanced"));
 
+    // Both real tiers are offered; Fast is active per the initial config read.
     const fastBtn = await screen.findByTestId("mobile-service-tier-fast");
+    const standardBtn = screen.getByTestId("mobile-service-tier-standard");
     await waitFor(() => {
       expect(fastBtn).toHaveAttribute("aria-checked", "true");
     });
+    expect(standardBtn).toHaveAttribute("aria-checked", "false");
 
-    // Flex must not be selectable anywhere, and no flex write can be issued.
+    // flex is the OpenAI API tier — never a codex value, never surfaced.
     expect(screen.queryByTestId("mobile-service-tier-flex")).not.toBeInTheDocument();
     expect(screen.queryByTestId("mobile-chat-flex-pill")).not.toBeInTheDocument();
-    expect(writeBody).toBeNull();
+
+    // Switching to Standard writes service_tier=standard and reflects it.
+    fireEvent.click(standardBtn);
+    await waitFor(() => {
+      expect(writeBody).toEqual({
+        keyPath: "service_tier",
+        value: "standard",
+      });
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("mobile-service-tier-standard")).toHaveAttribute(
+        "aria-checked",
+        "true",
+      );
+    });
   });
 
   it("mobile control sheet closes when Close is pressed even after pointer-down on the header (regression)", async () => {

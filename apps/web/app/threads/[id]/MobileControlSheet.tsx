@@ -327,10 +327,10 @@ export default function MobileControlSheet({
               <div className="cdx-mobile-sheet-field" data-testid="mobile-service-tier-field">
                 <span>Speed</span>
                 <div className="cdx-mobile-segmented" role="radiogroup" aria-label="Service tier">
-                  {/* "flex" deliberately not offered: the API rejects it on
-                      this account's plan and a write poisons the global codex
-                      config. Only "fast" is a safe writable tier. */}
-                  {(["fast"] as const).map((tier) => {
+                  {/* codex's two real values. "flex" is never offered — it is
+                      the OpenAI API tier, not a codex value, and 400s on this
+                      plan. See configRoutes allowlist. */}
+                  {(["standard", "fast"] as const).map((tier) => {
                     const active = serviceTier === tier;
                     return (
                       <button
@@ -343,7 +343,7 @@ export default function MobileControlSheet({
                         disabled={serviceTierBusy || active}
                         onClick={() => onServiceTierChange(tier)}
                       >
-                        {tier === "fast" ? "Fast" : "Flex"}
+                        {tier === "fast" ? "Fast" : "Standard"}
                       </button>
                     );
                   })}
@@ -352,8 +352,8 @@ export default function MobileControlSheet({
                   {serviceTier === null
                     ? "Reading…"
                     : serviceTier === "fast"
-                      ? "1.5× speed when supported. Default."
-                      : "Flexible scheduling. Lower priority."}
+                      ? "1.5× speed when supported (ChatGPT sign-in). Uses credits faster."
+                      : "Default speed and usage."}
                 </p>
               </div>
               <label className="cdx-mobile-sheet-field" htmlFor="mobile-model">

@@ -329,7 +329,10 @@ export type InteractionRespondResponse = {
   ok: true;
 };
 
-export type ServiceTier = "fast" | "flex";
+// codex service tier (config.toml `service_tier`). codex only accepts
+// "fast" and "standard" (standard = default; 1.5x Fast needs ChatGPT
+// sign-in). NOT the OpenAI-API "flex" tier — that 400s on this plan.
+export type ServiceTier = "fast" | "standard";
 
 export type GatewayConfigSnapshot = {
   serviceTier: ServiceTier | null;
