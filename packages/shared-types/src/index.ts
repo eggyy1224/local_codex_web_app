@@ -382,6 +382,10 @@ export type InterruptTurnResponse = {
   ok: true;
 };
 
+export type CompactThreadResponse = {
+  ok: true;
+};
+
 export type ForkThreadRequest = {
   model?: string;
   serviceTier?: ServiceTier | null;

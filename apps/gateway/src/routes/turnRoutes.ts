@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import type {
+  CompactThreadResponse,
   CreateReviewRequest,
   CreateReviewResponse,
   CreateTurnRequest,
@@ -574,6 +575,32 @@ export function registerTurnRoutes(
         threadId: params.id,
         turnId: body.turnId,
       });
+
+      return { ok: true };
+    },
+  );
+
+  app.post(
+    "/api/threads/:id/compact",
+    async (request): Promise<CompactThreadResponse> => {
+      const params = request.params as { id: string };
+
+      const startCompact = async (): Promise<void> => {
+        await appServer.request("thread/compact/start", {
+          threadId: params.id,
+        });
+      };
+
+      try {
+        await startCompact();
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (!isResumeNeeded(message)) {
+          throw error;
+        }
+        await appServer.request("thread/resume", { threadId: params.id });
+        await startCompact();
+      }
 
       return { ok: true };
     },

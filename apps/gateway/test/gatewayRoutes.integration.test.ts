@@ -2206,6 +2206,71 @@ describe("gateway integration routes", () => {
     }
   });
 
+  it("POST /api/threads/:id/compact forwards thread/compact/start with threadId", async () => {
+    const ctx = await createTestContext();
+    try {
+      let captured: unknown = null;
+      ctx.stub.handlers.set("thread/compact/start", (params) => {
+        captured = params;
+        return {};
+      });
+
+      const res = await ctx.app.inject({
+        method: "POST",
+        url: "/api/threads/thread-1/compact",
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({ ok: true });
+      expect(captured).toEqual({ threadId: "thread-1" });
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  it("POST /api/threads/:id/compact resumes thread when not loaded then retries", async () => {
+    const ctx = await createTestContext();
+    try {
+      let compactCalls = 0;
+      ctx.stub.handlers.set("thread/compact/start", () => {
+        compactCalls += 1;
+        if (compactCalls === 1) {
+          throw new Error("thread not loaded");
+        }
+        return {};
+      });
+      ctx.stub.handlers.set("thread/resume", () => ({ thread: { id: "thread-1" } }));
+
+      const res = await ctx.app.inject({
+        method: "POST",
+        url: "/api/threads/thread-1/compact",
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({ ok: true });
+      expect(compactCalls).toBe(2);
+      const methods = ctx.stub.requests.map((r) => r.method);
+      expect(methods).toContain("thread/resume");
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  it("POST /api/threads/:id/compact returns non-200 when app-server fails", async () => {
+    const ctx = await createTestContext();
+    try {
+      ctx.stub.handlers.set("thread/compact/start", () => {
+        throw new Error("compact boom");
+      });
+
+      const res = await ctx.app.inject({
+        method: "POST",
+        url: "/api/threads/thread-1/compact",
+      });
+      expect(res.statusCode).toBeGreaterThanOrEqual(500);
+    } finally {
+      await ctx.close();
+    }
+  });
+
   it("POST /api/threads/:id/fork forwards optional fields and returns new threadId", async () => {
     const ctx = await createTestContext();
     try {
