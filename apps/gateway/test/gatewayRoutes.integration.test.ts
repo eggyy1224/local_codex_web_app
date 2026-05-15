@@ -2014,11 +2014,14 @@ describe("gateway integration routes", () => {
     }
   });
 
-  it("GET /api/config maps service_tier/model/reasoning_effort from config/read", async () => {
+  it("GET /api/config maps model/reasoning_effort from config/read and ignores service_tier", async () => {
     const ctx = await createTestContext();
     try {
       ctx.stub.handlers.set("config/read", () => ({
         config: {
+          // codex may still echo a stray service_tier key from config.toml;
+          // the gateway snapshot no longer surfaces it (codex 0.130.0 has no
+          // service tier — see openai/codex#2916).
           service_tier: "fast",
           model: "gpt-5.5",
           reasoning_effort: "medium",
@@ -2029,7 +2032,7 @@ describe("gateway integration routes", () => {
       const res = await ctx.app.inject({ method: "GET", url: "/api/config" });
       expect(res.statusCode).toBe(200);
       expect(res.json()).toEqual({
-        config: { serviceTier: "fast", model: "gpt-5.5", reasoningEffort: "medium" },
+        config: { model: "gpt-5.5", reasoningEffort: "medium" },
         filePath: null,
         version: null,
       });
@@ -2038,46 +2041,13 @@ describe("gateway integration routes", () => {
     }
   });
 
-  it("POST /api/config/value forwards keyPath/value/mergeStrategy and returns status", async () => {
-    const ctx = await createTestContext();
-    try {
-      let captured: unknown = null;
-      ctx.stub.handlers.set("config/value/write", (params) => {
-        captured = params;
-        return {
-          status: "ok",
-          filePath: "/Users/x/.codex/config.toml",
-          version: "sha256:abc",
-        };
-      });
-      const res = await ctx.app.inject({
-        method: "POST",
-        url: "/api/config/value",
-        payload: { keyPath: "service_tier", value: "fast" },
-      });
-      expect(res.statusCode).toBe(200);
-      expect(res.json()).toEqual({
-        status: "ok",
-        filePath: "/Users/x/.codex/config.toml",
-        version: "sha256:abc",
-      });
-      expect(captured).toMatchObject({
-        keyPath: "service_tier",
-        value: "fast",
-        mergeStrategy: "replace",
-      });
-    } finally {
-      await ctx.close();
-    }
-  });
-
-  it("POST /api/config/value rejects service_tier=flex with 400 and never forwards it", async () => {
-    // Regression: the UI used to offer a "Flex" service tier; selecting it
-    // wrote service_tier="flex" into the *global* ~/.codex/config.toml via
-    // this route. The API rejects "flex" on this account's plan (HTTP 400
-    // "Unsupported service_tier: flex"), which silently bricked every codex
-    // turn machine-wide (all threads → systemError). The gateway must
-    // value-validate the write and never pass an API-poisoning value through.
+  it("POST /api/config/value rejects service_tier with 403 and never forwards it", async () => {
+    // Regression: the UI used to write service_tier into the *global*
+    // ~/.codex/config.toml via this route. codex 0.130.0 does not implement
+    // a service tier at all (verified against the app-server protocol +
+    // ResponsesApiRequest; openai/codex#2916 is an open, unimplemented
+    // feature request), so the Speed control was removed and service_tier is
+    // no longer allowlisted. It must never be writable again.
     const ctx = await createTestContext();
     try {
       let forwarded = false;
@@ -2085,12 +2055,14 @@ describe("gateway integration routes", () => {
         forwarded = true;
         return { status: "ok" };
       });
-      const res = await ctx.app.inject({
-        method: "POST",
-        url: "/api/config/value",
-        payload: { keyPath: "service_tier", value: "flex" },
-      });
-      expect(res.statusCode).toBe(400);
+      for (const value of ["fast", "flex"]) {
+        const res = await ctx.app.inject({
+          method: "POST",
+          url: "/api/config/value",
+          payload: { keyPath: "service_tier", value },
+        });
+        expect(res.statusCode).toBe(403);
+      }
       expect(forwarded).toBe(false);
     } finally {
       await ctx.close();
@@ -2131,25 +2103,6 @@ describe("gateway integration routes", () => {
     }
   });
 
-  it("POST /api/config/value rejects invalid value for allowlisted keyPath with 400", async () => {
-    const ctx = await createTestContext();
-    try {
-      let forwarded = false;
-      ctx.stub.handlers.set("config/value/write", () => {
-        forwarded = true;
-        return { status: "ok" };
-      });
-      const res = await ctx.app.inject({
-        method: "POST",
-        url: "/api/config/value",
-        payload: { keyPath: "service_tier", value: "extreme" },
-      });
-      expect(res.statusCode).toBe(400);
-      expect(forwarded).toBe(false);
-    } finally {
-      await ctx.close();
-    }
-  });
 
   it("POST /api/threads/:id/steer forwards turn/steer params and returns turnId", async () => {
     const ctx = await createTestContext();
@@ -2380,7 +2333,6 @@ describe("gateway integration routes", () => {
         url: "/api/threads/source-thread/fork",
         payload: {
           model: "gpt-5-codex",
-          serviceTier: "fast",
           approvalPolicy: "never",
           cwd: "/tmp/work",
         },
@@ -2390,7 +2342,6 @@ describe("gateway integration routes", () => {
       expect(captured).toEqual({
         threadId: "source-thread",
         model: "gpt-5-codex",
-        serviceTier: "fast",
         approvalPolicy: "never",
         cwd: "/tmp/work",
       });
@@ -2399,10 +2350,11 @@ describe("gateway integration routes", () => {
     }
   });
 
-  it("POST /api/threads/:id/fork drops the poisoning flex service tier", async () => {
-    // Regression sibling of the config/value flex guard: fork must not carry
-    // serviceTier="flex" onto the new thread (the API rejects it on this plan
-    // and every turn on the forked thread would die). Other fields still pass.
+  it("POST /api/threads/:id/fork never forwards serviceTier even if a client sends one", async () => {
+    // codex 0.130.0 has no service tier (openai/codex#2916 unimplemented), so
+    // the Speed control was removed. Guard: even if some client still posts a
+    // serviceTier, fork must not carry it onto the new thread. Other fields
+    // still pass through.
     const ctx = await createTestContext();
     try {
       let captured: unknown = null;

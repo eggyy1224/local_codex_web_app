@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import type { ServiceTier } from "@lcwa/shared-types";
 
 export type ThreadViewMode = "normal" | "thinking" | "verbose";
 /**
@@ -24,7 +23,6 @@ type MobileChatTopBarProps = {
   projectLabel: string | null;
   threadTitle: string;
   collaborationMode: "plan" | "default";
-  serviceTier: ServiceTier | null;
   pendingActionCount: number;
   isWorking: boolean;
   workingLabel: string;

@@ -26,7 +26,7 @@ describe("useGatewayConfig", () => {
     const fetchMock = vi.fn().mockResolvedValueOnce(
       fakeResponse({
         payload: {
-          config: { serviceTier: "fast", model: "gpt-5.5", reasoningEffort: "medium" },
+          config: { model: "gpt-5.5", reasoningEffort: "medium" },
         },
       }),
     );
@@ -36,7 +36,6 @@ describe("useGatewayConfig", () => {
 
     await waitFor(() => expect(result.current.config).not.toBeNull());
     expect(result.current.config).toEqual({
-      serviceTier: "fast",
       model: "gpt-5.5",
       reasoningEffort: "medium",
     });
@@ -64,7 +63,7 @@ describe("useGatewayConfig", () => {
       .mockResolvedValueOnce(
         fakeResponse({
           payload: {
-            config: { serviceTier: "flex", model: null, reasoningEffort: null },
+            config: { model: "gpt-5-codex", reasoningEffort: null },
           },
         }),
       )
@@ -78,20 +77,20 @@ describe("useGatewayConfig", () => {
       .mockResolvedValueOnce(
         fakeResponse({
           payload: {
-            config: { serviceTier: "fast", model: null, reasoningEffort: null },
+            config: { model: "gpt-5.5", reasoningEffort: null },
           },
         }),
       );
     vi.stubGlobal("fetch", fetchMock);
 
     const { result } = renderHook(() => useGatewayConfig());
-    await waitFor(() => expect(result.current.config?.serviceTier).toBe("flex"));
+    await waitFor(() => expect(result.current.config?.model).toBe("gpt-5-codex"));
 
     let body: Awaited<ReturnType<typeof result.current.writeValue>> = null;
     await act(async () => {
       body = await result.current.writeValue({
-        keyPath: "service_tier",
-        value: "fast",
+        keyPath: "model",
+        value: "gpt-5.5",
         mergeStrategy: "replace",
       });
     });
@@ -100,9 +99,9 @@ describe("useGatewayConfig", () => {
     expect(result.current.status).toBe("idle");
     expect(result.current.error).toBeNull();
 
-    // Refresh ran after the successful write — serviceTier should reflect the
+    // Refresh ran after the successful write — the snapshot reflects the
     // post-write read.
-    await waitFor(() => expect(result.current.config?.serviceTier).toBe("fast"));
+    await waitFor(() => expect(result.current.config?.model).toBe("gpt-5.5"));
 
     // 1 mount + 1 write + 1 post-write refresh
     expect(fetchMock).toHaveBeenCalledTimes(3);
@@ -112,8 +111,8 @@ describe("useGatewayConfig", () => {
     expect(writeInit.method).toBe("POST");
     expect(writeInit.headers).toMatchObject({ "content-type": "application/json" });
     expect(JSON.parse(writeInit.body as string)).toEqual({
-      keyPath: "service_tier",
-      value: "fast",
+      keyPath: "model",
+      value: "gpt-5.5",
       mergeStrategy: "replace",
     });
   });
@@ -130,13 +129,13 @@ describe("useGatewayConfig", () => {
       .fn()
       .mockResolvedValueOnce(
         fakeResponse({
-          payload: { config: { serviceTier: null, model: null, reasoningEffort: null } },
+          payload: { config: { model: null, reasoningEffort: null } },
         }),
       )
       .mockImplementationOnce(() => writePromise)
       .mockResolvedValueOnce(
         fakeResponse({
-          payload: { config: { serviceTier: "fast", model: null, reasoningEffort: null } },
+          payload: { config: { model: "gpt-5.5", reasoningEffort: null } },
         }),
       );
     vi.stubGlobal("fetch", fetchMock);
@@ -147,8 +146,8 @@ describe("useGatewayConfig", () => {
     let writePromiseHandle: Promise<unknown> | null = null;
     act(() => {
       writePromiseHandle = result.current.writeValue({
-        keyPath: "service_tier",
-        value: "fast",
+        keyPath: "model",
+        value: "gpt-5.5",
       });
     });
 
@@ -169,7 +168,7 @@ describe("useGatewayConfig", () => {
       .fn()
       .mockResolvedValueOnce(
         fakeResponse({
-          payload: { config: { serviceTier: null, model: null, reasoningEffort: null } },
+          payload: { config: { model: null, reasoningEffort: null } },
         }),
       )
       .mockResolvedValueOnce(fakeResponse({ ok: false, status: 422 }));
@@ -181,7 +180,7 @@ describe("useGatewayConfig", () => {
     let outcome: Awaited<ReturnType<typeof result.current.writeValue>> = undefined as never;
     await act(async () => {
       outcome = await result.current.writeValue({
-        keyPath: "service_tier",
+        keyPath: "model",
         value: "bogus" as never,
       });
     });
@@ -198,23 +197,23 @@ describe("useGatewayConfig", () => {
       .fn()
       .mockResolvedValueOnce(
         fakeResponse({
-          payload: { config: { serviceTier: "fast", model: null, reasoningEffort: null } },
+          payload: { config: { model: "gpt-5-codex", reasoningEffort: null } },
         }),
       )
       .mockResolvedValueOnce(
         fakeResponse({
-          payload: { config: { serviceTier: "flex", model: null, reasoningEffort: null } },
+          payload: { config: { model: "gpt-5.5", reasoningEffort: null } },
         }),
       );
     vi.stubGlobal("fetch", fetchMock);
 
     const { result } = renderHook(() => useGatewayConfig());
-    await waitFor(() => expect(result.current.config?.serviceTier).toBe("fast"));
+    await waitFor(() => expect(result.current.config?.model).toBe("gpt-5-codex"));
 
     await act(async () => {
       await result.current.refresh();
     });
-    expect(result.current.config?.serviceTier).toBe("flex");
+    expect(result.current.config?.model).toBe("gpt-5.5");
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });

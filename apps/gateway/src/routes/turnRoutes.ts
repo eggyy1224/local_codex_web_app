@@ -637,12 +637,6 @@ export function registerTurnRoutes(
     if (typeof body.model === "string") {
       rpcParams.model = body.model;
     }
-    // "flex" is intentionally not forwarded on fork: the API rejects it on
-    // this plan and codex would error every turn on the forked thread. Only
-    // "fast" or clearing to null are safe. See configRoutes allowlist.
-    if (body.serviceTier === "fast" || body.serviceTier === null) {
-      rpcParams.serviceTier = body.serviceTier;
-    }
     if (typeof body.approvalPolicy === "string") {
       rpcParams.approvalPolicy = body.approvalPolicy;
     }

@@ -4,17 +4,12 @@ import type {
   GatewayConfigSnapshot,
   GatewayConfigValueWriteRequest,
   GatewayConfigValueWriteResponse,
-  ServiceTier,
 } from "@lcwa/shared-types";
 import type { GatewayAppServerPort } from "../appServerPort.js";
 
 type ConfigRoutesDeps = {
   appServer: GatewayAppServerPort;
 };
-
-function pickServiceTier(value: unknown): ServiceTier | null {
-  return value === "fast" || value === "flex" ? value : null;
-}
 
 function pickString(value: unknown): string | null {
   return typeof value === "string" && value.length > 0 ? value : null;
@@ -23,25 +18,20 @@ function pickString(value: unknown): string | null {
 function snapshotFromAppServerConfig(raw: unknown): GatewayConfigSnapshot {
   const root = (raw as { config?: Record<string, unknown> })?.config ?? {};
   return {
-    serviceTier: pickServiceTier(root.service_tier),
     model: pickString(root.model),
     reasoningEffort: pickString(root.reasoning_effort),
   };
 }
 
-// Allowlist of config keys the gateway will forward writes for. Tight by design:
-// the UI only needs to flip a small set of safe knobs. Extend deliberately.
-//
-// service_tier intentionally allows ONLY "fast". "flex" is a real OpenAI tier
-// but is rejected by the API on several plans (e.g. prolite returns HTTP 400
-// "Unsupported service_tier: flex"). A write here persists into the *global*
-// ~/.codex/config.toml, so a bad value silently bricks every codex turn for
-// the whole machine (every thread → systemError), not just this app. The
-// gateway must value-validate writes, never pass the UI's choice through —
-// the UI is not the security boundary.
-const ALLOWED_CONFIG_WRITE_KEYS: ReadonlyMap<string, (value: unknown) => boolean> = new Map([
-  ["service_tier", (value) => value === "fast"],
-]);
+// Allowlist of config keys the gateway will forward writes for. Currently
+// EMPTY by design: the only key the UI ever wrote was `service_tier`, which
+// codex 0.130.0 does not implement (verified against the app-server protocol
+// + ResponsesApiRequest; openai/codex#2916 is an open, unimplemented feature
+// request), so the Speed control was removed. Any future writable key must be
+// added here with a value validator — the gateway value-validates writes and
+// never passes the UI's choice through; the UI is not the security boundary.
+const ALLOWED_CONFIG_WRITE_KEYS: ReadonlyMap<string, (value: unknown) => boolean> =
+  new Map<string, (value: unknown) => boolean>();
 
 export function registerConfigRoutes(app: FastifyInstance, { appServer }: ConfigRoutesDeps): void {
   app.get("/api/config", async (): Promise<GatewayConfigResponse> => {

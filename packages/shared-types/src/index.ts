@@ -329,10 +329,7 @@ export type InteractionRespondResponse = {
   ok: true;
 };
 
-export type ServiceTier = "fast" | "flex";
-
 export type GatewayConfigSnapshot = {
-  serviceTier: ServiceTier | null;
   model: string | null;
   reasoningEffort: string | null;
 };
@@ -388,7 +385,6 @@ export type CompactThreadResponse = {
 
 export type ForkThreadRequest = {
   model?: string;
-  serviceTier?: ServiceTier | null;
   approvalPolicy?: string;
   cwd?: string;
 };

@@ -2,7 +2,7 @@ import { http, HttpResponse } from "msw";
 import { setupServer } from "msw/node";
 
 const DEFAULT_CONFIG_RESPONSE = {
-  config: { serviceTier: "fast", model: null, reasoningEffort: null },
+  config: { model: null, reasoningEffort: null },
   filePath: null,
   version: null,
 };
