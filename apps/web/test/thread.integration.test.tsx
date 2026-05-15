@@ -753,6 +753,117 @@ describe("Thread page integration", () => {
     });
   });
 
+  it("keeps live thread-list status when a stale snapshot returns after SSE", async () => {
+    setMobileViewport(true);
+    vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+    MockEventSource.instances.length = 0;
+    let threadListCalls = 0;
+    let releaseSecondThreadList: (() => void) | null = null;
+    const secondThreadListGate = new Promise<void>((resolve) => {
+      releaseSecondThreadList = resolve;
+    });
+    const staleIdleThread = {
+      id: "thread-1",
+      projectKey: "/repos/alpha",
+      title: "Alpha Thread",
+      preview: "",
+      status: "idle",
+      lastActiveAt: "2026-01-03T00:00:00.000Z",
+      archived: false,
+      waitingApprovalCount: 0,
+      errorCount: 0,
+    };
+
+    server.use(
+      http.get("http://127.0.0.1:8795/api/threads/:id", ({ params }) =>
+        HttpResponse.json({
+          thread: {
+            id: String(params.id),
+            title: "Switcher Thread",
+            preview: "",
+            status: "idle",
+            createdAt: null,
+            updatedAt: null,
+          },
+          turns: [],
+          nextCursor: null,
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/approvals/pending", () =>
+        HttpResponse.json({ data: [] }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/interactions/pending", () =>
+        HttpResponse.json({ data: [] }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads", async () => {
+        threadListCalls += 1;
+        if (threadListCalls === 2) {
+          await secondThreadListGate;
+        }
+        return HttpResponse.json({
+          data: [staleIdleThread],
+          nextCursor: null,
+        });
+      }),
+      http.get("http://127.0.0.1:8795/api/threads/:id/timeline", () =>
+        HttpResponse.json({ data: [] }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/context", () =>
+        HttpResponse.json({
+          threadId: "thread-1",
+          cwd: "/repos/alpha",
+          resolvedCwd: "/repos/alpha",
+          isFallback: false,
+          source: "projection",
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/models", () => HttpResponse.json({ data: [] })),
+    );
+
+    render(<ThreadPage params={Promise.resolve({ id: "thread-1" })} />);
+
+    fireEvent.click(await screen.findByLabelText("Open threads"));
+    const overlay = await screen.findByTestId("mobile-thread-switcher-overlay");
+    expect(within(overlay).getByText("Idle")).toBeInTheDocument();
+
+    window.dispatchEvent(new Event("focus"));
+    await waitFor(() => {
+      expect(threadListCalls).toBe(2);
+    });
+
+    const es = MockEventSource.instances.at(-1);
+    if (!es) {
+      throw new Error("missing EventSource instance");
+    }
+    es.emit("gateway", {
+      seq: 1,
+      serverTs: "2026-01-03T00:00:05.000Z",
+      threadId: "thread-1",
+      turnId: "turn-running",
+      kind: "turn",
+      name: "turn/started",
+      payload: {
+        threadId: "thread-1",
+        turnId: "turn-running",
+        turn: { id: "turn-running", status: "in_progress" },
+      },
+    });
+
+    await waitFor(() => {
+      const liveRow = within(overlay).getByText("Alpha Thread").closest("button");
+      expect(liveRow).not.toBeNull();
+      expect(within(liveRow as HTMLElement).getByText("Running")).toBeInTheDocument();
+    });
+
+    releaseSecondThreadList?.();
+
+    await waitFor(() => {
+      const preservedRow = within(overlay).getByText("Alpha Thread").closest("button");
+      expect(preservedRow).not.toBeNull();
+      expect(within(preservedRow as HTMLElement).getByText("Running")).toBeInTheDocument();
+    });
+  });
+
   it("mobile thread page opens a canvas iframe from the canvas query param", async () => {
     setMobileViewport(true);
     searchParamsValue = new URLSearchParams({
@@ -2553,6 +2664,93 @@ describe("Thread page integration", () => {
       expect(screen.getByTestId("desktop-tool-action")).toHaveTextContent(
         "Spawned sub-agent · 請審查剛剛的程式碼",
       );
+    });
+  });
+
+  it("mobile reconciles a stuck running turn from the timeline snapshot when SSE completion is missed", async () => {
+    setMobileViewport(true);
+    vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+    MockEventSource.instances.length = 0;
+    let timelineCalls = 0;
+
+    const startedItem = {
+      id: "tl-started",
+      ts: "2026-01-01T00:00:00.000Z",
+      turnId: "turn-stuck",
+      type: "status",
+      title: "Turn started",
+      text: "turn turn-stuck",
+      rawType: "turn/started",
+      toolName: null,
+      callId: null,
+    };
+    const completedItem = {
+      id: "tl-completed",
+      ts: "2026-01-01T00:00:10.000Z",
+      turnId: "turn-stuck",
+      type: "status",
+      title: "Turn completed",
+      text: "status: completed",
+      rawType: "turn/completed",
+      toolName: null,
+      callId: null,
+    };
+
+    server.use(
+      http.get("http://127.0.0.1:8795/api/threads/:id", ({ params }) =>
+        HttpResponse.json({
+          thread: {
+            id: String(params.id),
+            title: "Main Thread",
+            preview: "Preview",
+            status: "idle",
+            createdAt: null,
+            updatedAt: null,
+          },
+          turns: [],
+          nextCursor: null,
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/approvals/pending", () =>
+        HttpResponse.json({ data: [] }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/interactions/pending", () =>
+        HttpResponse.json({ data: [] }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads", () =>
+        HttpResponse.json({ data: [], nextCursor: null }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/timeline", () => {
+        timelineCalls += 1;
+        return HttpResponse.json({
+          data: timelineCalls === 1 ? [startedItem] : [startedItem, completedItem],
+        });
+      }),
+      http.get("http://127.0.0.1:8795/api/threads/:id/context", () =>
+        HttpResponse.json({
+          threadId: "thread-1",
+          cwd: "/tmp/project",
+          resolvedCwd: "/tmp/project",
+          isFallback: false,
+          source: "projection",
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/models", () => HttpResponse.json({ data: [] })),
+    );
+
+    render(<ThreadPage params={Promise.resolve({ id: "thread-1" })} />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("mobile-running-indicator")).toHaveTextContent(
+        "Thinking in progress",
+      );
+    });
+
+    window.dispatchEvent(new Event("focus"));
+
+    await waitFor(() => {
+      expect(timelineCalls).toBeGreaterThanOrEqual(2);
+      expect(screen.queryByTestId("mobile-running-indicator")).not.toBeInTheDocument();
     });
   });
 

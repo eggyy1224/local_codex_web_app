@@ -151,6 +151,55 @@ const MOBILE_CANVAS_URL_STORAGE_KEY = "lcwa.mobile.canvas.url.v1";
 const TIMELINE_STICKY_THRESHOLD_PX = 56;
 const ACTIVE_THREAD_SCROLL_SNAP_THRESHOLD_PX = 24;
 const FALLBACK_THINKING_EFFORT_OPTIONS = ["minimal", "low", "medium", "high"];
+const STREAMING_SNAPSHOT_SYNC_INTERVAL_MS = 15_000;
+
+type ThreadSnapshot = {
+  data: ThreadDetailResponse;
+  pending: PendingApprovalsResponse;
+  pendingInteractionsResult: PendingInteractionsResponse;
+  threadListResult: { data: ThreadListItem[] };
+  timeline: ThreadTimelineResponse;
+  context: ThreadContextResponse;
+};
+
+async function fetchThreadSnapshot(threadId: string): Promise<ThreadSnapshot> {
+  const [detailRes, approvalsRes, interactionsRes, threadsRes, timelineRes, contextRes] = await Promise.all([
+    fetch(`${gatewayUrl}/api/threads/${threadId}?includeTurns=true`),
+    fetch(`${gatewayUrl}/api/threads/${threadId}/approvals/pending`),
+    fetch(`${gatewayUrl}/api/threads/${threadId}/interactions/pending`),
+    fetch(`${gatewayUrl}/api/threads?limit=200`),
+    fetch(`${gatewayUrl}/api/threads/${threadId}/timeline?limit=600`),
+    fetch(`${gatewayUrl}/api/threads/${threadId}/context`),
+  ]);
+
+  if (!detailRes.ok) {
+    throw new Error(`thread detail http ${detailRes.status}`);
+  }
+  if (!approvalsRes.ok) {
+    throw new Error(`approvals http ${approvalsRes.status}`);
+  }
+  if (!interactionsRes.ok) {
+    throw new Error(`interactions http ${interactionsRes.status}`);
+  }
+  if (!threadsRes.ok) {
+    throw new Error(`thread list http ${threadsRes.status}`);
+  }
+  if (!timelineRes.ok) {
+    throw new Error(`timeline http ${timelineRes.status}`);
+  }
+  if (!contextRes.ok) {
+    throw new Error(`thread context http ${contextRes.status}`);
+  }
+
+  return {
+    data: (await detailRes.json()) as ThreadDetailResponse,
+    pending: (await approvalsRes.json()) as PendingApprovalsResponse,
+    pendingInteractionsResult: (await interactionsRes.json()) as PendingInteractionsResponse,
+    threadListResult: (await threadsRes.json()) as { data: ThreadListItem[] },
+    timeline: (await timelineRes.json()) as ThreadTimelineResponse,
+    context: (await contextRes.json()) as ThreadContextResponse,
+  };
+}
 
 export default function ThreadPage({ params }: Props) {
   const router = useRouter();
@@ -166,6 +215,7 @@ export default function ThreadPage({ params }: Props) {
   const initialThreadReadyRef = useRef(false);
   const previousThreadIdRef = useRef("");
   const activeThreadIdRef = useRef("");
+  const snapshotSyncInFlightThreadRef = useRef<string | null>(null);
   const resolvedApprovalIdsRef = useRef<Set<string>>(new Set());
   const resolvedInteractionIdsRef = useRef<Set<string>>(new Set());
   const [threadId, setThreadId] = useState<string>("");
@@ -176,6 +226,7 @@ export default function ThreadPage({ params }: Props) {
     threadEventStoreReducer,
     createThreadEventStoreState(),
   );
+  const threadEventStoreRef = useRef(threadEventStore);
   const [connectionState, setConnectionState] = useState<ConnectionState>("connecting");
   const [lastEventAtMs, setLastEventAtMs] = useState<number>(Date.now());
   const [prompt, setPrompt] = useState("");
@@ -239,6 +290,10 @@ export default function ThreadPage({ params }: Props) {
   const [showAllTurns, setShowAllTurns] = useState(false);
   const [latestTokenUsage, setLatestTokenUsage] = useState<ThreadTokenUsageSummary | null>(null);
   const [statusBanner, setStatusBanner] = useState<StatusBanner | null>(null);
+
+  useEffect(() => {
+    threadEventStoreRef.current = threadEventStore;
+  }, [threadEventStore]);
   const [planActionByStorageKey, setPlanActionByStorageKey] = useState<
     Record<string, PlanActionState>
   >({});
@@ -575,6 +630,82 @@ export default function ThreadPage({ params }: Props) {
     window.localStorage.setItem(THINKING_EFFORT_STORAGE_KEY, thinkingEffort);
   }, [thinkingEffort]);
 
+  const applyThreadSnapshot = useCallback((requestThreadId: string, snapshot: ThreadSnapshot, startedSeq = 0) => {
+    if (activeThreadIdRef.current !== requestThreadId) {
+      return;
+    }
+
+    setDetail(snapshot.data);
+    setThreadListLoading(false);
+    setThreadList(() => {
+      const liveEventsAfterSnapshotStarted = threadEventStoreRef.current.liveEvents.filter(
+        (event) => event.seq > startedSeq,
+      );
+      return liveEventsAfterSnapshotStarted.reduce(
+        (items, event) => items.map((item) => threadListItemFromGatewayEvent(item, event)),
+        snapshot.threadListResult.data,
+      );
+    });
+    setThreadContext(snapshot.context);
+    setPendingApprovals((prev) => {
+      const next: Record<string, PendingApprovalCard> = {};
+      for (const item of snapshot.pending.data) {
+        if (!resolvedApprovalIdsRef.current.has(item.approvalId)) {
+          next[item.approvalId] = item;
+        }
+      }
+      for (const [approvalId, item] of Object.entries(prev)) {
+        if (!resolvedApprovalIdsRef.current.has(approvalId)) {
+          next[approvalId] = item;
+        }
+      }
+      return next;
+    });
+    setPendingInteractions((prev) => {
+      const next: Record<string, PendingInteractionCard> = {};
+      for (const item of snapshot.pendingInteractionsResult.data) {
+        if (!resolvedInteractionIdsRef.current.has(item.interactionId)) {
+          next[item.interactionId] = item;
+        }
+      }
+      for (const [interactionId, item] of Object.entries(prev)) {
+        if (!resolvedInteractionIdsRef.current.has(interactionId)) {
+          next[interactionId] = item;
+        }
+      }
+      return next;
+    });
+    dispatchThreadEventStore({
+      type: "hydrateTimeline",
+      threadId: requestThreadId,
+      items: snapshot.timeline.data,
+    });
+    setLoading(false);
+    setError(null);
+  }, []);
+
+  const syncThreadSnapshot = useCallback(async () => {
+    if (!threadId || snapshotSyncInFlightThreadRef.current === threadId) {
+      return;
+    }
+
+    const requestThreadId = threadId;
+    const snapshotStartedSeq = threadEventStoreRef.current.lastSeq;
+    snapshotSyncInFlightThreadRef.current = requestThreadId;
+    try {
+      const snapshot = await fetchThreadSnapshot(requestThreadId);
+      applyThreadSnapshot(requestThreadId, snapshot, snapshotStartedSeq);
+    } catch {
+      if (activeThreadIdRef.current === requestThreadId) {
+        setConnectionState("lagging");
+      }
+    } finally {
+      if (snapshotSyncInFlightThreadRef.current === requestThreadId) {
+        snapshotSyncInFlightThreadRef.current = null;
+      }
+    }
+  }, [applyThreadSnapshot, threadId]);
+
   useEffect(() => {
     if (!threadId) {
       return;
@@ -584,82 +715,10 @@ export default function ThreadPage({ params }: Props) {
 
     async function load() {
       try {
-        const [detailRes, approvalsRes, interactionsRes, threadsRes, timelineRes, contextRes] = await Promise.all([
-          fetch(`${gatewayUrl}/api/threads/${threadId}?includeTurns=true`),
-          fetch(`${gatewayUrl}/api/threads/${threadId}/approvals/pending`),
-          fetch(`${gatewayUrl}/api/threads/${threadId}/interactions/pending`),
-          fetch(`${gatewayUrl}/api/threads?limit=200`),
-          fetch(`${gatewayUrl}/api/threads/${threadId}/timeline?limit=600`),
-          fetch(`${gatewayUrl}/api/threads/${threadId}/context`),
-        ]);
-
-        if (!detailRes.ok) {
-          throw new Error(`thread detail http ${detailRes.status}`);
-        }
-        if (!approvalsRes.ok) {
-          throw new Error(`approvals http ${approvalsRes.status}`);
-        }
-        if (!interactionsRes.ok) {
-          throw new Error(`interactions http ${interactionsRes.status}`);
-        }
-        if (!threadsRes.ok) {
-          throw new Error(`thread list http ${threadsRes.status}`);
-        }
-        if (!timelineRes.ok) {
-          throw new Error(`timeline http ${timelineRes.status}`);
-        }
-        if (!contextRes.ok) {
-          throw new Error(`thread context http ${contextRes.status}`);
-        }
-
-        const data = (await detailRes.json()) as ThreadDetailResponse;
-        const pending = (await approvalsRes.json()) as PendingApprovalsResponse;
-        const pendingInteractionsResult =
-          (await interactionsRes.json()) as PendingInteractionsResponse;
-        const threadListResult = (await threadsRes.json()) as { data: ThreadListItem[] };
-        const timeline = (await timelineRes.json()) as ThreadTimelineResponse;
-        const context = (await contextRes.json()) as ThreadContextResponse;
-
+        const snapshotStartedSeq = threadEventStoreRef.current.lastSeq;
+        const snapshot = await fetchThreadSnapshot(threadId);
         if (!cancelled) {
-          setDetail(data);
-          setThreadListLoading(false);
-          setThreadList(threadListResult.data);
-          setThreadContext(context);
-          setPendingApprovals((prev) => {
-            const next: Record<string, PendingApprovalCard> = {};
-            for (const item of pending.data) {
-              if (!resolvedApprovalIdsRef.current.has(item.approvalId)) {
-                next[item.approvalId] = item;
-              }
-            }
-            for (const [approvalId, item] of Object.entries(prev)) {
-              if (!resolvedApprovalIdsRef.current.has(approvalId)) {
-                next[approvalId] = item;
-              }
-            }
-            return next;
-          });
-          setPendingInteractions((prev) => {
-            const next: Record<string, PendingInteractionCard> = {};
-            for (const item of pendingInteractionsResult.data) {
-              if (!resolvedInteractionIdsRef.current.has(item.interactionId)) {
-                next[item.interactionId] = item;
-              }
-            }
-            for (const [interactionId, item] of Object.entries(prev)) {
-              if (!resolvedInteractionIdsRef.current.has(interactionId)) {
-                next[interactionId] = item;
-              }
-            }
-            return next;
-          });
-          dispatchThreadEventStore({
-            type: "hydrateTimeline",
-            threadId,
-            items: timeline.data,
-          });
-          setLoading(false);
-          setError(null);
+          applyThreadSnapshot(threadId, snapshot, snapshotStartedSeq);
         }
       } catch (loadError) {
         if (!cancelled) {
@@ -675,7 +734,7 @@ export default function ThreadPage({ params }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [threadId]);
+  }, [applyThreadSnapshot, threadId]);
 
   useEffect(() => {
     if (!threadId) {
@@ -823,6 +882,29 @@ export default function ThreadPage({ params }: Props) {
       clearInterval(timer);
     };
   }, [connectionState, lastEventAtMs]);
+
+  useEffect(() => {
+    if (!threadId) {
+      return;
+    }
+
+    const syncWhenVisible = () => {
+      if (document.visibilityState === "hidden") {
+        return;
+      }
+      void syncThreadSnapshot();
+    };
+
+    document.addEventListener("visibilitychange", syncWhenVisible);
+    window.addEventListener("focus", syncWhenVisible);
+    window.addEventListener("online", syncWhenVisible);
+
+    return () => {
+      document.removeEventListener("visibilitychange", syncWhenVisible);
+      window.removeEventListener("focus", syncWhenVisible);
+      window.removeEventListener("online", syncWhenVisible);
+    };
+  }, [syncThreadSnapshot, threadId]);
 
   const connectionText = useMemo(() => {
     if (connectionState === "connected") return "Connected";
@@ -1187,6 +1269,22 @@ export default function ThreadPage({ params }: Props) {
   );
   const isThinkingActive = submitting || streamingTurnCount > 0;
   const runningTurnId = latestStreamingTurn?.turnId ?? null;
+  useEffect(() => {
+    if (!threadId || streamingTurnCount === 0) {
+      return;
+    }
+
+    const timer = setInterval(() => {
+      if (document.visibilityState === "hidden") {
+        return;
+      }
+      void syncThreadSnapshot();
+    }, STREAMING_SNAPSHOT_SYNC_INTERVAL_MS);
+
+    return () => {
+      clearInterval(timer);
+    };
+  }, [streamingTurnCount, syncThreadSnapshot, threadId]);
   const selectedModelLabel = useMemo(
     () => modelOptions.find((option) => option.value === model)?.label ?? model,
     [model, modelOptions],
