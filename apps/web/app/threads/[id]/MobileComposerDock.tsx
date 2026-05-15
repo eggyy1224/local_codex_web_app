@@ -28,6 +28,9 @@ export type MobileComposerStripInfo = {
     totalTokens: number;
     modelContextWindow: number | null;
   } | null;
+  // ⚡ is the Fast/speed-tier marker (mirrors the Codex app). Only shown
+  // when the service tier is actually "fast" — never in Flex.
+  speedFast?: boolean;
 };
 
 type MobileComposerDockProps = {
@@ -465,6 +468,16 @@ export default function MobileComposerDock({
               <span aria-hidden="true" />
               <span className="cdx-sr-only">{contextRing.label}</span>
             </span>
+            {strip.speedFast ? (
+              <span
+                className="cdx-mobile-composer-strip-bolt"
+                data-testid="mobile-composer-strip-fast"
+                aria-label="Fast mode"
+                title="Fast mode"
+              >
+                ⚡
+              </span>
+            ) : null}
             {strip.model ? (
               <span
                 className="cdx-mobile-composer-strip-chip"

@@ -2466,6 +2466,7 @@ export default function ThreadPage({ params }: Props) {
           projectLabel={activeProjectLabel}
           threadTitle={activeThreadTitle}
           collaborationMode={collaborationMode}
+          serviceTier={gatewayConfig.config?.serviceTier ?? null}
           pendingActionCount={pendingActionCount}
           isWorking={isThinkingActive}
           workingLabel={thinkingBannerText}
@@ -2637,6 +2638,7 @@ export default function ThreadPage({ params }: Props) {
                   modelContextWindow: latestTokenUsage.modelContextWindow,
                 }
               : null,
+            speedFast: gatewayConfig.config?.serviceTier === "fast",
           }}
           onPromptChange={(value) => {
             setPrompt(value);
@@ -2698,6 +2700,11 @@ export default function ThreadPage({ params }: Props) {
           thinkingEffort={thinkingEffort}
           thinkingEffortOptions={thinkingEffortOptions}
           permissionMode={permissionMode}
+          serviceTier={gatewayConfig.config?.serviceTier ?? null}
+          serviceTierBusy={gatewayConfig.status === "writing"}
+          onServiceTierChange={(tier) => {
+            void gatewayConfig.writeValue({ keyPath: "service_tier", value: tier });
+          }}
           onSectionChange={(section) => {
             setControlSheetSection(section);
             // Advanced tab pins controls (Stop/Retry/Cancel) at the bottom of

@@ -1030,27 +1030,32 @@ describe("Thread page integration", () => {
     );
   });
 
-  it("mobile advanced tab no longer renders a Speed / service-tier control", async () => {
-    // The Speed control wrote service_tier into the global ~/.codex/config.toml,
-    // but codex 0.130.0 has no service tier at all (openai/codex#2916 is an
-    // open, unimplemented feature request), so the whole control was removed.
-    // The advanced tab still works (Model select present) but no service-tier
-    // field/buttons exist and no config/value write is ever issued.
+  it("mobile advanced tab no longer offers the poisoning flex service tier", async () => {
+    // Regression: the mobile Speed control used to offer fast + flex. Tapping
+    // Flex wrote service_tier="flex" into the global ~/.codex/config.toml,
+    // which the API rejects on this plan → every codex turn died machine-wide.
+    // Flex must no longer be selectable; only "fast" is offered and no Flex
+    // pill is surfaced.
     setMobileViewport(true);
     vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
 
-    let configValueWriteCalled = false;
+    let currentTier: "fast" | "flex" = "fast";
+    let writeBody: unknown = null;
 
     server.use(
       http.get("http://127.0.0.1:8795/api/config", () =>
         HttpResponse.json({
-          config: { model: null, reasoningEffort: null },
+          config: { serviceTier: currentTier, model: null, reasoningEffort: null },
           filePath: null,
           version: null,
         }),
       ),
-      http.post("http://127.0.0.1:8795/api/config/value", async () => {
-        configValueWriteCalled = true;
+      http.post("http://127.0.0.1:8795/api/config/value", async ({ request }) => {
+        const body = (await request.json()) as { keyPath: string; value: string };
+        writeBody = body;
+        if (body.keyPath === "service_tier" && (body.value === "fast" || body.value === "flex")) {
+          currentTier = body.value;
+        }
         return HttpResponse.json({ status: "ok", filePath: null, version: null });
       }),
       http.get("http://127.0.0.1:8795/api/threads/:id", ({ params }) =>
@@ -1094,15 +1099,15 @@ describe("Thread page integration", () => {
     await screen.findByTestId("mobile-control-sheet");
     fireEvent.click(screen.getByTestId("mobile-control-tab-advanced"));
 
-    // Advanced tab still renders its real controls...
-    await screen.findByLabelText("Model");
+    const fastBtn = await screen.findByTestId("mobile-service-tier-fast");
+    await waitFor(() => {
+      expect(fastBtn).toHaveAttribute("aria-checked", "true");
+    });
 
-    // ...but the Speed / service-tier control is entirely gone.
-    expect(screen.queryByTestId("mobile-service-tier-field")).not.toBeInTheDocument();
-    expect(screen.queryByTestId("mobile-service-tier-fast")).not.toBeInTheDocument();
+    // Flex must not be selectable anywhere, and no flex write can be issued.
     expect(screen.queryByTestId("mobile-service-tier-flex")).not.toBeInTheDocument();
     expect(screen.queryByTestId("mobile-chat-flex-pill")).not.toBeInTheDocument();
-    expect(configValueWriteCalled).toBe(false);
+    expect(writeBody).toBeNull();
   });
 
   it("mobile control sheet closes when Close is pressed even after pointer-down on the header (regression)", async () => {

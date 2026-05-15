@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type {
   ApprovalDecisionRequest,
   InteractionRespondRequest,
+  ServiceTier,
   ThreadControlRequest,
   TurnPermissionMode,
 } from "@lcwa/shared-types";
@@ -61,6 +62,9 @@ type MobileControlSheetProps = {
   thinkingEffort: string;
   thinkingEffortOptions: string[];
   permissionMode: TurnPermissionMode;
+  serviceTier: ServiceTier | null;
+  serviceTierBusy: boolean;
+  onServiceTierChange: (value: ServiceTier) => void;
   onSectionChange: (section: ControlSheetSection) => void;
   onSnapChange: (snap: ControlSheetSnap) => void;
   onClose: () => void;
@@ -104,6 +108,9 @@ export default function MobileControlSheet({
   thinkingEffort,
   thinkingEffortOptions,
   permissionMode,
+  serviceTier,
+  serviceTierBusy,
+  onServiceTierChange,
   onSectionChange,
   onSnapChange,
   onClose,
@@ -317,6 +324,38 @@ export default function MobileControlSheet({
         <div className="cdx-mobile-sheet-body">
           {section === "advanced" ? (
             <div className="cdx-mobile-sheet-form">
+              <div className="cdx-mobile-sheet-field" data-testid="mobile-service-tier-field">
+                <span>Speed</span>
+                <div className="cdx-mobile-segmented" role="radiogroup" aria-label="Service tier">
+                  {/* "flex" deliberately not offered: the API rejects it on
+                      this account's plan and a write poisons the global codex
+                      config. Only "fast" is a safe writable tier. */}
+                  {(["fast"] as const).map((tier) => {
+                    const active = serviceTier === tier;
+                    return (
+                      <button
+                        key={tier}
+                        type="button"
+                        role="radio"
+                        aria-checked={active}
+                        data-testid={`mobile-service-tier-${tier}`}
+                        className={`cdx-mobile-segmented-item ${active ? "is-active" : ""}`}
+                        disabled={serviceTierBusy || active}
+                        onClick={() => onServiceTierChange(tier)}
+                      >
+                        {tier === "fast" ? "Fast" : "Flex"}
+                      </button>
+                    );
+                  })}
+                </div>
+                <p className="cdx-helper">
+                  {serviceTier === null
+                    ? "Reading…"
+                    : serviceTier === "fast"
+                      ? "1.5× speed when supported. Default."
+                      : "Flexible scheduling. Lower priority."}
+                </p>
+              </div>
               <label className="cdx-mobile-sheet-field" htmlFor="mobile-model">
                 <span>Model</span>
                 <select id="mobile-model" value={model} onChange={(event) => onModelChange(event.target.value)}>

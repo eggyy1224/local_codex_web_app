@@ -17,6 +17,7 @@ function renderTopBar(overrides: Overrides = {}) {
     projectLabel: "alpha-project",
     threadTitle: "Mobile Thread",
     collaborationMode: "default",
+    serviceTier: null,
     pendingActionCount: 0,
     isWorking: false,
     workingLabel: "Thinking in progress...",
