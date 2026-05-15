@@ -14,6 +14,7 @@ export type ThreadEventStoreState = {
   threadId: string;
   baseTimelineItems: ThreadTimelineItem[];
   liveEvents: GatewayEvent[];
+  liveThreadListEvents: GatewayEvent[];
   lastSeq: number;
   activeTurnId: string | null;
 };
@@ -45,9 +46,18 @@ export function createThreadEventStoreState(
     threadId,
     baseTimelineItems: [],
     liveEvents: [],
+    liveThreadListEvents: [],
     lastSeq: 0,
     activeTurnId: null,
   };
+}
+
+function shouldRetainThreadListEvent(event: GatewayEvent): boolean {
+  return (
+    event.name === "turn/started" ||
+    event.name === "turn/completed" ||
+    event.name === "thread/updated"
+  );
 }
 
 function activeTurnIdAfterTimelineItems(
@@ -131,6 +141,9 @@ export function threadEventStoreReducer(
   return {
     ...state,
     liveEvents: [...state.liveEvents, action.event].slice(-MAX_LIVE_EVENTS),
+    liveThreadListEvents: shouldRetainThreadListEvent(action.event)
+      ? [...state.liveThreadListEvents, action.event].slice(-MAX_LIVE_EVENTS)
+      : state.liveThreadListEvents,
     lastSeq: action.event.seq,
     activeTurnId: activeTurnIdAfterGatewayEvent(state.activeTurnId, action.event),
   };

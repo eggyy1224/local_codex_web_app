@@ -216,6 +216,7 @@ export default function ThreadPage({ params }: Props) {
   const previousThreadIdRef = useRef("");
   const activeThreadIdRef = useRef("");
   const snapshotSyncInFlightThreadRef = useRef<string | null>(null);
+  const forceEventSourceReconnectRef = useRef<(() => void) | null>(null);
   const resolvedApprovalIdsRef = useRef<Set<string>>(new Set());
   const resolvedInteractionIdsRef = useRef<Set<string>>(new Set());
   const [threadId, setThreadId] = useState<string>("");
@@ -638,9 +639,10 @@ export default function ThreadPage({ params }: Props) {
     setDetail(snapshot.data);
     setThreadListLoading(false);
     setThreadList(() => {
-      const liveEventsAfterSnapshotStarted = threadEventStoreRef.current.liveEvents.filter(
-        (event) => event.seq > startedSeq,
-      );
+      const liveEventsAfterSnapshotStarted =
+        threadEventStoreRef.current.liveThreadListEvents.filter(
+          (event) => event.seq > startedSeq,
+        );
       return liveEventsAfterSnapshotStarted.reduce(
         (items, event) => items.map((item) => threadListItemFromGatewayEvent(item, event)),
         snapshot.threadListResult.data,
@@ -747,10 +749,23 @@ export default function ThreadPage({ params }: Props) {
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
     let reconnectAttempt = 0;
 
+    const clearRetryTimer = () => {
+      if (retryTimer) {
+        clearTimeout(retryTimer);
+        retryTimer = null;
+      }
+    };
+
+    const closeEventSource = () => {
+      es?.close();
+      es = null;
+    };
+
     const scheduleReconnect = () => {
       if (stopped) {
         return;
       }
+      clearRetryTimer();
       const delay = Math.min(10_000, 800 * 2 ** reconnectAttempt);
       reconnectAttempt += 1;
       retryTimer = setTimeout(() => connect(true), delay);
@@ -760,6 +775,7 @@ export default function ThreadPage({ params }: Props) {
       if (stopped) {
         return;
       }
+      closeEventSource();
       setConnectionState(isRetry ? "reconnecting" : "connecting");
 
       es = new EventSource(`${gatewayUrl}/api/threads/${threadId}/events?since=${currentSince}`);
@@ -848,19 +864,32 @@ export default function ThreadPage({ params }: Props) {
           return;
         }
         setConnectionState("reconnecting");
-        es?.close();
+        closeEventSource();
         scheduleReconnect();
       };
     };
 
+    const reconnectNow = () => {
+      if (stopped) {
+        return;
+      }
+      clearRetryTimer();
+      reconnectAttempt = 0;
+      setConnectionState("reconnecting");
+      closeEventSource();
+      connect(true);
+    };
+
+    forceEventSourceReconnectRef.current = reconnectNow;
     connect(false);
 
     return () => {
       stopped = true;
-      if (retryTimer) {
-        clearTimeout(retryTimer);
+      clearRetryTimer();
+      if (forceEventSourceReconnectRef.current === reconnectNow) {
+        forceEventSourceReconnectRef.current = null;
       }
-      es?.close();
+      closeEventSource();
     };
   }, [threadId]);
 
@@ -873,6 +902,8 @@ export default function ThreadPage({ params }: Props) {
       const ageMs = Date.now() - lastEventAtMs;
       if (ageMs > 20_000) {
         setConnectionState("lagging");
+        forceEventSourceReconnectRef.current?.();
+        void syncThreadSnapshot();
       } else if (connectionState === "lagging") {
         setConnectionState("connected");
       }
@@ -881,18 +912,25 @@ export default function ThreadPage({ params }: Props) {
     return () => {
       clearInterval(timer);
     };
-  }, [connectionState, lastEventAtMs]);
+  }, [connectionState, lastEventAtMs, syncThreadSnapshot]);
 
   useEffect(() => {
     if (!threadId) {
       return;
     }
 
+    let lastVisibleRecoveryAt = 0;
     const syncWhenVisible = () => {
       if (document.visibilityState === "hidden") {
         return;
       }
+      const now = Date.now();
+      if (now - lastVisibleRecoveryAt < 1_000) {
+        return;
+      }
+      lastVisibleRecoveryAt = now;
       void syncThreadSnapshot();
+      forceEventSourceReconnectRef.current?.();
     };
 
     document.addEventListener("visibilitychange", syncWhenVisible);

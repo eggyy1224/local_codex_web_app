@@ -11,6 +11,7 @@ let searchParamsValue = new URLSearchParams();
 
 class MockEventSource {
   static instances: MockEventSource[] = [];
+  closed = false;
   onerror: ((event: Event) => void) | null = null;
   private listeners = new Map<string, Array<(event: MessageEvent) => void>>();
 
@@ -33,7 +34,7 @@ class MockEventSource {
   }
 
   close(): void {
-    // no-op
+    this.closed = true;
   }
 }
 
@@ -848,6 +849,17 @@ describe("Thread page integration", () => {
         turn: { id: "turn-running", status: "in_progress" },
       },
     });
+    for (let seq = 2; seq <= 620; seq += 1) {
+      es.emit("gateway", {
+        seq,
+        serverTs: `2026-01-03T00:00:05.${String(seq).padStart(3, "0")}Z`,
+        threadId: "thread-1",
+        turnId: "turn-running",
+        kind: "item",
+        name: "item/agentMessage/delta",
+        payload: { text: "streaming" },
+      });
+    }
 
     await waitFor(() => {
       const liveRow = within(overlay).getByText("Alpha Thread").closest("button");
@@ -2751,6 +2763,86 @@ describe("Thread page integration", () => {
     await waitFor(() => {
       expect(timelineCalls).toBeGreaterThanOrEqual(2);
       expect(screen.queryByTestId("mobile-running-indicator")).not.toBeInTheDocument();
+    });
+  });
+
+  it("mobile focus rebuilds the EventSource so a zombie PWA stream can replay missed events", async () => {
+    setMobileViewport(true);
+    vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+    MockEventSource.instances.length = 0;
+
+    server.use(
+      http.get("http://127.0.0.1:8795/api/threads/:id", ({ params }) =>
+        HttpResponse.json({
+          thread: {
+            id: String(params.id),
+            title: "Main Thread",
+            preview: "Preview",
+            status: "idle",
+            createdAt: null,
+            updatedAt: null,
+          },
+          turns: [],
+          nextCursor: null,
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/approvals/pending", () =>
+        HttpResponse.json({ data: [] }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/interactions/pending", () =>
+        HttpResponse.json({ data: [] }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads", () =>
+        HttpResponse.json({ data: [], nextCursor: null }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/timeline", () =>
+        HttpResponse.json({ data: [] }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/context", () =>
+        HttpResponse.json({
+          threadId: "thread-1",
+          cwd: "/tmp/project",
+          resolvedCwd: "/tmp/project",
+          isFallback: false,
+          source: "projection",
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/models", () => HttpResponse.json({ data: [] })),
+    );
+
+    render(<ThreadPage params={Promise.resolve({ id: "thread-1" })} />);
+
+    await waitFor(() => {
+      expect(MockEventSource.instances).toHaveLength(1);
+    });
+    const first = MockEventSource.instances[0];
+    expect(first.closed).toBe(false);
+
+    first.emit("gateway", {
+      seq: 7,
+      serverTs: "2026-01-03T00:00:05.000Z",
+      threadId: "thread-1",
+      turnId: null,
+      kind: "thread",
+      name: "thread/updated",
+      payload: {
+        thread: { id: "thread-1", status: "idle" },
+      },
+    });
+
+    window.dispatchEvent(new Event("focus"));
+
+    await waitFor(() => {
+      expect(MockEventSource.instances).toHaveLength(2);
+    });
+    expect(first.closed).toBe(true);
+    expect(MockEventSource.instances.at(-1)?.url).toContain("/events?since=7");
+
+    window.dispatchEvent(new Event("online"));
+    document.dispatchEvent(new Event("visibilitychange"));
+
+    await waitFor(() => {
+      expect(MockEventSource.instances).toHaveLength(2);
     });
   });
 
