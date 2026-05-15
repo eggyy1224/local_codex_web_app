@@ -1715,11 +1715,18 @@ export default function ThreadPage({ params }: Props) {
     setControlError(null);
 
     try {
-      // No JSON body: the gateway compact route only reads the :id param.
-      // Declaring Content-Type: application/json with an empty body makes
-      // Fastify's JSON parser reject it ("Body cannot be empty...").
+      // Send an explicit {} body (not no body): the application/json header
+      // keeps this mutating POST a non-simple request, so the browser must
+      // preflight it and the gateway's CORS origin allowlist still gates the
+      // side effect. An empty body under that header would trip Fastify's
+      // JSON parser ("Body cannot be empty..."), so {} is the minimum that
+      // satisfies the parser without weakening the origin boundary.
       const res = await fetch(`${gatewayUrl}/api/threads/${requestThreadId}/compact`, {
         method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: "{}",
       });
 
       if (!res.ok) {
