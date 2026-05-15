@@ -830,9 +830,18 @@ textarea {
   cursor: pointer;
 }
 
+/* Selected-thread highlight must NOT be green: green is the "running"
+   status semantic (status dot/badge), so colouring the open thread's
+   title green made every thread you merely opened look like it had
+   started running. Indicate selection neutrally instead. */
+.cdx-mobile-thread-switcher-item.is-active {
+  background: rgba(255, 255, 255, 0.06);
+}
+
 .cdx-mobile-thread-switcher-item.is-active
   .cdx-mobile-thread-switcher-item-title {
-  color: var(--m-green);
+  color: var(--m-text);
+  font-weight: 600;
 }
 
 .cdx-mobile-thread-switcher-status {
