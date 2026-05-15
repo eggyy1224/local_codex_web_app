@@ -26,6 +26,12 @@ const allowedDevOrigins = Array.from(
 
 const nextConfig: NextConfig = {
   ...(allowedDevOrigins.length > 0 ? { allowedDevOrigins } : {}),
+  // Playwright spawns its own `next dev` while the user's live dev server is
+  // also running; both default to `.next` and concurrent compiles corrupt
+  // each other's chunks (500s on /threads/[id]). The e2e webServer sets
+  // NEXT_DIST_DIR=.next-e2e so the two never share a build dir. Unset (the
+  // normal dev/prod path) keeps the default `.next`.
+  distDir: process.env.NEXT_DIST_DIR ?? ".next",
   devIndicators: false,
   reactStrictMode: true,
   transpilePackages: ["@lcwa/shared-types"],

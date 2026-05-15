@@ -33,7 +33,9 @@ export default defineConfig({
       timeout: 120_000,
     },
     {
-      command: `pnpm --filter @lcwa/web exec next dev --port ${port}`,
+      // Isolated build dir: never share `.next` with a live local dev server
+      // (concurrent compiles corrupt chunks and 500 the app).
+      command: `NEXT_DIST_DIR=.next-e2e pnpm --filter @lcwa/web exec next dev --port ${port}`,
       url: `http://127.0.0.1:${port}`,
       reuseExistingServer: !process.env.CI,
       timeout: 120_000,
