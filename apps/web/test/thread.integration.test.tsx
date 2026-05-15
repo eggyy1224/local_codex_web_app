@@ -2648,6 +2648,218 @@ describe("Thread page integration", () => {
     });
   });
 
+  it("desktop Compact button is disabled while a turn is in progress", async () => {
+    vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+    MockEventSource.instances.length = 0;
+
+    let compactCalls = 0;
+
+    // A timeline that only has a turn/started item (no completion) leaves the
+    // thread with a running turn, so the Compact button must be disabled to
+    // avoid a guaranteed 409 from the gateway.
+    const startedItem = {
+      id: "tl-started",
+      ts: "2026-01-01T00:00:00.000Z",
+      turnId: "turn-running",
+      type: "status",
+      title: "Turn started",
+      text: "turn turn-running",
+      rawType: "turn/started",
+      toolName: null,
+      callId: null,
+    };
+
+    server.use(
+      http.get("http://127.0.0.1:8795/api/threads/:id", ({ params }) =>
+        HttpResponse.json({
+          thread: {
+            id: String(params.id),
+            title: "Running Thread",
+            preview: "",
+            status: "running",
+            createdAt: null,
+            updatedAt: null,
+          },
+          turns: [],
+          nextCursor: null,
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/approvals/pending", () =>
+        HttpResponse.json({ data: [] }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads", () =>
+        HttpResponse.json({ data: [], nextCursor: null }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/timeline", () =>
+        HttpResponse.json({ data: [startedItem] }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/context", () =>
+        HttpResponse.json({
+          threadId: "thread-1",
+          cwd: "/tmp/project",
+          resolvedCwd: "/tmp/project",
+          isFallback: false,
+          source: "projection",
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/models", () => HttpResponse.json({ data: [] })),
+      http.post("http://127.0.0.1:8795/api/threads/:id/compact", () => {
+        compactCalls += 1;
+        return HttpResponse.json({ ok: true });
+      }),
+    );
+
+    render(<ThreadPage params={Promise.resolve({ id: "thread-1" })} />);
+
+    const compactBtn = await screen.findByTestId("control-compact");
+    await waitFor(() => {
+      expect(compactBtn).toBeDisabled();
+    });
+    expect(compactBtn).toHaveAttribute("title", "對話進行中,無法 compact");
+
+    fireEvent.click(compactBtn);
+    // Disabled button click must not reach the gateway.
+    expect(compactCalls).toBe(0);
+  });
+
+  it("mobile Compact button posts when idle and is disabled while a turn runs", async () => {
+    setMobileViewport(true);
+    vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+    MockEventSource.instances.length = 0;
+
+    let compactCalls = 0;
+    let compactThreadId: string | null = null;
+
+    server.use(
+      http.get("http://127.0.0.1:8795/api/threads/:id", ({ params }) =>
+        HttpResponse.json({
+          thread: {
+            id: String(params.id),
+            title: "Mobile Compact Thread",
+            preview: "",
+            status: "idle",
+            createdAt: null,
+            updatedAt: null,
+          },
+          turns: [],
+          nextCursor: null,
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/approvals/pending", () =>
+        HttpResponse.json({ data: [] }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/interactions/pending", () =>
+        HttpResponse.json({ data: [] }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads", () =>
+        HttpResponse.json({ data: [], nextCursor: null }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/timeline", () =>
+        HttpResponse.json({ data: [] }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/context", () =>
+        HttpResponse.json({
+          threadId: "thread-1",
+          cwd: "/tmp/project",
+          resolvedCwd: "/tmp/project",
+          isFallback: false,
+          source: "projection",
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/models", () => HttpResponse.json({ data: [] })),
+      http.post("http://127.0.0.1:8795/api/threads/:id/compact", ({ params }) => {
+        compactCalls += 1;
+        compactThreadId = String(params.id);
+        return HttpResponse.json({ ok: true });
+      }),
+    );
+
+    render(<ThreadPage params={Promise.resolve({ id: "thread-1" })} />);
+
+    fireEvent.click(await screen.findByTestId("mobile-topbar-control-toggle"));
+    const sheet = await screen.findByTestId("mobile-control-sheet");
+    fireEvent.click(within(sheet).getByTestId("mobile-control-tab-advanced"));
+
+    const compactBtn = await within(sheet).findByTestId("control-compact");
+    expect(compactBtn).not.toBeDisabled();
+    fireEvent.click(compactBtn);
+
+    await waitFor(() => {
+      expect(compactCalls).toBe(1);
+      expect(compactThreadId).toBe("thread-1");
+      expect(within(sheet).getByTestId("control-compact")).not.toBeDisabled();
+    });
+  });
+
+  it("mobile Compact surfaces the gateway error message on failure", async () => {
+    setMobileViewport(true);
+    vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+    MockEventSource.instances.length = 0;
+
+    server.use(
+      http.get("http://127.0.0.1:8795/api/threads/:id", ({ params }) =>
+        HttpResponse.json({
+          thread: {
+            id: String(params.id),
+            title: "Mobile Compact Error Thread",
+            preview: "",
+            status: "idle",
+            createdAt: null,
+            updatedAt: null,
+          },
+          turns: [],
+          nextCursor: null,
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/approvals/pending", () =>
+        HttpResponse.json({ data: [] }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/interactions/pending", () =>
+        HttpResponse.json({ data: [] }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads", () =>
+        HttpResponse.json({ data: [], nextCursor: null }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/timeline", () =>
+        HttpResponse.json({ data: [] }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/context", () =>
+        HttpResponse.json({
+          threadId: "thread-1",
+          cwd: "/tmp/project",
+          resolvedCwd: "/tmp/project",
+          isFallback: false,
+          source: "projection",
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/models", () => HttpResponse.json({ data: [] })),
+      http.post("http://127.0.0.1:8795/api/threads/:id/compact", () =>
+        HttpResponse.json(
+          {
+            statusCode: 409,
+            error: "Conflict",
+            message: "cannot compact while a turn is in progress",
+          },
+          { status: 409 },
+        ),
+      ),
+    );
+
+    render(<ThreadPage params={Promise.resolve({ id: "thread-1" })} />);
+
+    fireEvent.click(await screen.findByTestId("mobile-topbar-control-toggle"));
+    const sheet = await screen.findByTestId("mobile-control-sheet");
+    fireEvent.click(within(sheet).getByTestId("mobile-control-tab-advanced"));
+
+    fireEvent.click(await within(sheet).findByTestId("control-compact"));
+
+    await waitFor(() => {
+      expect(
+        screen.getByText("cannot compact while a turn is in progress"),
+      ).toBeInTheDocument();
+    });
+  });
+
   it("updates event cursor and pending approvals from EventSource events", async () => {
     vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
     MockEventSource.instances.length = 0;

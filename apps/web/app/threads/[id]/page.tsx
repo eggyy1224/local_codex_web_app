@@ -1723,7 +1723,8 @@ export default function ThreadPage({ params }: Props) {
       });
 
       if (!res.ok) {
-        throw new Error(`compact http ${res.status}`);
+        const body = (await res.json().catch(() => null)) as { message?: string } | null;
+        throw new Error(body?.message ?? `compact http ${res.status}`);
       }
     } catch (compactErr) {
       if (activeThreadIdRef.current === requestThreadId) {
@@ -2683,6 +2684,8 @@ export default function ThreadPage({ params }: Props) {
           approvalBusy={approvalBusy}
           interactionBusy={interactionBusy}
           controlBusy={controlBusy}
+          compactBusy={compactBusy}
+          turnRunning={runningTurnId !== null}
           pendingApprovals={pendingApprovalList}
           pendingInteractions={pendingInteractionList}
           model={model}
@@ -2709,6 +2712,7 @@ export default function ThreadPage({ params }: Props) {
           onDraggingChange={setIsDraggingSheet}
           onDragOffsetChange={setSheetDragOffsetY}
           onControl={(action) => void sendControl(action)}
+          onCompact={() => void compactThread()}
           onDecision={(approvalId, decision) => void decideApproval(approvalId, decision)}
           onRespondInteraction={(interactionId, answers) => void respondInteraction(interactionId, answers)}
           onModelChange={setModel}
@@ -3769,7 +3773,17 @@ export default function ThreadPage({ params }: Props) {
                     type="button"
                     data-testid="control-compact"
                     className="cdx-toolbar-btn"
-                    disabled={compactBusy}
+                    disabled={compactBusy || runningTurnId !== null}
+                    title={
+                      runningTurnId !== null
+                        ? "對話進行中,無法 compact"
+                        : "Compact conversation history"
+                    }
+                    aria-label={
+                      runningTurnId !== null
+                        ? "對話進行中,無法 compact"
+                        : "Compact conversation history"
+                    }
                     onClick={() => void compactThread()}
                   >
                     {compactBusy ? "Compacting..." : "Compact"}
