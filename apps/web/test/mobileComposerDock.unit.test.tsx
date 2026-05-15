@@ -48,7 +48,46 @@ describe("MobileComposerDock slice 4: plus menu + compact strip", () => {
     expect(screen.getByTestId("mobile-composer-strip-model")).toHaveTextContent("gpt-5");
     expect(screen.getByTestId("mobile-composer-strip-effort")).toHaveTextContent("High");
     expect(screen.getByTestId("mobile-composer-strip-permission")).toHaveTextContent("local");
+    expect(screen.getByTestId("mobile-composer-context-ring")).toHaveAttribute(
+      "title",
+      "Context usage not available yet",
+    );
     expect(screen.queryByTestId("mobile-composer-strip-pending")).not.toBeInTheDocument();
+  });
+
+  it("renders context usage as a circular progress ring when token window is known", () => {
+    renderDock({
+      strip: {
+        model: "gpt-5",
+        effortLabel: "High",
+        permissionLabel: "local",
+        pendingCount: 0,
+        contextUsage: {
+          totalTokens: 4_000,
+          modelContextWindow: 8_000,
+        },
+      },
+    });
+    const ring = screen.getByTestId("mobile-composer-context-ring");
+    expect(ring).toHaveAttribute("data-level", "low");
+    expect(ring).toHaveAttribute("title", "Context 50%, 4k of 8k tokens");
+    expect((ring as HTMLElement).style.getPropertyValue("--context-ring-progress")).toBe("50%");
+  });
+
+  it("marks the context ring high when usage is near the context window", () => {
+    renderDock({
+      strip: {
+        model: "gpt-5",
+        effortLabel: "High",
+        permissionLabel: "local",
+        pendingCount: 0,
+        contextUsage: {
+          totalTokens: 91_000,
+          modelContextWindow: 100_000,
+        },
+      },
+    });
+    expect(screen.getByTestId("mobile-composer-context-ring")).toHaveAttribute("data-level", "high");
   });
 
   it("surfaces a pending chip when pendingCount > 0", () => {

@@ -516,6 +516,85 @@ describe("Thread page integration", () => {
     });
   });
 
+  it("mobile composer updates the context ring from live token usage events", async () => {
+    setMobileViewport(true);
+    vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+    MockEventSource.instances.length = 0;
+
+    server.use(
+      http.get("http://127.0.0.1:8795/api/threads/:id", ({ params }) =>
+        HttpResponse.json({
+          thread: {
+            id: String(params.id),
+            title: "Mobile Thread",
+            preview: "Preview",
+            status: "idle",
+            createdAt: null,
+            updatedAt: null,
+          },
+          turns: [],
+          nextCursor: null,
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/approvals/pending", () =>
+        HttpResponse.json({ data: [] }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads", () =>
+        HttpResponse.json({ data: [], nextCursor: null }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/timeline", () => HttpResponse.json({ data: [] })),
+      http.get("http://127.0.0.1:8795/api/threads/:id/context", () =>
+        HttpResponse.json({
+          threadId: "thread-1",
+          cwd: "/tmp/project-a",
+          resolvedCwd: "/tmp/project-a",
+          isFallback: false,
+          source: "projection",
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/models", () => HttpResponse.json({ data: [] })),
+      http.post("http://127.0.0.1:8795/api/threads/:id/control", () => HttpResponse.json({ ok: true })),
+    );
+
+    render(<ThreadPage params={Promise.resolve({ id: "thread-1" })} />);
+
+    const ring = await screen.findByTestId("mobile-composer-context-ring");
+    expect(ring).toHaveAttribute("title", "Context usage not available yet");
+    await waitFor(() => {
+      expect(MockEventSource.instances.length).toBeGreaterThan(0);
+    });
+    const es = MockEventSource.instances.at(-1);
+    if (!es) {
+      throw new Error("missing EventSource instance");
+    }
+
+    es.emit("gateway", {
+      seq: 4,
+      serverTs: "2026-01-01T00:00:04.000Z",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      kind: "status",
+      name: "thread/tokenUsage/updated",
+      payload: {
+        turnId: "turn-1",
+        tokenUsage: {
+          total: {
+            totalTokens: 32_000,
+            inputTokens: 30_000,
+            outputTokens: 2_000,
+          },
+          modelContextWindow: 64_000,
+        },
+      },
+    });
+
+    await waitFor(() => {
+      const updatedRing = screen.getByTestId("mobile-composer-context-ring");
+      expect(updatedRing).toHaveAttribute("title", "Context 50%, 32k of 64k tokens");
+      expect((updatedRing as HTMLElement).style.getPropertyValue("--context-ring-progress")).toBe("50%");
+    });
+  });
+
   it("mobile thread switcher groups by project, collapses per group, and creates a new thread in the chosen project", async () => {
     setMobileViewport(true);
     vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
