@@ -29,6 +29,7 @@ class StubAppServer extends EventEmitter implements GatewayAppServerPort {
   errorMessage: string | null = null;
 
   private readonly threads = new Map<string, StubThread>();
+  private readonly heldTurnCompletions = new Map<string, () => void>();
   private threadSeq = 1;
   private turnSeq = 1;
   private approvalSeq = 100;
@@ -41,6 +42,34 @@ class StubAppServer extends EventEmitter implements GatewayAppServerPort {
 
   notify(): void {
     // no-op
+  }
+
+  completeHeldTurn(threadId: string): boolean {
+    const complete = this.heldTurnCompletions.get(threadId);
+    if (!complete) {
+      return false;
+    }
+    complete();
+    return true;
+  }
+
+  emitActiveDelta(threadId: string, delta: string): boolean {
+    const thread = this.threads.get(threadId);
+    const turn = thread
+      ? [...thread.turns].reverse().find((entry) => entry.status === "in_progress")
+      : undefined;
+    if (!thread || !turn) {
+      return false;
+    }
+    this.emit("message", {
+      method: "item/agentMessage/delta",
+      params: {
+        threadId: thread.id,
+        turnId: turn.id,
+        delta,
+      },
+    });
+    return true;
   }
 
   respond(id: string | number): void {
@@ -143,6 +172,7 @@ class StubAppServer extends EventEmitter implements GatewayAppServerPort {
       const userText = p.input?.find((item) => item.type === "text")?.text ?? "";
       const normalizedUserText = userText.toLowerCase();
       const shouldEmitPlanFlow = normalizedUserText.includes("plan flow");
+      const shouldHoldForE2E = normalizedUserText.includes("e2e hold");
       const turn: StubTurn = {
         id: turnId,
         status: "in_progress",
@@ -174,6 +204,10 @@ class StubAppServer extends EventEmitter implements GatewayAppServerPort {
       });
 
       const completeTurn = () => {
+        if (turn.status !== "in_progress") {
+          return;
+        }
+        this.heldTurnCompletions.delete(thread.id);
         const assistantText = shouldEmitPlanFlow
           ? "Plan draft ready.\n<proposed_plan>1. Add interaction pipeline\n2. Build UI submit path\n3. Verify mobile + desktop</proposed_plan>"
           : `Echo: ${userText || "ok"}`;
@@ -222,7 +256,9 @@ class StubAppServer extends EventEmitter implements GatewayAppServerPort {
         });
       };
 
-      if (shouldEmitPlanFlow) {
+      if (shouldHoldForE2E) {
+        this.heldTurnCompletions.set(thread.id, completeTurn);
+      } else if (shouldEmitPlanFlow) {
         const interactionId = this.interactionSeq++;
         this.pendingInteractionCompletions.set(interactionId, completeTurn);
         this.emit("message", {
@@ -297,9 +333,10 @@ function parsePort(argv: string[]): number {
 
 const tmpDir = mkdtempSync(path.join(os.tmpdir(), "lcwa-e2e-gateway-"));
 const db = createGatewayDb({ dbPath: path.join(tmpDir, "index.db") });
+const stubAppServer = new StubAppServer();
 const app = await createGatewayApp(
   {
-    appServer: new StubAppServer(),
+    appServer: stubAppServer,
     db,
   },
   {
@@ -308,6 +345,23 @@ const app = await createGatewayApp(
     uploadRoot: path.join(tmpDir, "uploads"),
   },
 );
+
+app.post("/__e2e/threads/:id/complete-active-turn", async (request, reply) => {
+  const params = request.params as { id: string };
+  if (!stubAppServer.completeHeldTurn(params.id)) {
+    return reply.status(404).send({ ok: false, error: "held turn not found" });
+  }
+  return { ok: true };
+});
+
+app.post("/__e2e/threads/:id/emit-delta", async (request, reply) => {
+  const params = request.params as { id: string };
+  const body = request.body as { delta?: string };
+  if (!stubAppServer.emitActiveDelta(params.id, body.delta ?? "streaming")) {
+    return reply.status(404).send({ ok: false, error: "active turn not found" });
+  }
+  return { ok: true };
+});
 
 const port = parsePort(process.argv.slice(2));
 
