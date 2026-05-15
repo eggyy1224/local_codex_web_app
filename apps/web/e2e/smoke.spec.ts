@@ -273,6 +273,11 @@ test("mobile plan flow: answer questions tab then implement from sheet", async (
   await sheet.getByTestId("mobile-control-sheet-close").click();
   await expect(sheet).toHaveCount(0);
 
+  const actionLayer = page.getByTestId("mobile-action-layer");
+  await expect(actionLayer).toHaveAttribute("data-kind", "approval");
+  await page.getByTestId("mobile-action-allow").click();
+  await expect(actionLayer).toHaveCount(0);
+
   await expect(page.getByRole("button", { name: "Implement this plan" }).first()).toBeVisible();
   await page.getByRole("button", { name: "Implement this plan" }).first().click();
 

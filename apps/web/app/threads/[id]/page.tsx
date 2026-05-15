@@ -151,7 +151,6 @@ const MOBILE_CANVAS_URL_STORAGE_KEY = "lcwa.mobile.canvas.url.v1";
 const TIMELINE_STICKY_THRESHOLD_PX = 56;
 const ACTIVE_THREAD_SCROLL_SNAP_THRESHOLD_PX = 24;
 const FALLBACK_THINKING_EFFORT_OPTIONS = ["minimal", "low", "medium", "high"];
-const STREAMING_SNAPSHOT_SYNC_INTERVAL_MS = 15_000;
 
 type ThreadSnapshot = {
   data: ThreadDetailResponse;
@@ -1307,22 +1306,6 @@ export default function ThreadPage({ params }: Props) {
   );
   const isThinkingActive = submitting || streamingTurnCount > 0;
   const runningTurnId = latestStreamingTurn?.turnId ?? null;
-  useEffect(() => {
-    if (!threadId || streamingTurnCount === 0) {
-      return;
-    }
-
-    const timer = setInterval(() => {
-      if (document.visibilityState === "hidden") {
-        return;
-      }
-      void syncThreadSnapshot();
-    }, STREAMING_SNAPSHOT_SYNC_INTERVAL_MS);
-
-    return () => {
-      clearInterval(timer);
-    };
-  }, [streamingTurnCount, syncThreadSnapshot, threadId]);
   const selectedModelLabel = useMemo(
     () => modelOptions.find((option) => option.value === model)?.label ?? model,
     [model, modelOptions],

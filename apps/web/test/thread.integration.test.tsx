@@ -2683,6 +2683,7 @@ describe("Thread page integration", () => {
     setMobileViewport(true);
     vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
     MockEventSource.instances.length = 0;
+    const setIntervalSpy = vi.spyOn(globalThis, "setInterval");
     let timelineCalls = 0;
 
     const startedItem = {
@@ -2750,20 +2751,25 @@ describe("Thread page integration", () => {
       http.get("http://127.0.0.1:8795/api/models", () => HttpResponse.json({ data: [] })),
     );
 
-    render(<ThreadPage params={Promise.resolve({ id: "thread-1" })} />);
+    try {
+      render(<ThreadPage params={Promise.resolve({ id: "thread-1" })} />);
 
-    await waitFor(() => {
-      expect(screen.getByTestId("mobile-running-indicator")).toHaveTextContent(
-        "Thinking in progress",
-      );
-    });
+      await waitFor(() => {
+        expect(screen.getByTestId("mobile-running-indicator")).toHaveTextContent(
+          "Thinking in progress",
+        );
+      });
+      expect(setIntervalSpy.mock.calls.some(([, delay]) => delay === 15_000)).toBe(false);
 
-    window.dispatchEvent(new Event("focus"));
+      window.dispatchEvent(new Event("focus"));
 
-    await waitFor(() => {
-      expect(timelineCalls).toBeGreaterThanOrEqual(2);
-      expect(screen.queryByTestId("mobile-running-indicator")).not.toBeInTheDocument();
-    });
+      await waitFor(() => {
+        expect(timelineCalls).toBeGreaterThanOrEqual(2);
+        expect(screen.queryByTestId("mobile-running-indicator")).not.toBeInTheDocument();
+      });
+    } finally {
+      setIntervalSpy.mockRestore();
+    }
   });
 
   it("mobile focus rebuilds the EventSource so a zombie PWA stream can replay missed events", async () => {
