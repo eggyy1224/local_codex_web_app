@@ -346,7 +346,14 @@ export default function MobileControlSheet({
                         aria-checked={active}
                         data-testid={`mobile-service-tier-${option.key}`}
                         className={`cdx-mobile-segmented-item ${active ? "is-active" : ""}`}
-                        disabled={serviceTierBusy || active}
+                        // Only block during an in-flight write — never on
+                        // `active`. A poisoned global config (e.g. a stray
+                        // service_tier="flex") collapses to serviceTier=null,
+                        // which would mark Standard "active"; disabling it
+                        // there would strand the user with no in-UI way to
+                        // clear the bad value. Re-picking the current tier is
+                        // a harmless idempotent write.
+                        disabled={serviceTierBusy}
                         onClick={() => onServiceTierChange(option.value)}
                       >
                         {option.label}
