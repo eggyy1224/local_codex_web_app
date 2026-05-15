@@ -26,6 +26,8 @@ type MobileChatTopBarProps = {
   collaborationMode: "plan" | "default";
   serviceTier: ServiceTier | null;
   pendingActionCount: number;
+  isWorking: boolean;
+  workingLabel: string;
   runningTurnId: string | null;
   stopBusy: boolean;
   viewMode: ThreadViewMode;
@@ -44,6 +46,8 @@ export default function MobileChatTopBar({
   collaborationMode,
   serviceTier,
   pendingActionCount,
+  isWorking,
+  workingLabel,
   runningTurnId,
   stopBusy,
   viewMode,
@@ -137,6 +141,19 @@ export default function MobileChatTopBar({
           the user still needs a path into the sheet. Stop is rendered as an
           extra action so it never steals the controls entrypoint.
         */}
+        {isWorking ? (
+          <span
+            className="cdx-mobile-running-beacon"
+            data-testid="mobile-running-indicator"
+            role="status"
+            aria-live="polite"
+            aria-label={workingLabel}
+            title={workingLabel}
+          >
+            <span aria-hidden="true" />
+            <span className="cdx-sr-only">{workingLabel}</span>
+          </span>
+        ) : null}
         <button
           type="button"
           className="cdx-mobile-icon-btn"

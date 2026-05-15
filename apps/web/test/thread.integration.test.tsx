@@ -184,12 +184,13 @@ describe("Thread page integration", () => {
     expect(screen.getByTestId("timeline")).toBeInTheDocument();
   });
 
-  it("optimistically renders the user message + thinking pill while turn submission is in flight", async () => {
+  it("optimistically renders the user message + thinking indicator while turn submission is in flight", async () => {
     vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
     let releaseTurnRequest: (() => void) | null = null;
     const turnRequestGate = new Promise<void>((resolve) => {
       releaseTurnRequest = resolve;
     });
+    setMobileViewport(true);
 
     server.use(
       http.get("http://127.0.0.1:8795/api/threads/:id", ({ params }) =>
@@ -248,12 +249,11 @@ describe("Thread page integration", () => {
     fireEvent.change(screen.getByTestId("turn-input"), { target: { value: "run long request" } });
     fireEvent.click(screen.getByTestId("turn-submit"));
 
-    // While the POST is in flight: pill + placeholder show (no real turns
+    // While the POST is in flight: mobile topbar beacon shows (no real turns
     // yet) AND the user's text is already rendered optimistically so the
     // screen isn't blank during a slow request.
     await waitFor(() => {
-      expect(screen.getByTestId("desktop-thinking-pill")).toHaveTextContent("Preparing request");
-      expect(screen.getByTestId("desktop-thinking-placeholder")).toBeInTheDocument();
+      expect(screen.getByTestId("mobile-running-indicator")).toHaveTextContent("Preparing request");
       expect(screen.getByTestId("turn-submit")).toBeDisabled();
       expect(
         screen.getByText("run long request", { selector: ".cdx-turn-body" }),
@@ -262,21 +262,101 @@ describe("Thread page integration", () => {
 
     releaseTurnRequest?.();
 
-    // After POST returns: `submitting` flips false so the "Preparing request"
-    // pill drops, and the desktop-thinking-placeholder hides because the
-    // optimistic turn is excluded from the placeholder's "no real turns"
-    // guard. The optimistic user bubble stays until the matching SSE
-    // user_message arrives (not fired in this test — that's a separate path).
+    // After POST returns: the beacon stays visible, but now represents the
+    // accepted running turn instead of the preflight request. The optimistic
+    // user bubble stays until the matching SSE user_message arrives (not
+    // fired in this test — that's a separate path).
     await waitFor(() => {
-      const pill = screen.queryByTestId("desktop-thinking-pill");
-      if (pill) {
-        expect(pill).not.toHaveTextContent("Preparing request");
-      }
-      expect(screen.queryByTestId("desktop-thinking-placeholder")).not.toBeInTheDocument();
-      expect(screen.getByText(/Live activity: 1 turn\(s\) streaming/)).toBeInTheDocument();
+      expect(screen.getByTestId("mobile-running-indicator")).toHaveTextContent(
+        "Thinking in progress",
+      );
       expect(
         screen.getByText("run long request", { selector: ".cdx-turn-body" }),
       ).toBeInTheDocument();
+    });
+  });
+
+  it("desktop keeps the optimistic thinking pill and placeholder while turn submission is in flight", async () => {
+    vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+    let releaseTurnRequest: (() => void) | null = null;
+    const turnRequestGate = new Promise<void>((resolve) => {
+      releaseTurnRequest = resolve;
+    });
+
+    server.use(
+      http.get("http://127.0.0.1:8795/api/threads/:id", ({ params }) =>
+        HttpResponse.json({
+          thread: {
+            id: String(params.id),
+            title: "Main Thread",
+            preview: "Preview",
+            status: "idle",
+            createdAt: null,
+            updatedAt: null,
+          },
+          turns: [],
+          nextCursor: null,
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/approvals/pending", () =>
+        HttpResponse.json({ data: [] }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads", () =>
+        HttpResponse.json({
+          data: [
+            {
+              id: "thread-1",
+              projectKey: "/tmp/project",
+              title: "Main Thread",
+              preview: "Preview",
+              status: "idle",
+              lastActiveAt: "2026-01-01T00:00:00.000Z",
+              archived: false,
+              waitingApprovalCount: 0,
+              errorCount: 0,
+            },
+          ],
+          nextCursor: null,
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/timeline", () =>
+        HttpResponse.json({ data: [] }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/context", () =>
+        HttpResponse.json({
+          threadId: "thread-1",
+          cwd: "/tmp/project",
+          resolvedCwd: "/tmp/project",
+          isFallback: false,
+          source: "projection",
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/models", () => HttpResponse.json({ data: [] })),
+      http.post("http://127.0.0.1:8795/api/threads/:id/turns", async () => {
+        await turnRequestGate;
+        return HttpResponse.json({ turnId: "turn-2" });
+      }),
+    );
+
+    render(<ThreadPage params={Promise.resolve({ id: "thread-1" })} />);
+    await screen.findByTestId("turn-input");
+
+    fireEvent.change(screen.getByTestId("turn-input"), { target: { value: "run long request" } });
+    fireEvent.click(screen.getByTestId("turn-submit"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("desktop-thinking-pill")).toHaveTextContent("Preparing request");
+      expect(screen.getByTestId("desktop-thinking-placeholder")).toBeInTheDocument();
+      expect(
+        screen.getByText("run long request", { selector: ".cdx-turn-body" }),
+      ).toBeInTheDocument();
+    });
+
+    releaseTurnRequest?.();
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("desktop-thinking-placeholder")).not.toBeInTheDocument();
+      expect(screen.getByText(/Live activity: 1 turn\(s\) streaming/)).toBeInTheDocument();
     });
   });
 
@@ -2298,6 +2378,7 @@ describe("Thread page integration", () => {
     fireEvent.click(screen.getByTestId("control-stop"));
     await waitFor(() => {
       expect(controlCalls).toBe(1);
+      expect(screen.getByTestId("control-stop")).not.toBeDisabled();
     });
 
     fireEvent.keyDown(window, { key: "Escape" });
@@ -2392,6 +2473,87 @@ describe("Thread page integration", () => {
 
     es.onerror?.(new Event("error"));
     await screen.findByText("Reconnecting");
+  });
+
+  it("renders live sub-agent spawn events from SSE without requiring a refresh", async () => {
+    vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+    MockEventSource.instances.length = 0;
+
+    server.use(
+      http.get("http://127.0.0.1:8795/api/threads/:id", ({ params }) =>
+        HttpResponse.json({
+          thread: {
+            id: String(params.id),
+            title: "Main Thread",
+            preview: "Preview",
+            status: "idle",
+            createdAt: null,
+            updatedAt: null,
+          },
+          turns: [],
+          nextCursor: null,
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/approvals/pending", () =>
+        HttpResponse.json({ data: [] }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads", () =>
+        HttpResponse.json({ data: [], nextCursor: null }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/timeline", () =>
+        HttpResponse.json({ data: [] }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/context", () =>
+        HttpResponse.json({
+          threadId: "thread-1",
+          cwd: "/tmp/project",
+          resolvedCwd: "/tmp/project",
+          isFallback: false,
+          source: "projection",
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/models", () => HttpResponse.json({ data: [] })),
+    );
+
+    render(<ThreadPage params={Promise.resolve({ id: "thread-1" })} />);
+
+    await waitFor(() => {
+      expect(MockEventSource.instances.length).toBeGreaterThan(0);
+    });
+    const es = MockEventSource.instances.at(-1);
+    if (!es) {
+      throw new Error("missing EventSource instance");
+    }
+
+    es.emit("gateway", {
+      seq: 3,
+      serverTs: "2026-01-01T00:00:03.000Z",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      kind: "item",
+      name: "item/started",
+      payload: {
+        item: {
+          type: "collabAgentToolCall",
+          id: "collab-1",
+          tool: "spawnAgent",
+          status: "inProgress",
+          senderThreadId: "thread-1",
+          receiverThreadIds: [],
+          prompt: "請審查剛剛的程式碼",
+          model: "gpt-5.5",
+          reasoningEffort: "high",
+        },
+      },
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("event-cursor")).toHaveTextContent("3");
+      expect(screen.getByTestId("desktop-tool-batch")).toHaveTextContent("Ran 1 sub-agent step");
+      expect(screen.getByTestId("desktop-tool-action")).toHaveTextContent(
+        "Spawned sub-agent · 請審查剛剛的程式碼",
+      );
+    });
   });
 
   it("keeps early EventSource events that arrive before the initial timeline snapshot", async () => {

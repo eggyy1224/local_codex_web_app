@@ -183,6 +183,145 @@ describe("thread logic helpers", () => {
     });
   });
 
+  it("maps live collab-agent tool calls so spawned sub-agents appear before refresh", () => {
+    const event: GatewayEvent = {
+      seq: 30,
+      serverTs: "2026-01-01T00:00:00.000Z",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      kind: "item",
+      name: "item/started",
+      payload: {
+        item: {
+          type: "collabAgentToolCall",
+          id: "collab-1",
+          tool: "spawnAgent",
+          status: "inProgress",
+          senderThreadId: "thread-1",
+          receiverThreadIds: [],
+          prompt: "請審查剛剛的程式碼",
+          model: "gpt-5.5",
+          reasoningEffort: "high",
+        },
+      },
+    };
+
+    expect(timelineItemFromGatewayEvent(event)).toMatchObject({
+      type: "toolCall",
+      title: "Tool call: spawn_agent",
+      text: JSON.stringify({
+        message: "請審查剛剛的程式碼",
+        model: "gpt-5.5",
+        reasoning_effort: "high",
+      }),
+      rawType: "collabAgentToolCall",
+      toolName: "spawn_agent",
+      callId: "collab-1",
+    });
+  });
+
+  it("dedupes collab-agent start and completion events for the same spawned sub-agent", () => {
+    const started = timelineItemFromGatewayEvent({
+      seq: 31,
+      serverTs: "2026-01-01T00:00:00.000Z",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      kind: "item",
+      name: "item/started",
+      payload: {
+        item: {
+          type: "collabAgentToolCall",
+          id: "collab-1",
+          tool: "spawnAgent",
+          status: "inProgress",
+          prompt: "請審查剛剛的程式碼",
+        },
+      },
+    });
+    const completed = timelineItemFromGatewayEvent({
+      seq: 32,
+      serverTs: "2026-01-01T00:00:01.000Z",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      kind: "item",
+      name: "item/completed",
+      payload: {
+        item: {
+          type: "collabAgentToolCall",
+          id: "collab-1",
+          tool: "spawnAgent",
+          status: "completed",
+          receiverThreadIds: ["019e2980-378e-7b80-bfb7-41eb0eacfc51"],
+          prompt: "請審查剛剛的程式碼",
+        },
+      },
+    });
+
+    expect(started).not.toBeNull();
+    expect(completed).not.toBeNull();
+    const turns = buildConversationTurns([started, completed].filter(Boolean) as ThreadTimelineItem[]);
+    expect(turns).toHaveLength(1);
+    expect(turns[0].toolCalls).toEqual([
+      {
+        toolName: "spawn_agent",
+        text: JSON.stringify({ message: "請審查剛剛的程式碼" }),
+      },
+    ]);
+    expect(turns[0].segments).toHaveLength(1);
+    expect(turns[0].segments[0]).toMatchObject({
+      kind: "toolBatch",
+      summary: "Ran 1 sub-agent step",
+    });
+  });
+
+  it("keeps failed collab-agent completion visible instead of deduping it as a successful spawn", () => {
+    const started = timelineItemFromGatewayEvent({
+      seq: 33,
+      serverTs: "2026-01-01T00:00:00.000Z",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      kind: "item",
+      name: "item/started",
+      payload: {
+        item: {
+          type: "collabAgentToolCall",
+          id: "collab-1",
+          tool: "spawnAgent",
+          status: "inProgress",
+          prompt: "請審查剛剛的程式碼",
+        },
+      },
+    });
+    const failed = timelineItemFromGatewayEvent({
+      seq: 34,
+      serverTs: "2026-01-01T00:00:01.000Z",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      kind: "item",
+      name: "item/completed",
+      payload: {
+        item: {
+          type: "collabAgentToolCall",
+          id: "collab-1",
+          tool: "spawnAgent",
+          status: "failed",
+          prompt: "請審查剛剛的程式碼",
+        },
+      },
+    });
+
+    expect(started).not.toBeNull();
+    expect(failed).toMatchObject({
+      text: JSON.stringify({ message: "請審查剛剛的程式碼", status: "failed" }),
+    });
+    const turns = buildConversationTurns([started, failed].filter(Boolean) as ThreadTimelineItem[]);
+    expect(turns[0].toolCalls).toHaveLength(2);
+    expect(turns[0].segments[0]).toMatchObject({
+      kind: "toolBatch",
+      summary: "Ran 2 sub-agent steps",
+    });
+  });
+
   it("aggregates conversation turns with delta merge and dedupe", () => {
     const items: ThreadTimelineItem[] = [
       {

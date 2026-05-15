@@ -216,7 +216,7 @@ describe("summarizeToolAction", () => {
     expect(action?.callId).toBe("call-42");
   });
 
-  describe("sub-agent control surface (spawn_agent / wait_agent)", () => {
+  describe("sub-agent control surface", () => {
     it("labels spawn_agent with the prompt preview", () => {
       const action = summarizeToolAction(
         toolCall(
@@ -231,6 +231,20 @@ describe("summarizeToolAction", () => {
       expect(action?.kind).toBe("subagent");
       expect(action?.label).toMatch(/^Spawned sub-agent · /);
       expect(action?.label).toContain("請審查目前未提交的 Canvas mobile slice");
+    });
+
+    it("labels failed live spawn completion without reporting it as successful", () => {
+      const action = summarizeToolAction(
+        toolCall(
+          "spawn_agent",
+          JSON.stringify({
+            message: "請審查剛剛的程式碼",
+            status: "failed",
+          }),
+        ),
+      );
+      expect(action?.kind).toBe("subagent");
+      expect(action?.label).toBe("Sub-agent spawn failed · 請審查剛剛的程式碼");
     });
 
     it("falls back to agent_type when message is absent", () => {
@@ -275,6 +289,30 @@ describe("summarizeToolAction", () => {
       expect(summarizeToolAction(toolCall("list_agents", JSON.stringify({})))?.label).toBe(
         "Listed sub-agents",
       );
+    });
+
+    it("labels live collab-agent controls mapped from app-server items", () => {
+      expect(
+        summarizeToolAction(
+          toolCall("send_input", JSON.stringify({ message: "補充一下", targets: ["019e2980"] })),
+        )?.label,
+      ).toBe("Sent input to sub-agent · 補充一下");
+      expect(
+        summarizeToolAction(
+          toolCall(
+            "resume_agent",
+            JSON.stringify({ targets: ["019e2980-378e-7b80-bfb7-41eb0eacfc51"] }),
+          ),
+        )?.label,
+      ).toBe("Resumed sub-agent 019e2980");
+      expect(
+        summarizeToolAction(
+          toolCall(
+            "close_agent",
+            JSON.stringify({ targets: ["019e2980-378e-7b80-bfb7-41eb0eacfc51"] }),
+          ),
+        )?.label,
+      ).toBe("Closed sub-agent 019e2980");
     });
 
     it("still works when args aren't JSON (degrades to plain label)", () => {

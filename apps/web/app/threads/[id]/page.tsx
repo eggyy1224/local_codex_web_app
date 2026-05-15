@@ -1862,7 +1862,7 @@ export default function ThreadPage({ params }: Props) {
       const requestThreadId = threadId;
       setSubmitting(true);
       setSubmitError(null);
-      // Optimistic: render the user bubble + "Codex is working…" indicator
+      // Optimistic: render the user bubble + topbar working beacon
       // synchronously, without waiting for the POST round-trip and SSE.
       const pendingId = `pending-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       const optimisticText = text
@@ -1934,7 +1934,7 @@ export default function ThreadPage({ params }: Props) {
         // The POST response already gives us a real turn id, even if the SSE
         // stream has not delivered turn/started or user_message yet. Promote
         // the optimistic bubble so controls that need a real turn id (steer,
-        // stop, running indicators) flip from "sending/waiting" to running
+        // stop / running affordances flip from "sending/waiting" to running
         // immediately after the gateway accepts the turn.
         setPendingNewTurn((prev) =>
           prev?.id === pendingId ? { ...prev, id: payload.turnId } : prev,
@@ -2309,6 +2309,8 @@ export default function ThreadPage({ params }: Props) {
           collaborationMode={collaborationMode}
           serviceTier={gatewayConfig.config?.serviceTier ?? null}
           pendingActionCount={pendingActionCount}
+          isWorking={isThinkingActive}
+          workingLabel={thinkingBannerText}
           runningTurnId={runningTurnId}
           stopBusy={controlBusy === "stop"}
           viewMode={viewMode}
@@ -2421,22 +2423,6 @@ export default function ThreadPage({ params }: Props) {
             }}
           />
         </main>
-
-        {runningTurnId || pendingNewTurn || submitting ? (
-          <div
-            className="cdx-mobile-running-indicator"
-            data-testid="mobile-running-indicator"
-            role="status"
-            aria-live="polite"
-          >
-            <span className="cdx-mobile-running-dots" aria-hidden="true">
-              <span />
-              <span />
-              <span />
-            </span>
-            <span className="cdx-mobile-running-label">Codex is working…</span>
-          </div>
-        ) : null}
 
         <MobileCanvasSheet
           initialUrl={searchParams.get("canvas")}

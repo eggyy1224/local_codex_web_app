@@ -19,6 +19,8 @@ function renderTopBar(overrides: Overrides = {}) {
     collaborationMode: "default",
     serviceTier: null,
     pendingActionCount: 0,
+    isWorking: false,
+    workingLabel: "Thinking in progress...",
     runningTurnId: null,
     stopBusy: false,
     viewMode: "normal" satisfies MobileViewMode,
@@ -85,6 +87,14 @@ describe("MobileChatTopBar slice 1: project label + view menu", () => {
     expect(screen.getByTestId("mobile-topbar-stop")).toBeInTheDocument();
   });
 
+  it("shows a compact running beacon without requiring a stoppable turn", () => {
+    renderTopBar({ isWorking: true, workingLabel: "Preparing request..." });
+    const beacon = screen.getByTestId("mobile-running-indicator");
+    expect(beacon).toHaveAttribute("aria-label", "Preparing request...");
+    expect(beacon).toHaveTextContent("Preparing request...");
+    expect(screen.queryByTestId("mobile-topbar-stop")).not.toBeInTheDocument();
+  });
+
   it("opens the canvas from the top bar action", () => {
     const { onOpenCanvas } = renderTopBar();
     fireEvent.click(screen.getByTestId("mobile-topbar-canvas-toggle"));
@@ -100,7 +110,11 @@ describe("MobileChatTopBar slice 1: project label + view menu", () => {
   });
 
   it("lets the user switch view mode while a turn is running", () => {
-    const { onViewModeChange } = renderTopBar({ runningTurnId: "turn-running" });
+    const { onViewModeChange } = renderTopBar({
+      isWorking: true,
+      runningTurnId: "turn-running",
+    });
+    expect(screen.getByTestId("mobile-running-indicator")).toBeInTheDocument();
     fireEvent.click(screen.getByTestId("mobile-topbar-views-toggle"));
     const menu = screen.getByTestId("mobile-topbar-views-menu");
     expect(menu).toBeInTheDocument();

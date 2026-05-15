@@ -105,12 +105,70 @@ function readString(obj: Record<string, unknown> | null, key: string): string | 
   return typeof value === "string" ? value : null;
 }
 
+function readStringArray(obj: Record<string, unknown> | null, key: string): string[] {
+  if (!obj) return [];
+  const value = obj[key];
+  if (!Array.isArray(value)) return [];
+  return value.filter((entry): entry is string => typeof entry === "string" && entry.length > 0);
+}
+
 function normalizeText(value: string | null | undefined): string | null {
   if (!value) {
     return null;
   }
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
+}
+
+function jsonTextFromRecord(record: Record<string, unknown>): string {
+  const compact = Object.fromEntries(
+    Object.entries(record).filter(([, value]) => {
+      if (value === null || value === undefined) return false;
+      if (typeof value === "string") return value.trim().length > 0;
+      if (Array.isArray(value)) return value.length > 0;
+      return true;
+    }),
+  );
+  return JSON.stringify(compact);
+}
+
+function collabToolName(value: string | null): string | null {
+  switch (value) {
+    case "spawnAgent":
+      return "spawn_agent";
+    case "sendInput":
+      return "send_input";
+    case "resumeAgent":
+      return "resume_agent";
+    case "wait":
+      return "wait_agent";
+    case "closeAgent":
+      return "close_agent";
+    default:
+      return null;
+  }
+}
+
+function collabToolArguments(item: Record<string, unknown>, toolName: string): string {
+  const prompt = readString(item, "prompt");
+  const model = readString(item, "model");
+  const reasoningEffort = readString(item, "reasoningEffort") ?? readString(item, "reasoning_effort");
+  const status = readString(item, "status");
+  const receiverThreadIds =
+    readStringArray(item, "receiverThreadIds").length > 0
+      ? readStringArray(item, "receiverThreadIds")
+      : readStringArray(item, "receiver_thread_ids");
+
+  return jsonTextFromRecord({
+    message: prompt,
+    // spawn completion adds receiverThreadIds that the start item does not
+    // have. Keep spawn args stable so item/started and item/completed dedupe
+    // into one visible action while still showing the instruction immediately.
+    targets: toolName === "spawn_agent" ? [] : receiverThreadIds,
+    model,
+    reasoning_effort: reasoningEffort,
+    status: status === "failed" ? status : null,
+  });
 }
 
 function formatTokenUsageStatus(payload: Record<string, unknown> | null): string | null {
@@ -533,7 +591,7 @@ export function timelineItemFromGatewayEvent(event: GatewayEvent): ThreadTimelin
 
   if ((event.name === "item/started" || event.name === "item/completed") && item) {
     const itemType = readString(item, "type");
-    const callId = readString(item, "call_id") ?? readString(item, "callId");
+    const callId = readString(item, "call_id") ?? readString(item, "callId") ?? readString(item, "id");
     const itemTurnId = readString(item, "turn_id") ?? readString(item, "turnId") ?? event.turnId;
 
     if (itemType === "userMessage") {
@@ -653,6 +711,22 @@ export function timelineItemFromGatewayEvent(event: GatewayEvent): ThreadTimelin
       };
     }
 
+    if (itemType === "collabAgentToolCall") {
+      const toolName = collabToolName(readString(item, "tool"));
+      if (!toolName) return null;
+      return {
+        id: `${eventId}-collab-agent-tool-call`,
+        ts: event.serverTs,
+        turnId: itemTurnId,
+        type: "toolCall",
+        title: `Tool call: ${toolName}`,
+        text: collabToolArguments(item, toolName),
+        rawType: itemType,
+        toolName,
+        callId,
+      };
+    }
+
     if (
       itemType === "function_call_output" ||
       itemType === "custom_tool_call_output" ||
@@ -728,19 +802,25 @@ function readStringField(obj: Record<string, unknown>, ...keys: string[]): strin
   return null;
 }
 
+function isSubagentToolName(lowerName: string): boolean {
+  return (
+    lowerName === "spawn_agent" ||
+    lowerName === "send_input" ||
+    lowerName === "resume_agent" ||
+    lowerName === "wait_agent" ||
+    lowerName === "close_agent" ||
+    lowerName === "cancel_agent" ||
+    lowerName === "list_agents" ||
+    /^(spawn|wait|cancel|list)_agents?$/.test(lowerName)
+  );
+}
+
 function categorizeToolName(name: string): MobileToolActionKind {
   const lower = name.toLowerCase();
-  // Codex's `spawn_agent` / `wait_agent` (and the rarer `cancel_agent`) form
-  // the sub-agent control surface. Bucket them ahead of the generic
+  // Codex's sub-agent control tools must be bucketed ahead of the generic
   // `*_command` match so a tool literally named "spawn_agent" is treated as a
   // sub-agent action, not as a "command".
-  if (
-    lower === "spawn_agent" ||
-    lower === "wait_agent" ||
-    lower === "cancel_agent" ||
-    lower === "list_agents" ||
-    /^(spawn|wait|cancel|list)_agents?$/.test(lower)
-  ) {
+  if (isSubagentToolName(lower)) {
     return "subagent";
   }
   if (
@@ -808,13 +888,14 @@ export function summarizeToolAction(item: ConversationDetail): MobileToolAction 
     } else if (kind === "subagent") {
       // For `spawn_agent` the args carry `agent_type` + `message`; we surface
       // the prompt preview so the pill reads as a real instruction handed to
-      // the sub-agent. For `wait_agent` we surface the agent_id list so the
-      // user can match it against the spawn output's nickname later.
-      if (toolName.toLowerCase().startsWith("spawn")) {
+      // the sub-agent. For target-based controls we surface the agent_id list
+      // so the user can match it against the spawn output's nickname later.
+      const lower = toolName.toLowerCase();
+      if (lower.startsWith("spawn")) {
         detail =
           readStringField(parsed, "message", "prompt", "task") ??
           readStringField(parsed, "agent_type", "type");
-      } else if (toolName.toLowerCase().startsWith("wait")) {
+      } else if (lower.startsWith("wait") || lower.startsWith("resume") || lower.startsWith("close")) {
         const targets = parsed.targets;
         if (Array.isArray(targets) && targets.length > 0) {
           const ids = targets
@@ -844,10 +925,48 @@ export function summarizeToolAction(item: ConversationDetail): MobileToolAction 
     label = detail ? `Searched ${trimOneLine(detail)}` : "Searched";
   } else if (kind === "subagent") {
     const lower = toolName.toLowerCase();
+    const status = parsed ? readStringField(parsed, "status")?.toLowerCase() : null;
+    const failed = status === "failed";
     if (lower.startsWith("spawn")) {
-      label = detail ? `Spawned sub-agent · ${trimOneLine(detail)}` : "Spawned sub-agent";
+      label = failed
+        ? detail
+          ? `Sub-agent spawn failed · ${trimOneLine(detail)}`
+          : "Sub-agent spawn failed"
+        : detail
+          ? `Spawned sub-agent · ${trimOneLine(detail)}`
+          : "Spawned sub-agent";
     } else if (lower.startsWith("wait")) {
-      label = detail ? `Waiting for sub-agent ${trimOneLine(detail)}` : "Waiting for sub-agent";
+      label = failed
+        ? detail
+          ? `Sub-agent wait failed ${trimOneLine(detail)}`
+          : "Sub-agent wait failed"
+        : detail
+          ? `Waiting for sub-agent ${trimOneLine(detail)}`
+          : "Waiting for sub-agent";
+    } else if (lower.startsWith("send")) {
+      label = failed
+        ? detail
+          ? `Sub-agent input failed · ${trimOneLine(detail)}`
+          : "Sub-agent input failed"
+        : detail
+          ? `Sent input to sub-agent · ${trimOneLine(detail)}`
+          : "Sent input to sub-agent";
+    } else if (lower.startsWith("resume")) {
+      label = failed
+        ? detail
+          ? `Sub-agent resume failed ${trimOneLine(detail)}`
+          : "Sub-agent resume failed"
+        : detail
+          ? `Resumed sub-agent ${trimOneLine(detail)}`
+          : "Resumed sub-agent";
+    } else if (lower.startsWith("close")) {
+      label = failed
+        ? detail
+          ? `Sub-agent close failed ${trimOneLine(detail)}`
+          : "Sub-agent close failed"
+        : detail
+          ? `Closed sub-agent ${trimOneLine(detail)}`
+          : "Closed sub-agent";
     } else if (lower.startsWith("cancel")) {
       label = detail ? `Cancelled sub-agent ${trimOneLine(detail)}` : "Cancelled sub-agent";
     } else if (lower.startsWith("list")) {
@@ -880,13 +999,7 @@ function summarizeBatch(items: ConversationDetail[]): string {
     // sub-agent control bucket — kept ahead of `command` for the same reason
     // categorizeToolName puts it first: a tool literally named `spawn_agent`
     // would otherwise pattern-match into `command`.
-    if (
-      name === "spawn_agent" ||
-      name === "wait_agent" ||
-      name === "cancel_agent" ||
-      name === "list_agents" ||
-      /^(spawn|wait|cancel|list)_agents?$/.test(name)
-    ) {
+    if (isSubagentToolName(name)) {
       category = "subagent";
     } else if (
       name === "exec_command" ||
