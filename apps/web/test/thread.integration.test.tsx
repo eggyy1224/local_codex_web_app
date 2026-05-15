@@ -1125,6 +1125,85 @@ describe("Thread page integration", () => {
     });
   });
 
+  it("recovers a poisoned service tier: tapping the active Standard button still clears the key (regression)", async () => {
+    // Regression for 42565bb: a poisoned global config (e.g.
+    // service_tier="flex") is collapsed by the gateway to serviceTier=null,
+    // which marks Standard "active". Standard MUST stay enabled so the user
+    // can tap it and POST value:null to clear the bad value. Reintroducing
+    // `disabled={serviceTierBusy || active}` fails this test — the disabled
+    // active button never fires the clearing write.
+    setMobileViewport(true);
+    vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+
+    let writeBody: { keyPath: string; value: unknown } | null = null;
+
+    server.use(
+      // Gateway has already collapsed the poisoned "flex" to null/Standard.
+      http.get("http://127.0.0.1:8795/api/config", () =>
+        HttpResponse.json({
+          config: { serviceTier: null, model: null, reasoningEffort: null },
+          filePath: null,
+          version: null,
+        }),
+      ),
+      http.post("http://127.0.0.1:8795/api/config/value", async ({ request }) => {
+        writeBody = (await request.json()) as { keyPath: string; value: unknown };
+        return HttpResponse.json({ status: "ok", filePath: null, version: null });
+      }),
+      http.get("http://127.0.0.1:8795/api/threads/:id", ({ params }) =>
+        HttpResponse.json({
+          thread: {
+            id: String(params.id),
+            title: "Tier Thread",
+            preview: "",
+            status: "idle",
+            createdAt: null,
+            updatedAt: null,
+          },
+          turns: [],
+          nextCursor: null,
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/approvals/pending", () =>
+        HttpResponse.json({ data: [] }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads", () =>
+        HttpResponse.json({ data: [], nextCursor: null }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/timeline", () =>
+        HttpResponse.json({ data: [] }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/context", () =>
+        HttpResponse.json({
+          threadId: "thread-1",
+          cwd: "/tmp/project",
+          resolvedCwd: "/tmp/project",
+          isFallback: false,
+          source: "projection",
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/models", () => HttpResponse.json({ data: [] })),
+    );
+
+    render(<ThreadPage params={Promise.resolve({ id: "thread-1" })} />);
+
+    fireEvent.click(await screen.findByTestId("mobile-topbar-control-toggle"));
+    await screen.findByTestId("mobile-control-sheet");
+    fireEvent.click(screen.getByTestId("mobile-control-tab-advanced"));
+
+    const standardBtn = await screen.findByTestId("mobile-service-tier-standard");
+    // Standard is the active radio (poisoned value collapsed to null)...
+    await waitFor(() => expect(standardBtn).toHaveAttribute("aria-checked", "true"));
+    // ...and it must NOT be disabled — recovery has to stay reachable.
+    expect(standardBtn).not.toBeDisabled();
+
+    // Tapping the already-active Standard still issues the clearing write.
+    fireEvent.click(standardBtn);
+    await waitFor(() => {
+      expect(writeBody).toEqual({ keyPath: "service_tier", value: null });
+    });
+  });
+
   it("mobile control sheet closes when Close is pressed even after pointer-down on the header (regression)", async () => {
     // Reproduces the bug fix in commit 24617e4: the sheet header's
     // onPointerDown used to call setPointerCapture unconditionally, which ate
