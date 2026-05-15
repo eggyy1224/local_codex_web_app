@@ -2227,16 +2227,45 @@ describe("gateway integration routes", () => {
     }
   });
 
-  it("POST /api/threads/:id/compact resumes thread when not loaded then retries", async () => {
+  it("POST /api/threads/:id/compact returns 409 while a turn is in progress and skips thread/compact/start", async () => {
     const ctx = await createTestContext();
     try {
+      ctx.stub.handlers.set("turn/start", () => ({ turn: { id: "turn-active" } }));
       let compactCalls = 0;
       ctx.stub.handlers.set("thread/compact/start", () => {
         compactCalls += 1;
-        if (compactCalls === 1) {
-          throw new Error("thread not loaded");
-        }
         return {};
+      });
+
+      // Start a turn so the gateway tracks an active turn for this thread.
+      const turnRes = await ctx.app.inject({
+        method: "POST",
+        url: "/api/threads/thread-1/turns",
+        payload: { input: [{ type: "text", text: "hello" }] },
+      });
+      expect(turnRes.statusCode).toBe(200);
+
+      const res = await ctx.app.inject({
+        method: "POST",
+        url: "/api/threads/thread-1/compact",
+      });
+      expect(res.statusCode).toBe(409);
+      expect(res.json()).toMatchObject({
+        message: "cannot compact while a turn is in progress",
+      });
+      expect(compactCalls).toBe(0);
+      const methods = ctx.stub.requests.map((r) => r.method);
+      expect(methods).not.toContain("thread/compact/start");
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  it("POST /api/threads/:id/compact returns readable 409 when resume is required and never force-resumes", async () => {
+    const ctx = await createTestContext();
+    try {
+      ctx.stub.handlers.set("thread/compact/start", () => {
+        throw new Error("thread not loaded");
       });
       ctx.stub.handlers.set("thread/resume", () => ({ thread: { id: "thread-1" } }));
 
@@ -2244,17 +2273,20 @@ describe("gateway integration routes", () => {
         method: "POST",
         url: "/api/threads/thread-1/compact",
       });
-      expect(res.statusCode).toBe(200);
-      expect(res.json()).toEqual({ ok: true });
-      expect(compactCalls).toBe(2);
+      expect(res.statusCode).toBe(409);
+      expect(String((res.json() as { message?: string }).message ?? "")).toContain(
+        "not in a state that can be compacted",
+      );
+      // The route must not silently force-resume an unhealthy thread — that is
+      // the path that previously left threads stuck in systemError.
       const methods = ctx.stub.requests.map((r) => r.method);
-      expect(methods).toContain("thread/resume");
+      expect(methods).not.toContain("thread/resume");
     } finally {
       await ctx.close();
     }
   });
 
-  it("POST /api/threads/:id/compact returns non-200 when app-server fails", async () => {
+  it("POST /api/threads/:id/compact turns an app-server rejection into a readable error", async () => {
     const ctx = await createTestContext();
     try {
       ctx.stub.handlers.set("thread/compact/start", () => {
@@ -2265,7 +2297,10 @@ describe("gateway integration routes", () => {
         method: "POST",
         url: "/api/threads/thread-1/compact",
       });
-      expect(res.statusCode).toBeGreaterThanOrEqual(500);
+      expect(res.statusCode).toBeLessThan(500);
+      expect(String((res.json() as { message?: string }).message ?? "")).toContain(
+        "compact boom",
+      );
     } finally {
       await ctx.close();
     }

@@ -585,21 +585,44 @@ export function registerTurnRoutes(
     async (request): Promise<CompactThreadResponse> => {
       const params = request.params as { id: string };
 
-      const startCompact = async (): Promise<void> => {
+      // Gate 1: never compact while a turn is in flight. app-server rejects
+      // this anyway, but doing the check up front gives the user a readable
+      // 409 instead of a bare RPC error — and avoids touching codex at all.
+      if (activeTurnByThread.has(params.id)) {
+        const err = new Error("cannot compact while a turn is in progress") as Error & {
+          statusCode?: number;
+        };
+        err.statusCode = 409;
+        throw err;
+      }
+
+      try {
         await appServer.request("thread/compact/start", {
           threadId: params.id,
         });
-      };
-
-      try {
-        await startCompact();
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        if (!isResumeNeeded(message)) {
-          throw error;
+
+        // Gate 2: a thread that needs a resume to even accept compact is not
+        // in a healthy state. Force-resuming + compacting here is exactly the
+        // path that left threads stuck in systemError, so we refuse instead of
+        // silently doing it. Surface a readable reason rather than a raw 5xx.
+        if (isResumeNeeded(message)) {
+          const err = new Error(
+            "thread is not in a state that can be compacted (resume required); send a turn to load it first",
+          ) as Error & { statusCode?: number };
+          err.statusCode = 409;
+          throw err;
         }
-        await appServer.request("thread/resume", { threadId: params.id });
-        await startCompact();
+
+        // Any other app-server rejection (e.g. turn in progress detected on
+        // the codex side, unsupported state): turn it into a readable message
+        // instead of a bare 500.
+        const err = new Error(`compact rejected by app-server: ${message}`) as Error & {
+          statusCode?: number;
+        };
+        err.statusCode = 409;
+        throw err;
       }
 
       return { ok: true };
