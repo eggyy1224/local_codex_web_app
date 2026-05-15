@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 // Imported for its side effect as the FIRST import in index.ts so the .env is
@@ -8,25 +8,45 @@ import { fileURLToPath } from "node:url";
 // import runs before later imports' module init.
 const envPath = fileURLToPath(new URL("../.env", import.meta.url));
 
-// Only a genuinely absent .env is silent (tests/e2e/CI ship none and pass env
-// explicitly). When the file IS present it exists solely to set the
-// mobile-critical HOST + CORS_ALLOWLIST. process.loadEnvFile() does NOT throw
-// on malformed lines — it silently skips the affected assignments — so a typo
-// could otherwise let the gateway start on loopback bind + localhost-only CORS
-// and recreate the user's Tailscale "gateway unavailable" with zero
-// diagnostic. The post-load assertion turns that into an immediate, explicit
-// failure instead.
+// This .env exists solely to set the mobile-critical HOST + CORS_ALLOWLIST.
+// process.loadEnvFile() silently skips malformed lines rather than throwing,
+// and a post-load check against process.env is unreliable because a shell /
+// launcher that already exports these would mask a broken file. So validate
+// the FILE's own contents (independent of process.env): a present .env must
+// parse cleanly and define the required keys, otherwise fail fast instead of
+// silently degrading to loopback bind + localhost-only CORS (which breaks the
+// user's Tailscale mobile access with no diagnostic). Only a genuinely absent
+// file is silent — tests/e2e/CI ship none and pass env explicitly.
 const REQUIRED_KEYS = ["HOST", "CORS_ALLOWLIST"] as const;
+// Matches the simple `KEY=VALUE` (optional `export `) format this .env uses.
+const ENV_LINE = /^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)=/;
 
 if (existsSync(envPath)) {
-  process.loadEnvFile(envPath);
-  const missing = REQUIRED_KEYS.filter((key) => !process.env[key]);
+  const definedKeys = new Set<string>();
+  const lines = readFileSync(envPath, "utf8").split(/\r?\n/);
+  lines.forEach((rawLine, index) => {
+    const line = rawLine.trim();
+    if (line === "" || line.startsWith("#")) {
+      return;
+    }
+    const match = ENV_LINE.exec(line);
+    if (!match) {
+      throw new Error(
+        `${envPath}: malformed line ${index + 1} (${JSON.stringify(rawLine)}). ` +
+          "Expected KEY=VALUE. Refusing to start with a broken gateway .env.",
+      );
+    }
+    definedKeys.add(match[1]);
+  });
+
+  const missing = REQUIRED_KEYS.filter((key) => !definedKeys.has(key));
   if (missing.length > 0) {
     throw new Error(
-      `${envPath} is present but did not set ${missing.join(", ")} ` +
-        "(malformed or incomplete .env). Refusing to start on loopback / " +
-        "localhost-only-CORS defaults — that silently breaks Tailscale " +
-        "mobile access. Fix the file or remove it to use process.env.",
+      `${envPath} does not define ${missing.join(", ")}. Refusing to start ` +
+        "on loopback / localhost-only-CORS defaults — that silently breaks " +
+        "Tailscale mobile access. Fix the file or remove it to use process.env.",
     );
   }
+
+  process.loadEnvFile(envPath);
 }
