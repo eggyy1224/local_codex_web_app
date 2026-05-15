@@ -2394,6 +2394,90 @@ describe("Thread page integration", () => {
     await screen.findByText("Reconnecting");
   });
 
+  it("keeps early EventSource events that arrive before the initial timeline snapshot", async () => {
+    vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+    MockEventSource.instances.length = 0;
+
+    let releaseTimeline: () => void = () => {};
+    const timelineGate = new Promise<void>((resolve) => {
+      releaseTimeline = resolve;
+    });
+
+    server.use(
+      http.get("http://127.0.0.1:8795/api/threads/:id", ({ params }) =>
+        HttpResponse.json({
+          thread: {
+            id: String(params.id),
+            title: "Main Thread",
+            preview: "Preview",
+            status: "idle",
+            createdAt: null,
+            updatedAt: null,
+          },
+          turns: [],
+          nextCursor: null,
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/approvals/pending", () =>
+        HttpResponse.json({ data: [] }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads", () =>
+        HttpResponse.json({ data: [], nextCursor: null }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/timeline", async () => {
+        await timelineGate;
+        return HttpResponse.json({ data: [] });
+      }),
+      http.get("http://127.0.0.1:8795/api/threads/:id/context", () =>
+        HttpResponse.json({
+          threadId: "thread-1",
+          cwd: "/tmp/project",
+          resolvedCwd: "/tmp/project",
+          isFallback: false,
+          source: "projection",
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/models", () => HttpResponse.json({ data: [] })),
+      http.post("http://127.0.0.1:8795/api/threads/:id/control", () =>
+        HttpResponse.json({ ok: true }),
+      ),
+    );
+
+    render(<ThreadPage params={Promise.resolve({ id: "thread-1" })} />);
+
+    await waitFor(() => {
+      expect(MockEventSource.instances.length).toBeGreaterThan(0);
+    });
+    const es = MockEventSource.instances.at(-1);
+    if (!es) {
+      throw new Error("missing EventSource instance");
+    }
+
+    es.emit("gateway", {
+      seq: 7,
+      serverTs: "2026-01-01T00:00:07.000Z",
+      threadId: "thread-1",
+      turnId: "turn-early",
+      kind: "turn",
+      name: "turn/started",
+      payload: {
+        turn: {
+          id: "turn-early",
+          items: [],
+          itemsView: "notLoaded",
+          status: "inProgress",
+        },
+      },
+    });
+
+    releaseTimeline();
+
+    await waitFor(() => {
+      expect(screen.getByTestId("event-cursor")).toHaveTextContent("7");
+      expect(screen.getByText(/Live activity: 1 turn/)).toBeInTheDocument();
+    });
+  });
+
   it("clears thread-scoped UI state and ignores stale SSE events after switching threads", async () => {
     vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
     MockEventSource.instances.length = 0;

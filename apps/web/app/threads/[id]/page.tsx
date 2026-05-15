@@ -5,6 +5,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useReducer,
   useRef,
   useState,
 } from "react";
@@ -25,7 +26,6 @@ import type {
   ThreadDetailResponse,
   ThreadContextResponse,
   ThreadListItem,
-  ThreadTimelineItem,
   ThreadTimelineResponse,
   TurnPermissionMode,
   UserInputItem,
@@ -49,16 +49,20 @@ import {
 } from "../../lib/model-options";
 import { groupThreadsByProject, pickDefaultProjectKey, projectLabelFromKey } from "../../lib/projects";
 import {
-  buildConversationTurns,
   formatEffortLabel,
   proposedPlanFromText,
   statusClass,
   statusLabel,
   summarizeToolAction,
-  timelineItemFromGatewayEvent,
   truncateText,
   type ConversationTurn,
 } from "../../lib/thread-logic";
+import {
+  createThreadEventStoreState,
+  selectConversationTurns,
+  selectThreadTimelineItems,
+  threadEventStoreReducer,
+} from "../../lib/thread-event-store";
 import {
   applySlashSuggestion,
   getSlashSuggestions,
@@ -168,8 +172,10 @@ export default function ThreadPage({ params }: Props) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [detail, setDetail] = useState<ThreadDetailResponse | null>(null);
-  const [events, setEvents] = useState<GatewayEvent[]>([]);
-  const [lastSeq, setLastSeq] = useState(0);
+  const [threadEventStore, dispatchThreadEventStore] = useReducer(
+    threadEventStoreReducer,
+    createThreadEventStoreState(),
+  );
   const [connectionState, setConnectionState] = useState<ConnectionState>("connecting");
   const [lastEventAtMs, setLastEventAtMs] = useState<number>(Date.now());
   const [prompt, setPrompt] = useState("");
@@ -199,7 +205,6 @@ export default function ThreadPage({ params }: Props) {
   const [pendingInteractions, setPendingInteractions] = useState<
     Record<string, PendingInteractionCard>
   >({});
-  const [timelineItems, setTimelineItems] = useState<ThreadTimelineItem[]>([]);
   const [approvalBusy, setApprovalBusy] = useState<string | null>(null);
   const [approvalError, setApprovalError] = useState<string | null>(null);
   const [interactionBusy, setInteractionBusy] = useState<string | null>(null);
@@ -409,6 +414,7 @@ export default function ThreadPage({ params }: Props) {
     if (!initialThreadReadyRef.current) {
       initialThreadReadyRef.current = true;
       previousThreadIdRef.current = threadId;
+      dispatchThreadEventStore({ type: "reset", threadId });
       return;
     }
 
@@ -433,9 +439,7 @@ export default function ThreadPage({ params }: Props) {
     // /context is slower than the user's first keystroke after creating
     // a thread in another project.
     setThreadContext((prev) => (prev?.threadId === threadId ? prev : null));
-    setEvents([]);
-    setLastSeq(0);
-    setTimelineItems([]);
+    dispatchThreadEventStore({ type: "reset", threadId });
     setConnectionState("connecting");
     setLastEventAtMs(Date.now());
     setLatestTokenUsage(null);
@@ -649,7 +653,11 @@ export default function ThreadPage({ params }: Props) {
             }
             return next;
           });
-          setTimelineItems(timeline.data);
+          dispatchThreadEventStore({
+            type: "hydrateTimeline",
+            threadId,
+            items: timeline.data,
+          });
           setLoading(false);
           setError(null);
         }
@@ -706,11 +714,10 @@ export default function ThreadPage({ params }: Props) {
           return;
         }
         currentSince = payload.seq;
-        setEvents((prev) => [...prev, payload].slice(-600));
+        dispatchThreadEventStore({ type: "appendGatewayEvent", event: payload });
         setThreadList((prev) =>
           prev.map((item) => threadListItemFromGatewayEvent(item, payload)),
         );
-        setLastSeq((prev) => Math.max(prev, payload.seq));
         setLastEventAtMs(Date.now());
         reconnectAttempt = 0;
         setConnectionState("connected");
@@ -824,78 +831,15 @@ export default function ThreadPage({ params }: Props) {
     return "Connecting";
   }, [connectionState]);
 
-  const liveTimelineItems = useMemo(
-    () =>
-      events
-        .map((event) => timelineItemFromGatewayEvent(event))
-        .filter((item): item is ThreadTimelineItem => item !== null),
-    [events],
+  const lastSeq = threadEventStore.lastSeq;
+  const allTimelineItems = useMemo(
+    () => selectThreadTimelineItems(threadEventStore),
+    [threadEventStore],
   );
-  const allTimelineItems = useMemo(() => {
-    const dedupe = new Set<string>();
-    const merged = [...timelineItems, ...liveTimelineItems]
-      .sort((a, b) => {
-        if (a.ts !== b.ts) {
-          return a.ts.localeCompare(b.ts);
-        }
-        return a.id.localeCompare(b.id);
-      })
-      .filter((item) => {
-        const signature = [
-          item.ts,
-          item.turnId ?? "",
-          item.type,
-          item.rawType,
-          item.callId ?? "",
-          item.text ?? "",
-        ].join("|");
-        if (dedupe.has(signature)) {
-          return false;
-        }
-        dedupe.add(signature);
-        return true;
-      });
-    return merged;
-  }, [timelineItems, liveTimelineItems]);
-  const allConversationTurns = useMemo(() => {
-    const built = buildConversationTurns(allTimelineItems);
-    // Server is the source of truth for turn status. If detail.turns reports a
-    // terminal status (interrupted/failed/completed) and there is no live
-    // turn/started or turn/completed in the post-detail event stream contradicting
-    // it, override the timeline-derived status so we don't keep showing
-    // "Responding" on a turn the gateway already knows ended.
-    const serverStatusByTurnId = new Map<string, string>();
-    for (const turn of detail?.turns ?? []) {
-      if (typeof turn.status === "string" && turn.status.length > 0) {
-        serverStatusByTurnId.set(turn.id, turn.status);
-      }
-    }
-    if (serverStatusByTurnId.size === 0) {
-      return built;
-    }
-    return built.map((turn) => {
-      if (!turn.isStreaming) return turn;
-      const serverStatus = serverStatusByTurnId.get(turn.turnId);
-      // Codex returns turn status as a snake-cased string ("in_progress"),
-      // but older internal status enums used camelCase ("inProgress"). Treat
-      // both as "still active" so refresh during a live turn keeps the
-      // streaming indicator on instead of flipping it off the moment the
-      // detail response lands.
-      if (
-        !serverStatus ||
-        serverStatus === "in_progress" ||
-        serverStatus === "inProgress" ||
-        serverStatus === "active"
-      ) {
-        return turn;
-      }
-      return {
-        ...turn,
-        status: serverStatus as typeof turn.status,
-        isStreaming: false,
-      };
-    });
-  }, [allTimelineItems, detail]);
+  const allConversationTurns = useMemo(
+    () => selectConversationTurns(threadEventStore, detail?.turns ?? []),
+    [detail?.turns, threadEventStore],
+  );
   const reviewSlashCommandByTurnId = useMemo(() => {
     const commandByTurnId = new Map<string, string>();
     for (const item of allTimelineItems) {
