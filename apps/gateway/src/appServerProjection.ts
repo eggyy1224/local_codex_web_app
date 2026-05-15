@@ -314,10 +314,14 @@ export function attachAppServerProjection({
 
     if (raw.method === "turn/completed" && turnId) {
       cancelPendingInteractionsForTurn(threadId, turnId);
-      const activeTurn = activeTurnByThread.get(threadId);
-      if (activeTurn === turnId) {
-        activeTurnByThread.delete(threadId);
-      }
+      // Clear by thread, not by turn-id equality. Codex serializes turns per
+      // thread (it never runs two at once on one thread — that is exactly what
+      // the compact gate enforces), so a turn/completed for this thread always
+      // ends whatever this thread had active. Review turns additionally report
+      // turn/started and turn/completed with *different* turn ids, so an
+      // id-equality guard here leaked the entry forever and wedged compact
+      // with a false "turn in progress".
+      activeTurnByThread.delete(threadId);
     }
 
     const eventBase: Omit<GatewayEvent, "seq"> = {

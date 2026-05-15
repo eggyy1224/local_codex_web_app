@@ -2287,6 +2287,40 @@ describe("gateway integration routes", () => {
     }
   });
 
+  it("POST /api/threads/:id/compact is not wedged after a review turn whose start/complete ids differ", async () => {
+    // Codex review turns emit turn/started and turn/completed with *different*
+    // turn ids. A turn-id-equality guard in the projection left the per-thread
+    // active-turn entry set forever, so compact wrongly returned "turn in
+    // progress" until the gateway restarted. Clearing by thread fixes it.
+    const ctx = await createTestContext();
+    try {
+      let compactCalls = 0;
+      ctx.stub.handlers.set("thread/compact/start", () => {
+        compactCalls += 1;
+        return {};
+      });
+
+      ctx.stub.emit("message", {
+        method: "turn/started",
+        params: { threadId: "thread-1", turnId: "turn-review-wrapper" },
+      });
+      ctx.stub.emit("message", {
+        method: "turn/completed",
+        params: { threadId: "thread-1", turnId: "turn-review-actual" },
+      });
+
+      const res = await ctx.app.inject({
+        method: "POST",
+        url: "/api/threads/thread-1/compact",
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({ ok: true });
+      expect(compactCalls).toBe(1);
+    } finally {
+      await ctx.close();
+    }
+  });
+
   it("POST /api/threads/:id/compact returns readable 409 when resume is required and never force-resumes", async () => {
     const ctx = await createTestContext();
     try {
