@@ -2589,6 +2589,65 @@ describe("Thread page integration", () => {
     });
   });
 
+  it("Compact button posts to /api/threads/:id/compact and re-enables", async () => {
+    vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+
+    let compactCalls = 0;
+    let compactThreadId: string | null = null;
+
+    server.use(
+      http.get("http://127.0.0.1:8795/api/threads/:id", ({ params }) =>
+        HttpResponse.json({
+          thread: {
+            id: String(params.id),
+            title: "Main Thread",
+            preview: "Preview",
+            status: "idle",
+            createdAt: null,
+            updatedAt: null,
+          },
+          turns: [],
+          nextCursor: null,
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/approvals/pending", () =>
+        HttpResponse.json({ data: [] }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads", () =>
+        HttpResponse.json({ data: [], nextCursor: null }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/timeline", () =>
+        HttpResponse.json({ data: [] }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/context", () =>
+        HttpResponse.json({
+          threadId: "thread-1",
+          cwd: "/tmp/project",
+          resolvedCwd: "/tmp/project",
+          isFallback: false,
+          source: "projection",
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/models", () => HttpResponse.json({ data: [] })),
+      http.post("http://127.0.0.1:8795/api/threads/:id/compact", ({ params }) => {
+        compactCalls += 1;
+        compactThreadId = String(params.id);
+        return HttpResponse.json({ ok: true });
+      }),
+    );
+
+    render(<ThreadPage params={Promise.resolve({ id: "thread-1" })} />);
+
+    const compactBtn = await screen.findByTestId("control-compact");
+    fireEvent.click(compactBtn);
+
+    await waitFor(() => {
+      expect(compactCalls).toBe(1);
+      expect(compactThreadId).toBe("thread-1");
+      expect(screen.getByTestId("control-compact")).not.toBeDisabled();
+    });
+  });
+
   it("updates event cursor and pending approvals from EventSource events", async () => {
     vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
     MockEventSource.instances.length = 0;

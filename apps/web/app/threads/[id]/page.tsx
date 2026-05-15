@@ -262,6 +262,7 @@ export default function ThreadPage({ params }: Props) {
   const [interactionError, setInteractionError] = useState<string | null>(null);
   const [controlBusy, setControlBusy] = useState<ThreadControlRequest["action"] | null>(null);
   const [controlError, setControlError] = useState<string | null>(null);
+  const [compactBusy, setCompactBusy] = useState(false);
   const [threadList, setThreadList] = useState<ThreadListItem[]>([]);
   const [threadListLoading, setThreadListLoading] = useState(true);
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -1703,6 +1704,37 @@ export default function ThreadPage({ params }: Props) {
       }
     }
   }, [controlBusy, threadId]);
+
+  const compactThread = useCallback(async (): Promise<void> => {
+    if (!threadId || compactBusy) {
+      return;
+    }
+
+    const requestThreadId = threadId;
+    setCompactBusy(true);
+    setControlError(null);
+
+    try {
+      const res = await fetch(`${gatewayUrl}/api/threads/${requestThreadId}/compact`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+      });
+
+      if (!res.ok) {
+        throw new Error(`compact http ${res.status}`);
+      }
+    } catch (compactErr) {
+      if (activeThreadIdRef.current === requestThreadId) {
+        setControlError(compactErr instanceof Error ? compactErr.message : "compact failed");
+      }
+    } finally {
+      if (activeThreadIdRef.current === requestThreadId) {
+        setCompactBusy(false);
+      }
+    }
+  }, [compactBusy, threadId]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -3732,6 +3764,15 @@ export default function ThreadPage({ params }: Props) {
                     onClick={() => void sendControl("cancel")}
                   >
                     {controlBusy === "cancel" ? "Cancelling..." : "Cancel"}
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="control-compact"
+                    className="cdx-toolbar-btn"
+                    disabled={compactBusy}
+                    onClick={() => void compactThread()}
+                  >
+                    {compactBusy ? "Compacting..." : "Compact"}
                   </button>
                 </div>
               )}
