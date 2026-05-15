@@ -2592,6 +2592,13 @@ export default function ThreadPage({ params }: Props) {
             effortLabel: thinkingEffort ? formatEffortLabel(thinkingEffort) : null,
             permissionLabel: permissionMode ? permissionMode : null,
             pendingCount: pendingActionCount,
+            contextUsage: latestTokenUsage
+              ? {
+                  totalTokens: latestTokenUsage.totalTokens,
+                  modelContextWindow: latestTokenUsage.modelContextWindow,
+                }
+              : null,
+            speedFast: gatewayConfig.config?.serviceTier === "fast",
           }}
           onPromptChange={(value) => {
             setPrompt(value);

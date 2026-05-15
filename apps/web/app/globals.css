@@ -579,7 +579,7 @@ textarea {
 .cdx-mobile-thread-switcher-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(6, 6, 6, 0.68);
+  background: var(--m-bg);
   display: flex;
   align-items: stretch;
   justify-content: flex-start;
@@ -587,16 +587,15 @@ textarea {
 }
 
 .cdx-mobile-thread-switcher-dialog {
-  width: min(86vw, 340px);
+  width: 100%;
   height: 100%;
   border: 0;
-  border-right: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(18, 18, 18, 0.98);
-  padding: 14px 12px 12px;
+  background: var(--m-bg);
+  padding: calc(8px + env(safe-area-inset-top)) var(--m-pad)
+    max(12px, env(safe-area-inset-bottom));
   display: grid;
   grid-template-rows: auto auto minmax(0, 1fr);
-  gap: 10px;
-  box-shadow: 14px 0 36px -8px rgba(0, 0, 0, 0.55);
+  gap: 14px;
 }
 
 .cdx-mobile-thread-switcher-controls {
@@ -608,20 +607,19 @@ textarea {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  justify-content: flex-start;
-  padding: 7px 10px;
-  border-radius: var(--radius-sm);
-  border: 1px dashed rgba(255, 255, 255, 0.22);
-  background: rgba(255, 255, 255, 0.04);
-  color: rgba(255, 255, 255, 0.92);
-  font-size: 12px;
-  font-weight: 500;
+  justify-content: center;
+  padding: 13px 16px;
+  border-radius: 999px;
+  border: 0;
+  background: #ffffff;
+  color: #000000;
+  font-size: 15px;
+  font-weight: 600;
   cursor: pointer;
 }
 
 .cdx-mobile-thread-switcher-new-btn:hover {
-  background: rgba(255, 255, 255, 0.08);
-  border-color: rgba(255, 255, 255, 0.4);
+  background: rgba(255, 255, 255, 0.9);
 }
 
 .cdx-mobile-thread-switcher-new-btn:disabled {
@@ -636,31 +634,31 @@ textarea {
 
 .cdx-mobile-thread-switcher-search {
   width: 100%;
-  border: 1px solid var(--border-soft);
-  background: rgba(255, 255, 255, 0.03);
-  color: var(--text);
-  padding: 7px 10px;
-  border-radius: var(--radius-sm);
-  font-size: 13px;
+  border: 0;
+  background: var(--m-fill);
+  color: var(--m-text);
+  padding: 11px 14px;
+  border-radius: 999px;
+  font-size: 15px;
   -webkit-appearance: none;
   appearance: none;
 }
 
 .cdx-mobile-thread-switcher-search::placeholder {
-  color: var(--muted);
+  color: var(--m-text-3);
 }
 
 .cdx-mobile-thread-switcher-search:focus {
   outline: none;
-  border-color: rgba(122, 162, 247, 0.5);
+  background: var(--m-fill-strong);
 }
 
 .cdx-mobile-thread-switcher-filters {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 4px;
-  border: 1px solid var(--border-soft);
-  background: rgba(255, 255, 255, 0.02);
+  gap: 2px;
+  border: 0;
+  background: var(--m-fill);
   border-radius: 999px;
   padding: 3px;
 }
@@ -668,11 +666,10 @@ textarea {
 .cdx-mobile-thread-switcher-filter {
   border: 0;
   background: transparent;
-  color: var(--muted);
-  font-size: 11px;
+  color: var(--m-text-2);
+  font-size: 13px;
   font-weight: 500;
-  letter-spacing: 0.02em;
-  padding: 6px 4px;
+  padding: 7px 4px;
   border-radius: 999px;
   cursor: pointer;
   min-width: 0;
@@ -682,8 +679,8 @@ textarea {
 }
 
 .cdx-mobile-thread-switcher-filter.is-active {
-  background: rgba(255, 255, 255, 0.1);
-  color: var(--text);
+  background: var(--m-fill-strong);
+  color: var(--m-text);
 }
 
 .cdx-mobile-thread-switcher-head {
@@ -691,26 +688,56 @@ textarea {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  padding-top: 4px;
+}
+
+.cdx-mobile-thread-switcher-head > strong {
+  font-size: 32px;
+  line-height: 1.12;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--m-text);
+}
+
+.cdx-mobile-thread-switcher-head > .cdx-toolbar-btn {
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: var(--m-fill);
+  color: var(--m-text);
+  font-size: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.cdx-mobile-thread-switcher-head > .cdx-toolbar-btn::before {
+  content: "✕";
+  font-size: 15px;
+  line-height: 1;
 }
 
 .cdx-mobile-thread-switcher-list {
   min-height: 0;
   overflow: auto;
   display: grid;
-  gap: 16px;
+  gap: 24px;
 }
 
 .cdx-mobile-thread-switcher-group {
   display: grid;
-  gap: 6px;
+  gap: 4px;
 }
 
 .cdx-mobile-thread-switcher-group-head {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 0 2px 4px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  padding: 0 0 2px;
+  border-bottom: 0;
 }
 
 .cdx-mobile-thread-switcher-group-toggle {
@@ -740,10 +767,9 @@ textarea {
 }
 
 .cdx-mobile-thread-switcher-group-label {
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  color: rgba(255, 255, 255, 0.72);
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--m-text-2);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -789,33 +815,31 @@ textarea {
 
 .cdx-mobile-thread-switcher-item {
   width: 100%;
-  border: 1px solid transparent;
-  border-radius: var(--radius-sm);
-  background: rgba(255, 255, 255, 0.03);
-  padding: 10px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  padding: 16px 4px;
   text-align: left;
   display: grid;
-  grid-template-columns: 14px minmax(0, 1fr);
+  grid-template-columns: 10px minmax(0, 1fr);
   align-items: start;
-  gap: 10px;
+  gap: 12px;
 }
 
 .cdx-mobile-thread-switcher-item:hover {
-  border-color: var(--border-soft);
-  background: rgba(255, 255, 255, 0.08);
   cursor: pointer;
 }
 
-.cdx-mobile-thread-switcher-item.is-active {
-  border-color: rgba(96, 182, 255, 0.4);
-  background: rgba(45, 77, 112, 0.28);
+.cdx-mobile-thread-switcher-item.is-active
+  .cdx-mobile-thread-switcher-item-title {
+  color: var(--m-green);
 }
 
 .cdx-mobile-thread-switcher-status {
-  width: 10px;
-  height: 10px;
+  width: 7px;
+  height: 7px;
   border-radius: 999px;
-  margin-top: 5px;
+  margin-top: 8px;
   flex-shrink: 0;
 }
 
@@ -836,7 +860,19 @@ textarea {
 }
 
 .cdx-mobile-thread-switcher-status--idle {
-  background: rgba(255, 255, 255, 0.22);
+  background: transparent;
+}
+
+/* Codex list rows are clean text. Keep meta only where state matters
+   (running/waiting/error); idle rows collapse to just the title. */
+.cdx-mobile-thread-switcher-item[data-status="idle"]
+  .cdx-mobile-thread-switcher-item-meta {
+  display: none;
+}
+
+.cdx-mobile-thread-switcher-item[data-status="idle"] {
+  grid-template-columns: 0 minmax(0, 1fr);
+  gap: 0;
 }
 
 @keyframes cdx-thread-status-pulse {
@@ -851,8 +887,9 @@ textarea {
 }
 
 .cdx-mobile-thread-switcher-item-title {
-  font-size: 13px;
-  line-height: 18px;
+  font-size: 16px;
+  line-height: 21px;
+  color: var(--m-text);
   white-space: nowrap;
   text-overflow: ellipsis;
   overflow: hidden;
@@ -862,9 +899,9 @@ textarea {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 11px;
-  line-height: 15px;
-  color: var(--muted);
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--m-text-3);
   min-width: 0;
 }
 
@@ -1752,6 +1789,26 @@ textarea {
   font-size: 12px;
 }
 
+.cdx-mobile-thread-page,
+.cdx-mobile-thread-switcher-overlay {
+  /* Codex iOS palette — scoped to mobile subtree, desktop keeps :root */
+  --m-bg: #000000;
+  --m-fill: rgba(120, 120, 128, 0.18);
+  --m-fill-strong: rgba(120, 120, 128, 0.26);
+  --m-text: rgba(255, 255, 255, 0.96);
+  --m-text-2: rgba(235, 235, 245, 0.6);
+  --m-text-3: rgba(235, 235, 245, 0.3);
+  --m-bubble: #363638;
+  --m-green: #34c759;
+  --m-r-bubble: 20px;
+  --m-r-field: 22px;
+  --m-pad: 20px;
+  --text: rgba(255, 255, 255, 0.96);
+  --muted: rgba(235, 235, 245, 0.6);
+  --border: rgba(255, 255, 255, 0.1);
+  --border-soft: rgba(255, 255, 255, 0.06);
+}
+
 .cdx-mobile-thread-page {
   --cdx-mobile-topbar-height: calc(56px + env(safe-area-inset-top));
   height: 100vh;
@@ -1761,9 +1818,7 @@ textarea {
   max-height: 100vh;
   max-height: 100dvh;
   position: relative;
-  background:
-    radial-gradient(900px 520px at 50% -220px, rgba(70, 70, 70, 0.3) 0%, rgba(12, 12, 12, 0) 72%),
-    linear-gradient(180deg, rgba(12, 12, 12, 0.98) 0%, rgba(9, 9, 9, 1) 100%);
+  background: var(--m-bg);
   overflow: hidden;
 }
 
@@ -1779,16 +1834,16 @@ textarea {
   align-items: center;
   gap: 10px;
   padding: calc(10px + env(safe-area-inset-top)) 12px 8px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(10, 10, 10, 0.86);
-  -webkit-backdrop-filter: blur(14px);
-  backdrop-filter: blur(14px);
+  border-bottom: 1px solid transparent;
+  background: var(--m-bg);
 }
 
 .cdx-mobile-chat-topbar-center {
   min-width: 0;
-  display: grid;
-  gap: 2px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
 }
 
 .cdx-mobile-chat-topbar-actions {
@@ -2063,29 +2118,35 @@ textarea {
 }
 
 .cdx-mobile-chat-project {
-  font-size: 11px;
-  letter-spacing: 0.02em;
-  color: var(--muted);
+  order: 2;
+  max-width: 100%;
+  font-size: 12px;
+  color: var(--m-text-3);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .cdx-mobile-chat-title {
+  order: 1;
   margin: 0;
-  font-size: 20px;
-  line-height: 1.2;
+  max-width: 100%;
+  font-size: 16px;
+  line-height: 1.25;
   font-weight: 600;
+  color: var(--m-text);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .cdx-mobile-chat-pill-row {
+  order: 3;
   display: flex;
   flex-wrap: wrap;
+  justify-content: center;
   gap: 4px;
-  margin: 0;
+  margin: 2px 0 0;
 }
 
 .cdx-mobile-chat-pill {
@@ -2102,10 +2163,11 @@ textarea {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  padding: 2px 8px 2px 6px;
-  border: 1px solid var(--border-soft);
-  background: transparent;
-  color: rgba(255, 255, 255, 0.78);
+  padding: 1px 8px 1px 6px;
+  border: 0;
+  background: var(--m-fill);
+  color: var(--m-text-2);
+  font-size: 10px;
 }
 
 .cdx-mobile-chat-pill::before {
@@ -2126,22 +2188,23 @@ textarea {
 }
 
 .cdx-mobile-icon-btn {
-  width: 34px;
-  height: 34px;
-  border: 1px solid transparent;
+  width: 36px;
+  height: 36px;
+  border: 0;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.04);
-  color: var(--text);
-  font-size: 18px;
+  background: var(--m-fill);
+  color: var(--m-text);
+  font-size: 17px;
   line-height: 1;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   position: relative;
+  flex-shrink: 0;
 }
 
 .cdx-mobile-icon-btn:active {
-  background: rgba(255, 255, 255, 0.11);
+  background: var(--m-fill-strong);
 }
 
 .cdx-mobile-icon-btn:disabled {
@@ -2247,11 +2310,21 @@ textarea {
 
 .cdx-mobile-msg--user {
   justify-self: end;
-  width: min(100%, 85%);
-  max-width: 100%;
-  background: rgba(39, 39, 39, 0.9);
-  border-radius: 16px;
-  padding: 10px 12px;
+  width: fit-content;
+  max-width: 84%;
+  background: var(--m-bubble);
+  border-radius: var(--m-r-bubble);
+  padding: 11px 15px;
+}
+
+/* Codex shows no role labels — alignment + bubble carry the meaning. */
+.cdx-mobile-msg--user > .cdx-mobile-msg-head {
+  display: none;
+}
+
+.cdx-mobile-msg--user.is-steer > .cdx-mobile-msg-head {
+  display: flex;
+  margin-bottom: 4px;
 }
 
 .cdx-mobile-msg--user.is-steer {
@@ -2269,6 +2342,44 @@ textarea {
   justify-self: stretch;
   width: 100%;
   padding: 0 2px;
+}
+
+/* No "Codex" label; copy/status sit quietly BELOW the message (Codex layout). */
+.cdx-mobile-msg--assistant > .cdx-mobile-msg-head > strong {
+  display: none;
+}
+
+.cdx-mobile-msg--assistant > .cdx-mobile-msg-head {
+  order: 2;
+  justify-content: flex-start;
+  min-height: 0;
+}
+
+.cdx-mobile-msg--assistant > .cdx-turn-body {
+  order: 1;
+}
+
+.cdx-mobile-message-stream .cdx-turn-body,
+.cdx-mobile-message-stream .cdx-md {
+  font-size: 16px;
+  line-height: 1.52;
+  color: var(--m-text);
+}
+
+.cdx-mobile-message-stream .cdx-mobile-msg-head {
+  font-size: 12px;
+  color: var(--m-text-3);
+}
+
+.cdx-mobile-message-stream .cdx-status {
+  border: 0;
+  padding: 0;
+  color: var(--m-text-3);
+}
+
+.cdx-mobile-message-stream .cdx-mobile-inline-btn {
+  color: var(--m-text-2);
+  padding: 2px 4px;
 }
 
 .cdx-mobile-msg--detail {
@@ -2335,14 +2446,23 @@ textarea {
  * segments in the turn body. Distinct visual rhythm from a full assistant
  * bubble: smaller, dimmer, gear icon, expandable to show the per-step detail. */
 .cdx-mobile-tool-batch {
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 10px;
-  background: rgba(255, 255, 255, 0.025);
-  padding: 6px 10px;
-  font-size: 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.02);
+  padding: 10px 12px;
+  font-size: 13px;
   min-width: 0;
   max-width: 100%;
   overflow: hidden;
+}
+
+.cdx-mobile-message-stream .cdx-mobile-detail-btn {
+  font-size: 11px;
+  color: var(--m-text-3);
+}
+
+.cdx-mobile-message-stream .cdx-stream-cursor {
+  background: var(--m-text-2);
 }
 
 .cdx-mobile-tool-batch-summary {
@@ -2738,37 +2858,69 @@ textarea {
   bottom: 0;
   z-index: 35;
   padding: 8px 10px max(12px, env(safe-area-inset-bottom));
-  background: linear-gradient(180deg, rgba(9, 9, 9, 0) 0%, rgba(9, 9, 9, 0.92) 35%, rgba(9, 9, 9, 0.98) 100%);
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0) 0%, rgba(0, 0, 0, 0.85) 28%, #000000 60%);
 }
 
 .cdx-mobile-composer-strip {
+  flex: 1 1 auto;
+  min-width: 0;
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
-  width: 100%;
-  margin: 0 0 6px;
-  padding: 4px 6px;
-  border: 1px solid var(--border-soft);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.02);
-  color: var(--muted);
-  font-size: 11px;
+  gap: 7px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--m-text-2);
+  font-size: 13px;
+  overflow: hidden;
   cursor: pointer;
 }
 
-.cdx-mobile-composer-strip:hover {
-  border-color: rgba(255, 255, 255, 0.18);
+.cdx-mobile-context-ring {
+  --context-ring-progress: 0%;
+  --context-ring-color: rgba(255, 255, 255, 0.92);
+  position: relative;
+  width: 25px;
+  height: 25px;
+  border-radius: 999px;
+  flex: 0 0 25px;
+  background:
+    conic-gradient(
+      var(--context-ring-color) 0 var(--context-ring-progress),
+      rgba(255, 255, 255, 0.18) var(--context-ring-progress) 100%
+    );
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 6px), #000 calc(100% - 5px));
+  mask: radial-gradient(farthest-side, transparent calc(100% - 6px), #000 calc(100% - 5px));
+}
+
+.cdx-mobile-context-ring[data-level="unknown"] {
+  --context-ring-color: rgba(255, 255, 255, 0.36);
+  opacity: 0.7;
+}
+
+.cdx-mobile-context-ring[data-level="medium"] {
+  --context-ring-color: rgba(247, 178, 122, 0.94);
+}
+
+.cdx-mobile-context-ring[data-level="high"] {
+  --context-ring-color: rgba(231, 92, 92, 0.96);
+}
+
+.cdx-mobile-composer-strip-bolt {
+  font-size: 13px;
+  color: var(--m-text);
+  flex-shrink: 0;
+  line-height: 1;
 }
 
 .cdx-mobile-composer-strip-chip {
-  padding: 2px 8px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.05);
-  color: var(--text);
-  font-size: 11px;
-  letter-spacing: 0.02em;
-  max-width: 140px;
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--m-text);
+  font-size: 13px;
+  max-width: 160px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2776,7 +2928,7 @@ textarea {
 
 .cdx-mobile-composer-strip-chip--muted {
   background: transparent;
-  color: var(--muted);
+  color: var(--m-text-2);
 }
 
 .cdx-mobile-composer-strip-chip--alert {
@@ -2850,15 +3002,28 @@ textarea {
 }
 
 .cdx-mobile-composer {
-  border: 1px solid var(--border-soft);
-  border-radius: 28px;
-  background: rgba(27, 27, 27, 0.95);
-  min-height: 70px;
-  display: grid;
-  grid-template-columns: 40px minmax(0, 1fr) 40px;
+  border: 1px solid transparent;
+  border-radius: 26px;
+  background: rgba(255, 255, 255, 0.055);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px 12px;
+}
+
+.cdx-mobile-composer-bar {
+  display: flex;
   align-items: center;
   gap: 10px;
-  padding: 11px 12px;
+}
+
+.cdx-mobile-composer-bar .cdx-mobile-icon-btn {
+  background: transparent;
+  border: 0;
+  width: 28px;
+  height: 28px;
+  font-size: 22px;
+  color: var(--m-text);
 }
 
 .cdx-mobile-file-input {
@@ -3012,14 +3177,19 @@ textarea {
   outline: none;
 }
 
+.cdx-mobile-composer textarea::placeholder {
+  color: var(--m-text-3);
+}
+
 .cdx-mobile-send-btn {
-  width: 40px;
-  height: 40px;
+  width: 32px;
+  height: 32px;
   border-radius: 999px;
   border: 0;
-  background: rgba(244, 244, 244, 0.95);
-  color: rgba(10, 10, 10, 0.95);
-  font-size: 18px;
+  background: #ffffff;
+  color: #000000;
+  font-size: 17px;
+  flex-shrink: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;

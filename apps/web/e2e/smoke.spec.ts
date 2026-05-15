@@ -152,18 +152,19 @@ test("mobile smoke: chat-first thread flow + sheet controls", async ({ page }, t
   });
   const drawer = page.getByTestId("mobile-thread-switcher-overlay");
   await expect(drawer).toBeVisible();
-  // The drawer is now a left side panel, not a full-screen overlay.
+  // Codex-style: the thread list is a full-bleed screen, not a narrow
+  // left drawer. The dialog should span (near) the full viewport width.
   await expect
     .poll(async () => {
       return await page.evaluate(() => {
         const dialog = document.querySelector(
           ".cdx-mobile-thread-switcher-dialog",
         ) as HTMLElement | null;
-        if (!dialog) return Number.POSITIVE_INFINITY;
-        return dialog.getBoundingClientRect().width;
+        if (!dialog) return 0;
+        return dialog.getBoundingClientRect().width / window.innerWidth;
       });
     })
-    .toBeLessThanOrEqual(360);
+    .toBeGreaterThanOrEqual(0.98);
   // Search input + New session entry must be present.
   await expect(page.getByTestId("mobile-thread-switcher-search")).toBeVisible();
   await expect(page.getByTestId("mobile-thread-switcher-new")).toBeVisible();

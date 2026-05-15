@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import type {
   ChangeEvent as ReactChangeEvent,
   ClipboardEvent as ReactClipboardEvent,
+  CSSProperties,
   DragEvent as ReactDragEvent,
   KeyboardEvent as ReactKeyboardEvent,
   PointerEvent as ReactPointerEvent,
@@ -23,6 +24,13 @@ export type MobileComposerStripInfo = {
   effortLabel: string | null;
   permissionLabel: string | null;
   pendingCount: number;
+  contextUsage?: {
+    totalTokens: number;
+    modelContextWindow: number | null;
+  } | null;
+  // ⚡ is the Fast/speed-tier marker (mirrors the Codex app). Only shown
+  // when the service tier is actually "fast" — never in Flex.
+  speedFast?: boolean;
 };
 
 type MobileComposerDockProps = {
@@ -54,6 +62,52 @@ type MobileComposerDockProps = {
 
 const OPEN_DISTANCE_THRESHOLD = 64;
 const OPEN_VELOCITY_THRESHOLD = 0.35;
+
+function formatCompactTokenCount(tokens: number): string {
+  if (!Number.isFinite(tokens) || tokens <= 0) {
+    return "0";
+  }
+  if (tokens >= 1_000_000) {
+    const value = tokens / 1_000_000;
+    return `${value >= 10 ? Math.round(value) : Number(value.toFixed(1))}m`;
+  }
+  if (tokens >= 1_000) {
+    const value = tokens / 1_000;
+    return `${value >= 10 ? Math.round(value) : Number(value.toFixed(1))}k`;
+  }
+  return String(tokens);
+}
+
+function contextRingDetails(usage: MobileComposerStripInfo["contextUsage"]) {
+  if (!usage) {
+    return {
+      label: "Context usage not available yet",
+      progress: null,
+      level: "unknown" as const,
+    };
+  }
+
+  const windowSize =
+    usage.modelContextWindow && usage.modelContextWindow > 0
+      ? usage.modelContextWindow
+      : null;
+  if (!windowSize) {
+    return {
+      label: `Context ${formatCompactTokenCount(usage.totalTokens)} tokens`,
+      progress: null,
+      level: "unknown" as const,
+    };
+  }
+
+  const progress = Math.min(100, Math.max(0, (usage.totalTokens / windowSize) * 100));
+  const rounded = Math.round(progress);
+  const level = rounded >= 85 ? "high" : rounded >= 65 ? "medium" : "low";
+  return {
+    label: `Context ${rounded}%, ${formatCompactTokenCount(usage.totalTokens)} of ${formatCompactTokenCount(windowSize)} tokens`,
+    progress,
+    level,
+  };
+}
 
 export default function MobileComposerDock({
   prompt,
@@ -192,9 +246,7 @@ export default function MobileComposerDock({
     }
   };
 
-  const placeholder = steerActive
-    ? "Steer the running turn…"
-    : "Ask Codex anything, / for commands";
+  const placeholder = steerActive ? "Steer the running turn…" : "Ask Codex";
 
   const handleStripClick = () => {
     if (onOpenAdvancedControls) {
@@ -203,6 +255,14 @@ export default function MobileComposerDock({
       onOpenControls();
     }
   };
+
+  const contextRing = contextRingDetails(strip?.contextUsage ?? null);
+  const contextRingStyle =
+    contextRing.progress === null
+      ? undefined
+      : ({
+          "--context-ring-progress": `${contextRing.progress}%`,
+        } as CSSProperties & Record<"--context-ring-progress", string>);
 
   return (
     <section
@@ -222,46 +282,6 @@ export default function MobileComposerDock({
       >
         <span className="cdx-mobile-composer-handle-bar" aria-hidden="true" />
       </div>
-
-      {strip ? (
-        <button
-          type="button"
-          className="cdx-mobile-composer-strip"
-          data-testid="mobile-composer-strip"
-          onClick={handleStripClick}
-          aria-label="Open advanced controls"
-        >
-          {strip.model ? (
-            <span className="cdx-mobile-composer-strip-chip" data-testid="mobile-composer-strip-model">
-              {strip.model}
-            </span>
-          ) : null}
-          {strip.effortLabel ? (
-            <span
-              className="cdx-mobile-composer-strip-chip cdx-mobile-composer-strip-chip--muted"
-              data-testid="mobile-composer-strip-effort"
-            >
-              {strip.effortLabel}
-            </span>
-          ) : null}
-          {strip.permissionLabel ? (
-            <span
-              className="cdx-mobile-composer-strip-chip cdx-mobile-composer-strip-chip--muted"
-              data-testid="mobile-composer-strip-permission"
-            >
-              {strip.permissionLabel}
-            </span>
-          ) : null}
-          {strip.pendingCount > 0 ? (
-            <span
-              className="cdx-mobile-composer-strip-chip cdx-mobile-composer-strip-chip--alert"
-              data-testid="mobile-composer-strip-pending"
-            >
-              {strip.pendingCount === 1 ? "1 pending" : `${strip.pendingCount} pending`}
-            </span>
-          ) : null}
-        </button>
-      ) : null}
 
       {slashMenuOpen ? (
         <div className="cdx-mobile-slash-menu" role="listbox" aria-label="Slash command suggestions" data-testid="thread-slash-menu">
@@ -343,6 +363,17 @@ export default function MobileComposerDock({
       />
 
       <div className="cdx-mobile-composer">
+        <textarea
+          id="turn-input"
+          data-testid="turn-input"
+          value={prompt}
+          onChange={(event) => onPromptChange(event.target.value)}
+          onKeyDown={onPromptKeyDown}
+          onPaste={handleTextareaPaste}
+          placeholder={placeholder}
+          rows={1}
+        />
+        <div className="cdx-mobile-composer-bar">
         <div className="cdx-mobile-plus-menu-anchor" ref={plusMenuRef}>
           <button
             type="button"
@@ -418,16 +449,71 @@ export default function MobileComposerDock({
             </div>
           ) : null}
         </div>
-        <textarea
-          id="turn-input"
-          data-testid="turn-input"
-          value={prompt}
-          onChange={(event) => onPromptChange(event.target.value)}
-          onKeyDown={onPromptKeyDown}
-          onPaste={handleTextareaPaste}
-          placeholder={placeholder}
-          rows={1}
-        />
+        {strip ? (
+          <button
+            type="button"
+            className="cdx-mobile-composer-strip"
+            data-testid="mobile-composer-strip"
+            onClick={handleStripClick}
+            aria-label="Open advanced controls"
+          >
+            <span
+              className="cdx-mobile-context-ring"
+              data-testid="mobile-composer-context-ring"
+              data-level={contextRing.level}
+              style={contextRingStyle}
+              aria-label={contextRing.label}
+              title={contextRing.label}
+            >
+              <span aria-hidden="true" />
+              <span className="cdx-sr-only">{contextRing.label}</span>
+            </span>
+            {strip.speedFast ? (
+              <span
+                className="cdx-mobile-composer-strip-bolt"
+                data-testid="mobile-composer-strip-fast"
+                aria-label="Fast mode"
+                title="Fast mode"
+              >
+                ⚡
+              </span>
+            ) : null}
+            {strip.model ? (
+              <span
+                className="cdx-mobile-composer-strip-chip"
+                data-testid="mobile-composer-strip-model"
+              >
+                {strip.model}
+              </span>
+            ) : null}
+            {strip.effortLabel ? (
+              <span
+                className="cdx-mobile-composer-strip-chip cdx-mobile-composer-strip-chip--muted"
+                data-testid="mobile-composer-strip-effort"
+              >
+                {strip.effortLabel}
+              </span>
+            ) : null}
+            {strip.permissionLabel ? (
+              <span
+                className="cdx-mobile-composer-strip-chip cdx-mobile-composer-strip-chip--muted"
+                data-testid="mobile-composer-strip-permission"
+              >
+                {strip.permissionLabel}
+              </span>
+            ) : null}
+            {strip.pendingCount > 0 ? (
+              <span
+                className="cdx-mobile-composer-strip-chip cdx-mobile-composer-strip-chip--alert"
+                data-testid="mobile-composer-strip-pending"
+              >
+                {strip.pendingCount === 1
+                  ? "1 pending"
+                  : `${strip.pendingCount} pending`}
+              </span>
+            ) : null}
+          </button>
+        ) : null}
         <button
           type="button"
           className={`cdx-mobile-send-btn ${steerActive ? "cdx-mobile-send-btn--steer" : ""}`}
@@ -438,6 +524,7 @@ export default function MobileComposerDock({
         >
           {submitting ? "..." : steerActive ? "↪" : "↑"}
         </button>
+        </div>
       </div>
     </section>
   );

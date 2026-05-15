@@ -255,9 +255,11 @@ export default function MobileMessageStream({
                       <strong>Codex</strong>
                       {isLastAssistant ? (
                         <div className="cdx-mobile-msg-actions">
-                          <span className={`cdx-status ${statusClass(turn.status)}`}>
-                            {statusLabelCompact(turn.status)}
-                          </span>
+                          {turn.status !== "completed" ? (
+                            <span className={`cdx-status ${statusClass(turn.status)}`}>
+                              {statusLabelCompact(turn.status)}
+                            </span>
+                          ) : null}
                           <button
                             type="button"
                             className="cdx-mobile-inline-btn"
@@ -302,9 +304,11 @@ export default function MobileMessageStream({
                 <header className="cdx-mobile-msg-head">
                   <strong>Codex</strong>
                   <div className="cdx-mobile-msg-actions">
-                    <span className={`cdx-status ${statusClass(turn.status)}`}>
-                      {statusLabelCompact(turn.status)}
-                    </span>
+                    {turn.status !== "completed" ? (
+                      <span className={`cdx-status ${statusClass(turn.status)}`}>
+                        {statusLabelCompact(turn.status)}
+                      </span>
+                    ) : null}
                     <button
                       type="button"
                       className="cdx-mobile-inline-btn"
@@ -339,8 +343,9 @@ export default function MobileMessageStream({
                 className="cdx-mobile-inline-btn cdx-mobile-detail-btn"
                 data-testid={`mobile-message-details-open-${turn.turnId}`}
                 onClick={() => onOpenMessageDetails(turn.turnId)}
+                title={`${statusLabel(turn.status)} · ${formatTimestamp(turn.startedAt)}`}
               >
-                Message details · {statusLabel(turn.status)} · {formatTimestamp(turn.startedAt)}
+                Details
               </button>
             ) : null}
           </article>

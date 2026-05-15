@@ -95,11 +95,25 @@ export default function MobileChatTopBar({
     <header className="cdx-mobile-chat-topbar" data-testid="mobile-chat-topbar">
       <button
         type="button"
-        className="cdx-mobile-icon-btn"
+        className="cdx-mobile-icon-btn cdx-mobile-icon-btn--back"
         onClick={onOpenThreads}
         aria-label="Open threads"
       >
-        ≡
+        <svg
+          width="17"
+          height="17"
+          viewBox="0 0 24 24"
+          fill="none"
+          aria-hidden="true"
+        >
+          <path
+            d="M15 5l-7 7 7 7"
+            stroke="currentColor"
+            strokeWidth="2.2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
       </button>
       <div className="cdx-mobile-chat-topbar-center">
         {projectLabel ? (
