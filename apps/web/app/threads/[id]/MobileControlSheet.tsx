@@ -53,6 +53,8 @@ type MobileControlSheetProps = {
   approvalBusy: string | null;
   interactionBusy: string | null;
   controlBusy: ThreadControlRequest["action"] | null;
+  compactBusy: boolean;
+  turnRunning: boolean;
   pendingApprovals: MobileApprovalItem[];
   pendingInteractions: MobileInteractionItem[];
   model: string;
@@ -69,6 +71,7 @@ type MobileControlSheetProps = {
   onDraggingChange: (dragging: boolean) => void;
   onDragOffsetChange: (offset: number) => void;
   onControl: (action: ThreadControlRequest["action"]) => void;
+  onCompact: () => void;
   onDecision: (approvalId: string, decision: ApprovalDecisionRequest["decision"]) => void;
   onRespondInteraction: (
     interactionId: string,
@@ -96,6 +99,8 @@ export default function MobileControlSheet({
   approvalBusy,
   interactionBusy,
   controlBusy,
+  compactBusy,
+  turnRunning,
   pendingApprovals,
   pendingInteractions,
   model,
@@ -112,6 +117,7 @@ export default function MobileControlSheet({
   onDraggingChange,
   onDragOffsetChange,
   onControl,
+  onCompact,
   onDecision,
   onRespondInteraction,
   onModelChange,
@@ -418,6 +424,19 @@ export default function MobileControlSheet({
                   onClick={() => onControl("cancel")}
                 >
                   {controlBusy === "cancel" ? "Cancelling..." : "Cancel"}
+                </button>
+                <button
+                  type="button"
+                  data-testid="control-compact"
+                  className="cdx-toolbar-btn"
+                  disabled={compactBusy || turnRunning}
+                  title={turnRunning ? "對話進行中,無法 compact" : "Compact conversation history"}
+                  aria-label={
+                    turnRunning ? "對話進行中,無法 compact" : "Compact conversation history"
+                  }
+                  onClick={onCompact}
+                >
+                  {compactBusy ? "Compacting..." : "Compact"}
                 </button>
               </div>
             </div>
