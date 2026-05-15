@@ -327,7 +327,10 @@ export default function MobileControlSheet({
               <div className="cdx-mobile-sheet-field" data-testid="mobile-service-tier-field">
                 <span>Speed</span>
                 <div className="cdx-mobile-segmented" role="radiogroup" aria-label="Service tier">
-                  {(["fast", "flex"] as const).map((tier) => {
+                  {/* "flex" deliberately not offered: the API rejects it on
+                      this account's plan and a write poisons the global codex
+                      config. Only "fast" is a safe writable tier. */}
+                  {(["fast"] as const).map((tier) => {
                     const active = serviceTier === tier;
                     return (
                       <button

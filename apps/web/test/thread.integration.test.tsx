@@ -1030,7 +1030,12 @@ describe("Thread page integration", () => {
     );
   });
 
-  it("mobile settings tab toggles service tier via /api/config/value", async () => {
+  it("mobile advanced tab no longer offers the poisoning flex service tier", async () => {
+    // Regression: the mobile Speed control used to offer fast + flex. Tapping
+    // Flex wrote service_tier="flex" into the global ~/.codex/config.toml,
+    // which the API rejects on this plan → every codex turn died machine-wide.
+    // Flex must no longer be selectable; only "fast" is offered and no Flex
+    // pill is surfaced.
     setMobileViewport(true);
     vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
 
@@ -1095,24 +1100,14 @@ describe("Thread page integration", () => {
     fireEvent.click(screen.getByTestId("mobile-control-tab-advanced"));
 
     const fastBtn = await screen.findByTestId("mobile-service-tier-fast");
-    const flexBtn = screen.getByTestId("mobile-service-tier-flex");
     await waitFor(() => {
       expect(fastBtn).toHaveAttribute("aria-checked", "true");
-      expect(flexBtn).toHaveAttribute("aria-checked", "false");
     });
 
-    fireEvent.click(flexBtn);
-
-    await waitFor(() => {
-      expect(writeBody).toEqual({ keyPath: "service_tier", value: "flex" });
-    });
-    await waitFor(() => {
-      expect(screen.getByTestId("mobile-service-tier-flex")).toHaveAttribute("aria-checked", "true");
-    });
-    // After the toggle commits, the topbar should surface the Flex state as a persistent pill.
-    await waitFor(() => {
-      expect(screen.getByTestId("mobile-chat-flex-pill")).toBeInTheDocument();
-    });
+    // Flex must not be selectable anywhere, and no flex write can be issued.
+    expect(screen.queryByTestId("mobile-service-tier-flex")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("mobile-chat-flex-pill")).not.toBeInTheDocument();
+    expect(writeBody).toBeNull();
   });
 
   it("mobile control sheet closes when Close is pressed even after pointer-down on the header (regression)", async () => {

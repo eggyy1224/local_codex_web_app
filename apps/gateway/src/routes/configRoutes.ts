@@ -31,8 +31,16 @@ function snapshotFromAppServerConfig(raw: unknown): GatewayConfigSnapshot {
 
 // Allowlist of config keys the gateway will forward writes for. Tight by design:
 // the UI only needs to flip a small set of safe knobs. Extend deliberately.
+//
+// service_tier intentionally allows ONLY "fast". "flex" is a real OpenAI tier
+// but is rejected by the API on several plans (e.g. prolite returns HTTP 400
+// "Unsupported service_tier: flex"). A write here persists into the *global*
+// ~/.codex/config.toml, so a bad value silently bricks every codex turn for
+// the whole machine (every thread → systemError), not just this app. The
+// gateway must value-validate writes, never pass the UI's choice through —
+// the UI is not the security boundary.
 const ALLOWED_CONFIG_WRITE_KEYS: ReadonlyMap<string, (value: unknown) => boolean> = new Map([
-  ["service_tier", (value) => value === "fast" || value === "flex"],
+  ["service_tier", (value) => value === "fast"],
 ]);
 
 export function registerConfigRoutes(app: FastifyInstance, { appServer }: ConfigRoutesDeps): void {

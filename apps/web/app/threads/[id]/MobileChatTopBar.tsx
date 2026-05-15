@@ -44,7 +44,6 @@ export default function MobileChatTopBar({
   projectLabel,
   threadTitle,
   collaborationMode,
-  serviceTier,
   pendingActionCount,
   isWorking,
   workingLabel,
@@ -60,8 +59,9 @@ export default function MobileChatTopBar({
   onStop,
 }: MobileChatTopBarProps) {
   const planActive = collaborationMode === "plan";
-  const flexActive = serviceTier === "flex";
-  const hasPill = planActive || flexActive;
+  // "flex" tier is no longer offered (API rejects it on this plan; see
+  // configRoutes allowlist), so there is no Flex pill to surface.
+  const hasPill = planActive;
   const isRunning = runningTurnId !== null;
 
   const [viewMenuOpen, setViewMenuOpen] = useState(false);
@@ -135,14 +135,6 @@ export default function MobileChatTopBar({
                 data-testid="mobile-chat-plan-pill"
               >
                 Planning
-              </span>
-            ) : null}
-            {flexActive ? (
-              <span
-                className="cdx-mobile-chat-pill cdx-mobile-chat-pill--flex"
-                data-testid="mobile-chat-flex-pill"
-              >
-                Flex
               </span>
             ) : null}
           </div>

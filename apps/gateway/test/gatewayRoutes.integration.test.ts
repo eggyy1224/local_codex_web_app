@@ -2053,7 +2053,7 @@ describe("gateway integration routes", () => {
       const res = await ctx.app.inject({
         method: "POST",
         url: "/api/config/value",
-        payload: { keyPath: "service_tier", value: "flex" },
+        payload: { keyPath: "service_tier", value: "fast" },
       });
       expect(res.statusCode).toBe(200);
       expect(res.json()).toEqual({
@@ -2063,9 +2063,35 @@ describe("gateway integration routes", () => {
       });
       expect(captured).toMatchObject({
         keyPath: "service_tier",
-        value: "flex",
+        value: "fast",
         mergeStrategy: "replace",
       });
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  it("POST /api/config/value rejects service_tier=flex with 400 and never forwards it", async () => {
+    // Regression: the UI used to offer a "Flex" service tier; selecting it
+    // wrote service_tier="flex" into the *global* ~/.codex/config.toml via
+    // this route. The API rejects "flex" on this account's plan (HTTP 400
+    // "Unsupported service_tier: flex"), which silently bricked every codex
+    // turn machine-wide (all threads → systemError). The gateway must
+    // value-validate the write and never pass an API-poisoning value through.
+    const ctx = await createTestContext();
+    try {
+      let forwarded = false;
+      ctx.stub.handlers.set("config/value/write", () => {
+        forwarded = true;
+        return { status: "ok" };
+      });
+      const res = await ctx.app.inject({
+        method: "POST",
+        url: "/api/config/value",
+        payload: { keyPath: "service_tier", value: "flex" },
+      });
+      expect(res.statusCode).toBe(400);
+      expect(forwarded).toBe(false);
     } finally {
       await ctx.close();
     }
@@ -2320,7 +2346,7 @@ describe("gateway integration routes", () => {
         url: "/api/threads/source-thread/fork",
         payload: {
           model: "gpt-5-codex",
-          serviceTier: "flex",
+          serviceTier: "fast",
           approvalPolicy: "never",
           cwd: "/tmp/work",
         },
@@ -2330,10 +2356,39 @@ describe("gateway integration routes", () => {
       expect(captured).toEqual({
         threadId: "source-thread",
         model: "gpt-5-codex",
-        serviceTier: "flex",
+        serviceTier: "fast",
         approvalPolicy: "never",
         cwd: "/tmp/work",
       });
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  it("POST /api/threads/:id/fork drops the poisoning flex service tier", async () => {
+    // Regression sibling of the config/value flex guard: fork must not carry
+    // serviceTier="flex" onto the new thread (the API rejects it on this plan
+    // and every turn on the forked thread would die). Other fields still pass.
+    const ctx = await createTestContext();
+    try {
+      let captured: unknown = null;
+      ctx.stub.handlers.set("thread/fork", (params) => {
+        captured = params;
+        return { thread: { id: "t-forked" } };
+      });
+
+      const res = await ctx.app.inject({
+        method: "POST",
+        url: "/api/threads/source-thread/fork",
+        payload: { model: "gpt-5-codex", serviceTier: "flex", cwd: "/tmp/work" },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(captured).toEqual({
+        threadId: "source-thread",
+        model: "gpt-5-codex",
+        cwd: "/tmp/work",
+      });
+      expect(captured).not.toHaveProperty("serviceTier");
     } finally {
       await ctx.close();
     }
