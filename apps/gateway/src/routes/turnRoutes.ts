@@ -637,15 +637,10 @@ export function registerTurnRoutes(
     if (typeof body.model === "string") {
       rpcParams.model = body.model;
     }
-    // Only codex's real values pass through on fork: "fast", "standard", or
-    // null. "flex" (the OpenAI API tier) is never forwarded — it 400s on
-    // this plan and would error every turn on the forked thread. See the
-    // configRoutes allowlist.
-    if (
-      body.serviceTier === "fast" ||
-      body.serviceTier === "standard" ||
-      body.serviceTier === null
-    ) {
+    // Only "fast" or null (Standard/default) pass through on fork. The
+    // literal "standard" is rejected by codex's enum and "flex" 400s on
+    // this plan — neither is ever forwarded. See the configRoutes allowlist.
+    if (body.serviceTier === "fast" || body.serviceTier === null) {
       rpcParams.serviceTier = body.serviceTier;
     }
     if (typeof body.approvalPolicy === "string") {

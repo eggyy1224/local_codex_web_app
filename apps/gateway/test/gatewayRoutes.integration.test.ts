@@ -2071,22 +2071,21 @@ describe("gateway integration routes", () => {
     }
   });
 
-  it("POST /api/config/value allows service_tier fast+standard and rejects everything else", async () => {
-    // codex has exactly two service tiers: "fast" (1.5x, ChatGPT sign-in)
-    // and "standard" (default). Both must be writable so the Speed control
-    // can switch either way. "flex" must always be rejected: it is the
-    // OpenAI *API* tier, not a codex value, and writing it into the global
-    // ~/.codex/config.toml 400s every codex turn machine-wide. The gateway
+  it("POST /api/config/value allows service_tier fast + null(clear) and rejects everything else", async () => {
+    // Fast = literal "fast". Standard/default = null (clear the key) — the
+    // installed codex enum is fast|flex and rejects a literal "standard".
+    // "flex" must always be rejected (OpenAI API tier; 400s machine-wide
+    // when written into the global ~/.codex/config.toml). The gateway
     // value-validates and never passes the UI's choice straight through.
     const ctx = await createTestContext();
     try {
-      const forwarded: string[] = [];
+      const forwarded: unknown[] = [];
       ctx.stub.handlers.set("config/value/write", (params) => {
-        forwarded.push((params as { value: string }).value);
+        forwarded.push((params as { value: unknown }).value);
         return { status: "ok" };
       });
 
-      for (const value of ["fast", "standard"]) {
+      for (const value of ["fast", null]) {
         const ok = await ctx.app.inject({
           method: "POST",
           url: "/api/config/value",
@@ -2094,9 +2093,9 @@ describe("gateway integration routes", () => {
         });
         expect(ok.statusCode).toBe(200);
       }
-      expect(forwarded).toEqual(["fast", "standard"]);
+      expect(forwarded).toEqual(["fast", null]);
 
-      for (const value of ["flex", "priority", "extreme", ""]) {
+      for (const value of ["standard", "flex", "priority", "extreme", ""]) {
         const bad = await ctx.app.inject({
           method: "POST",
           url: "/api/config/value",
@@ -2105,7 +2104,7 @@ describe("gateway integration routes", () => {
         expect(bad.statusCode).toBe(400);
       }
       // Nothing invalid was ever forwarded to codex.
-      expect(forwarded).toEqual(["fast", "standard"]);
+      expect(forwarded).toEqual(["fast", null]);
     } finally {
       await ctx.close();
     }
@@ -2413,10 +2412,10 @@ describe("gateway integration routes", () => {
     }
   });
 
-  it("POST /api/threads/:id/fork forwards standard service tier but drops flex", async () => {
-    // codex's real values ("fast"/"standard") pass through on fork; "flex"
-    // (the OpenAI API tier) must never be carried onto the new thread — it
-    // 400s on this plan and every turn on the forked thread would die.
+  it("POST /api/threads/:id/fork forwards fast and null(Standard) but drops flex/standard", async () => {
+    // "fast" and null (Standard/default) pass through on fork. The literal
+    // "standard" (rejected by codex's enum) and "flex" (OpenAI API tier,
+    // 400s on this plan) must never be carried onto the new thread.
     const ctx = await createTestContext();
     try {
       let captured: unknown = null;
@@ -2425,32 +2424,34 @@ describe("gateway integration routes", () => {
         return { thread: { id: "t-forked" } };
       });
 
-      const standard = await ctx.app.inject({
+      const nullTier = await ctx.app.inject({
         method: "POST",
         url: "/api/threads/source-thread/fork",
-        payload: { model: "gpt-5-codex", serviceTier: "standard", cwd: "/tmp/work" },
+        payload: { model: "gpt-5-codex", serviceTier: null, cwd: "/tmp/work" },
       });
-      expect(standard.statusCode).toBe(200);
+      expect(nullTier.statusCode).toBe(200);
       expect(captured).toEqual({
         threadId: "source-thread",
         model: "gpt-5-codex",
-        serviceTier: "standard",
+        serviceTier: null,
         cwd: "/tmp/work",
       });
 
-      captured = null;
-      const flex = await ctx.app.inject({
-        method: "POST",
-        url: "/api/threads/source-thread/fork",
-        payload: { model: "gpt-5-codex", serviceTier: "flex", cwd: "/tmp/work" },
-      });
-      expect(flex.statusCode).toBe(200);
-      expect(captured).toEqual({
-        threadId: "source-thread",
-        model: "gpt-5-codex",
-        cwd: "/tmp/work",
-      });
-      expect(captured).not.toHaveProperty("serviceTier");
+      for (const bad of ["standard", "flex"]) {
+        captured = null;
+        const res = await ctx.app.inject({
+          method: "POST",
+          url: "/api/threads/source-thread/fork",
+          payload: { model: "gpt-5-codex", serviceTier: bad, cwd: "/tmp/work" },
+        });
+        expect(res.statusCode).toBe(200);
+        expect(captured).toEqual({
+          threadId: "source-thread",
+          model: "gpt-5-codex",
+          cwd: "/tmp/work",
+        });
+        expect(captured).not.toHaveProperty("serviceTier");
+      }
     } finally {
       await ctx.close();
     }

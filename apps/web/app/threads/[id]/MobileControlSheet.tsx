@@ -64,7 +64,7 @@ type MobileControlSheetProps = {
   permissionMode: TurnPermissionMode;
   serviceTier: ServiceTier | null;
   serviceTierBusy: boolean;
-  onServiceTierChange: (value: ServiceTier) => void;
+  onServiceTierChange: (value: ServiceTier | null) => void;
   onSectionChange: (section: ControlSheetSection) => void;
   onSnapChange: (snap: ControlSheetSnap) => void;
   onClose: () => void;
@@ -327,33 +327,37 @@ export default function MobileControlSheet({
               <div className="cdx-mobile-sheet-field" data-testid="mobile-service-tier-field">
                 <span>Speed</span>
                 <div className="cdx-mobile-segmented" role="radiogroup" aria-label="Service tier">
-                  {/* codex's two real values. "flex" is never offered — it is
-                      the OpenAI API tier, not a codex value, and 400s on this
-                      plan. See configRoutes allowlist. */}
-                  {(["standard", "fast"] as const).map((tier) => {
-                    const active = serviceTier === tier;
+                  {/* Standard is the cleared/absent key (null), NOT a literal
+                      "standard" — codex-cli 0.130.0 rejects that variant. Fast
+                      writes "fast". "flex" is never offered (OpenAI API tier,
+                      400s on this plan). See configRoutes allowlist. */}
+                  {(
+                    [
+                      { key: "standard", label: "Standard", value: null },
+                      { key: "fast", label: "Fast", value: "fast" },
+                    ] as const
+                  ).map((option) => {
+                    const active = serviceTier === option.value;
                     return (
                       <button
-                        key={tier}
+                        key={option.key}
                         type="button"
                         role="radio"
                         aria-checked={active}
-                        data-testid={`mobile-service-tier-${tier}`}
+                        data-testid={`mobile-service-tier-${option.key}`}
                         className={`cdx-mobile-segmented-item ${active ? "is-active" : ""}`}
                         disabled={serviceTierBusy || active}
-                        onClick={() => onServiceTierChange(tier)}
+                        onClick={() => onServiceTierChange(option.value)}
                       >
-                        {tier === "fast" ? "Fast" : "Standard"}
+                        {option.label}
                       </button>
                     );
                   })}
                 </div>
                 <p className="cdx-helper">
-                  {serviceTier === null
-                    ? "Reading…"
-                    : serviceTier === "fast"
-                      ? "1.5× speed when supported (ChatGPT sign-in). Uses credits faster."
-                      : "Default speed and usage."}
+                  {serviceTier === "fast"
+                    ? "1.5× speed when supported (ChatGPT sign-in). Uses credits faster."
+                    : "Default codex speed and usage."}
                 </p>
               </div>
               <label className="cdx-mobile-sheet-field" htmlFor="mobile-model">

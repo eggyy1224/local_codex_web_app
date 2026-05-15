@@ -13,7 +13,9 @@ type ConfigRoutesDeps = {
 };
 
 function pickServiceTier(value: unknown): ServiceTier | null {
-  return value === "fast" || value === "standard" ? value : null;
+  // Only "fast" is a positive tier. Anything else — key absent, "flex",
+  // or any other variant — reads as Standard/default (null).
+  return value === "fast" ? "fast" : null;
 }
 
 function pickString(value: unknown): string | null {
@@ -32,15 +34,16 @@ function snapshotFromAppServerConfig(raw: unknown): GatewayConfigSnapshot {
 // Allowlist of config keys the gateway will forward writes for. Tight by design:
 // the UI only needs to flip a small set of safe knobs. Extend deliberately.
 //
-// service_tier allows codex's two documented values: "fast" (1.5x, ChatGPT
-// sign-in only) and "standard" (default). It must NEVER accept "flex": that
-// is the OpenAI *API* service tier, not a codex value, and the API rejects
-// it on this plan (HTTP 400 "Unsupported service_tier: flex"). A write here
-// persists into the *global* ~/.codex/config.toml, so a bad value silently
-// bricks every codex turn machine-wide. The gateway must value-validate
-// writes, never pass the UI's choice through — the UI is not the boundary.
+// service_tier accepts exactly two writes: the literal "fast" (1.5x,
+// ChatGPT sign-in) and null (clear the key → Standard/default). The
+// installed codex-cli 0.130.0 app-server enum is fast|flex and rejects a
+// literal "standard" (unknown variant), so Standard MUST be expressed as
+// null, never the string. "flex" is never accepted: it is the OpenAI API
+// tier, 400s on this plan, and a write persists into the *global*
+// ~/.codex/config.toml, bricking every codex turn machine-wide. The
+// gateway value-validates writes — the UI is not the boundary.
 const ALLOWED_CONFIG_WRITE_KEYS: ReadonlyMap<string, (value: unknown) => boolean> = new Map([
-  ["service_tier", (value) => value === "fast" || value === "standard"],
+  ["service_tier", (value) => value === "fast" || value === null],
 ]);
 
 export function registerConfigRoutes(app: FastifyInstance, { appServer }: ConfigRoutesDeps): void {

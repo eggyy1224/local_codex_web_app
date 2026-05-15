@@ -1031,14 +1031,14 @@ describe("Thread page integration", () => {
   });
 
   it("mobile Speed control offers Standard + Fast and writes the picked service tier", async () => {
-    // codex has two service tiers: "standard" (default) and "fast" (1.5x,
-    // ChatGPT sign-in). Both must be selectable. "flex" is the OpenAI API
-    // tier, never a codex value — it must never appear or be writable.
+    // Two tiers: Fast = literal "fast" (1.5x, ChatGPT sign-in); Standard =
+    // null (the key cleared — codex rejects a literal "standard"). "flex" is
+    // the OpenAI API tier, never a codex value — never surfaced or writable.
     setMobileViewport(true);
     vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
 
-    let currentTier: "fast" | "standard" = "fast";
-    let writeBody: { keyPath: string; value: string } | null = null;
+    let currentTier: "fast" | null = "fast";
+    let writeBody: { keyPath: string; value: unknown } | null = null;
 
     server.use(
       http.get("http://127.0.0.1:8795/api/config", () =>
@@ -1049,13 +1049,10 @@ describe("Thread page integration", () => {
         }),
       ),
       http.post("http://127.0.0.1:8795/api/config/value", async ({ request }) => {
-        const body = (await request.json()) as { keyPath: string; value: string };
+        const body = (await request.json()) as { keyPath: string; value: unknown };
         writeBody = body;
-        if (
-          body.keyPath === "service_tier" &&
-          (body.value === "fast" || body.value === "standard")
-        ) {
-          currentTier = body.value;
+        if (body.keyPath === "service_tier" && (body.value === "fast" || body.value === null)) {
+          currentTier = body.value as "fast" | null;
         }
         return HttpResponse.json({ status: "ok", filePath: null, version: null });
       }),
@@ -1112,12 +1109,12 @@ describe("Thread page integration", () => {
     expect(screen.queryByTestId("mobile-service-tier-flex")).not.toBeInTheDocument();
     expect(screen.queryByTestId("mobile-chat-flex-pill")).not.toBeInTheDocument();
 
-    // Switching to Standard writes service_tier=standard and reflects it.
+    // Switching to Standard clears the key (writes null) and reflects it.
     fireEvent.click(standardBtn);
     await waitFor(() => {
       expect(writeBody).toEqual({
         keyPath: "service_tier",
-        value: "standard",
+        value: null,
       });
     });
     await waitFor(() => {

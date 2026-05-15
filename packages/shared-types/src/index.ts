@@ -329,10 +329,13 @@ export type InteractionRespondResponse = {
   ok: true;
 };
 
-// codex service tier (config.toml `service_tier`). codex only accepts
-// "fast" and "standard" (standard = default; 1.5x Fast needs ChatGPT
-// sign-in). NOT the OpenAI-API "flex" tier — that 400s on this plan.
-export type ServiceTier = "fast" | "standard";
+// codex service tier (config.toml `service_tier`). The installed
+// codex-cli 0.130.0 app-server enum is fast|flex and rejects the literal
+// "standard" (unknown variant). So the only value we ever write is "fast"
+// (1.5x, ChatGPT sign-in); Standard / default is represented by `null`
+// (the key cleared/omitted). "flex" is never written — it 400s on this
+// plan and machine-poisons the global config.
+export type ServiceTier = "fast";
 
 export type GatewayConfigSnapshot = {
   serviceTier: ServiceTier | null;
