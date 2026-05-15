@@ -1715,11 +1715,11 @@ export default function ThreadPage({ params }: Props) {
     setControlError(null);
 
     try {
+      // No JSON body: the gateway compact route only reads the :id param.
+      // Declaring Content-Type: application/json with an empty body makes
+      // Fastify's JSON parser reject it ("Body cannot be empty...").
       const res = await fetch(`${gatewayUrl}/api/threads/${requestThreadId}/compact`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
       });
 
       if (!res.ok) {
