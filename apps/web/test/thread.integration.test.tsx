@@ -435,6 +435,76 @@ describe("Thread page integration", () => {
     });
   });
 
+  it("sends explicit collaborationMode 'default' on a normal turn so it can exit sticky plan mode", async () => {
+    // Regression: collaboration mode is session-sticky on the app-server.
+    // Before the fix a default-mode turn POSTed NO collaborationMode field, so
+    // once a thread entered Plan there was no way for the web app to take it
+    // back out (one-way door). A default turn must explicitly carry "default".
+    vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+
+    let capturedBody: any = null;
+    server.use(
+      http.get("http://127.0.0.1:8795/api/threads/:id", ({ params }) =>
+        HttpResponse.json({
+          thread: {
+            id: String(params.id),
+            title: "Main Thread",
+            preview: "Preview",
+            status: "idle",
+            createdAt: null,
+            updatedAt: null,
+          },
+          turns: [],
+          nextCursor: null,
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/approvals/pending", () => HttpResponse.json({ data: [] })),
+      http.get("http://127.0.0.1:8795/api/threads", () =>
+        HttpResponse.json({
+          data: [
+            {
+              id: "thread-1",
+              projectKey: "/tmp/project",
+              title: "Main Thread",
+              preview: "Preview",
+              status: "idle",
+              lastActiveAt: "2026-01-01T00:00:00.000Z",
+              archived: false,
+              waitingApprovalCount: 0,
+              errorCount: 0,
+            },
+          ],
+          nextCursor: null,
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/timeline", () => HttpResponse.json({ data: [] })),
+      http.get("http://127.0.0.1:8795/api/threads/:id/context", () =>
+        HttpResponse.json({
+          threadId: "thread-1",
+          cwd: "/tmp/project",
+          resolvedCwd: "/tmp/project",
+          isFallback: false,
+          source: "projection",
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/models", () => HttpResponse.json({ data: [] })),
+      http.post("http://127.0.0.1:8795/api/threads/:id/turns", async ({ request }) => {
+        capturedBody = await request.json();
+        return HttpResponse.json({ turnId: "turn-default" });
+      }),
+    );
+
+    render(<ThreadPage params={Promise.resolve({ id: "thread-1" })} />);
+    const input = await screen.findByTestId("turn-input");
+
+    fireEvent.change(input, { target: { value: "implement the plan now" } });
+    fireEvent.click(screen.getByTestId("turn-submit"));
+
+    await waitFor(() => {
+      expect(capturedBody?.options?.collaborationMode).toBe("default");
+    });
+  });
+
   it("desktop chrome keeps diagnostics and advanced controls collapsed by default", async () => {
     vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
 

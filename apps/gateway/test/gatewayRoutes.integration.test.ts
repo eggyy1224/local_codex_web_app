@@ -756,6 +756,148 @@ describe("gateway integration routes", () => {
     }
   });
 
+  it("POST /api/threads/:id/turns forwards the default preset so a default turn exits sticky plan mode", async () => {
+    // Regression: collaboration mode is session-sticky on the app-server. A
+    // turn that omits collaborationMode inherits the session's last committed
+    // mode, so once a plan turn lands the session stays planned forever unless
+    // a later turn explicitly carries the resolved "default" preset. Prove the
+    // gateway resolves+forwards that preset for a "default" turn (not undefined).
+    const ctx = await createTestContext();
+    try {
+      ctx.stub.handlers.set("skills/list", () => ({ data: [] }));
+      ctx.stub.handlers.set("app/list", () => ({ data: [], nextCursor: null }));
+      ctx.stub.handlers.set("collaborationMode/list", () => ({
+        data: [
+          {
+            name: "plan",
+            mode: "plan",
+            model: "gpt-5.3-codex",
+            reasoning_effort: "high",
+            developer_instructions: null,
+          },
+          {
+            name: "default",
+            mode: "default",
+            model: "gpt-5.3-codex",
+            reasoning_effort: "medium",
+            developer_instructions: null,
+          },
+        ],
+      }));
+      const turnStartCalls: unknown[] = [];
+      ctx.stub.handlers.set("turn/start", (params) => {
+        turnStartCalls.push(params);
+        return { turn: { id: `turn-${turnStartCalls.length}` } };
+      });
+
+      const planRes = await ctx.app.inject({
+        method: "POST",
+        url: "/api/threads/thread-1/turns",
+        payload: {
+          input: [{ type: "text", text: "Create a plan" }],
+          options: { collaborationMode: "plan" },
+        },
+      });
+      expect(planRes.statusCode).toBe(200);
+
+      const defaultRes = await ctx.app.inject({
+        method: "POST",
+        url: "/api/threads/thread-1/turns",
+        payload: {
+          input: [{ type: "text", text: "Implement this plan" }],
+          options: { collaborationMode: "default" },
+        },
+      });
+      expect(defaultRes.statusCode).toBe(200);
+
+      expect(turnStartCalls[0]).toMatchObject({
+        collaborationMode: { mode: "plan" },
+      });
+      // The exit-plan turn MUST carry the resolved default preset; if it did
+      // not the app-server would keep the sticky Plan mode (the original bug).
+      expect(turnStartCalls[1]).toMatchObject({
+        collaborationMode: {
+          mode: "default",
+          settings: {
+            model: "gpt-5.3-codex",
+            reasoning_effort: "medium",
+            developer_instructions: null,
+          },
+        },
+      });
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  it("POST /api/threads/:id/turns rejects a non-enum collaborationMode by sending no preset", async () => {
+    // Gateway-write allowlist rule: collaborationMode forwarded to app-server
+    // is a closed enum {plan,default}. Garbage must not pass through (and must
+    // not 400 the turn either — it just resolves no preset).
+    const ctx = await createTestContext();
+    try {
+      ctx.stub.handlers.set("skills/list", () => ({ data: [] }));
+      ctx.stub.handlers.set("app/list", () => ({ data: [], nextCursor: null }));
+      let collaborationModeListCalled = false;
+      ctx.stub.handlers.set("collaborationMode/list", () => {
+        collaborationModeListCalled = true;
+        return { data: [] };
+      });
+      ctx.stub.handlers.set("turn/start", (params) => {
+        expect(params).not.toHaveProperty("collaborationMode");
+        return { turn: { id: "turn-sanitized" } };
+      });
+
+      const res = await ctx.app.inject({
+        method: "POST",
+        url: "/api/threads/thread-1/turns",
+        payload: {
+          input: [{ type: "text", text: "hi" }],
+          options: { collaborationMode: "evil-mode" },
+        },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({ turnId: "turn-sanitized" });
+      expect(collaborationModeListCalled).toBe(false);
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  it("POST /api/threads/:id/turns: a default turn falls back silently when collaborationMode/list is unsupported", async () => {
+    // On an app-server without collaborationMode/list there is no preset
+    // machinery and Plan was never entered, so an exit-plan / implement turn
+    // must NOT 400 — it falls back to no preset, with no plan_mode_fallback
+    // warning (that warning is only for the plan direction).
+    const ctx = await createTestContext();
+    try {
+      ctx.stub.handlers.set("skills/list", () => ({ data: [] }));
+      ctx.stub.handlers.set("app/list", () => ({ data: [], nextCursor: null }));
+      ctx.stub.handlers.set("collaborationMode/list", () => {
+        throw new Error("unsupported method: collaborationMode/list");
+      });
+      ctx.stub.handlers.set("turn/start", (params) => {
+        expect(params).not.toHaveProperty("collaborationMode");
+        return { turn: { id: "turn-default-fallback" } };
+      });
+
+      const res = await ctx.app.inject({
+        method: "POST",
+        url: "/api/threads/thread-1/turns",
+        payload: {
+          input: [{ type: "text", text: "Implement this plan" }],
+          options: { collaborationMode: "default" },
+        },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({ turnId: "turn-default-fallback" });
+    } finally {
+      await ctx.close();
+    }
+  });
+
   it("POST /api/threads/:id/review defaults to uncommittedChanges and supports custom instructions", async () => {
     const ctx = await createTestContext();
     try {

@@ -2120,7 +2120,7 @@ export default function ThreadPage({ params }: Props) {
           model: string;
           effort: string;
           permissionMode: TurnPermissionMode;
-          collaborationMode?: "plan";
+          collaborationMode?: "plan" | "default";
         } = {
           model,
           effort: thinkingEffort,
@@ -2142,9 +2142,14 @@ export default function ThreadPage({ params }: Props) {
         if (turnCwd) {
           options.cwd = turnCwd;
         }
-        if (modeForTurn === "plan") {
-          options.collaborationMode = "plan";
-        }
+        // Collaboration mode is SESSION-STICKY on the codex app-server: a turn
+        // that omits `collaborationMode` inherits whatever mode the session
+        // last committed (see apps/gateway protocol notes). Once a "plan" turn
+        // commits Plan into the session, only a turn that explicitly carries
+        // "default" can take it back out — omitting the field keeps Plan
+        // forever. So send the explicit resolved mode on EVERY turn (it is
+        // idempotent; the gateway caches collaborationMode/list support).
+        options.collaborationMode = modeForTurn === "plan" ? "plan" : "default";
 
         const input: UserInputItem[] = [
           ...readyAttachments.map((a) => ({ type: "localImage" as const, path: a.gatewayPath })),

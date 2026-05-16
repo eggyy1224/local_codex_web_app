@@ -132,6 +132,15 @@ function readCollaborationModeMasks(raw: unknown): RawCollaborationModeMask[] {
   return [];
 }
 
+// Collaboration mode forwarded to the app-server must be a closed enum, never
+// a pass-through of whatever the client sent. Anything outside {plan,default}
+// resolves no preset (returns undefined) so the turn does not change the
+// session's sticky collaboration mode. See the project gateway-write-allowlist
+// rule and the configRoutes service_tier allowlist for the same pattern.
+function sanitizeCollaborationMode(value: unknown): "plan" | "default" | undefined {
+  return value === "plan" || value === "default" ? value : undefined;
+}
+
 function makeReadableModeError(mode: "plan" | "default", message: string): Error {
   const error = new Error(`collaboration mode "${mode}" unavailable: ${message}`) as Error & {
     statusCode?: number;
@@ -240,8 +249,17 @@ export function registerTurnRoutes(
       return await resolveCollaborationMode(mode, fallbackModel);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      if (mode === "plan" && isCollaborationModeListUnsupported(message)) {
-        warnings.push("plan_mode_fallback");
+      if (isCollaborationModeListUnsupported(message)) {
+        // The app-server does not implement collaborationMode/list at all, so
+        // it has no preset machinery and never entered Plan in the first
+        // place. Forwarding no preset is correct for BOTH modes here: "plan"
+        // degrades to a normal turn, and "default" must also fall back
+        // silently — rethrowing would 400 the implement / exit-plan path on a
+        // non-preset app-server even though there is nothing to exit. Only
+        // "plan" surfaces the user-visible fallback warning.
+        if (mode === "plan") {
+          warnings.push("plan_mode_fallback");
+        }
         return undefined;
       }
       throw error;
@@ -423,7 +441,7 @@ export function registerTurnRoutes(
     );
     const warnings: string[] = [];
     const collaborationMode = await resolveCollaborationModeWithFallback(
-      body.options?.collaborationMode,
+      sanitizeCollaborationMode(body.options?.collaborationMode),
       body.options?.model,
       warnings,
     );
@@ -718,7 +736,7 @@ export function registerTurnRoutes(
       }
 
       const collaborationMode = await resolveCollaborationModeWithFallback(
-        previous.options?.collaborationMode,
+        sanitizeCollaborationMode(previous.options?.collaborationMode),
         previous.options?.model,
         [],
       );
