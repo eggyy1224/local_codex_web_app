@@ -77,6 +77,7 @@ import {
 } from "./InteractionQuestionForm";
 import { useThreadViewportShell } from "./use-thread-viewport-shell";
 import { useThreadSidebarFilterController } from "./use-thread-sidebar-filter-controller";
+import { useThreadSwitcherCollapseController } from "./use-thread-switcher-collapse-controller";
 import { fetchThreadSnapshot, type ThreadSnapshot } from "./thread-page-api";
 import {
   approvalFromEvent,
@@ -210,7 +211,6 @@ export default function ThreadPageClient({ params }: Props) {
   const [threadListLoading, setThreadListLoading] = useState(true);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [isThreadSwitcherOpen, setIsThreadSwitcherOpen] = useState(false);
-  const [switcherCollapsedGroups, setSwitcherCollapsedGroups] = useState<Set<string>>(() => new Set());
   const [isControlSheetOpen, setIsControlSheetOpen] = useState(false);
   const [controlSheetSection, setControlSheetSection] = useState<ControlSheetSection>("advanced");
   const [controlSheetSnap, setControlSheetSnap] = useState<ControlSheetSnap>("half");
@@ -978,6 +978,8 @@ export default function ThreadPageClient({ params }: Props) {
   } = useThreadSidebarFilterController({
     switcherGroups: mobileThreadSwitcherGroups,
   });
+  const { switcherCollapsedGroups, handleToggleSwitcherGroup } =
+    useThreadSwitcherCollapseController();
   const activeProjectKey = useMemo(() => {
     if (activeThread?.projectKey) {
       return activeThread.projectKey;
@@ -1422,21 +1424,6 @@ export default function ThreadPageClient({ params }: Props) {
     },
     [desktopQuestionDrafts],
   );
-
-  // Shared by the mobile switcher overlay and the desktop sidebar so a project
-  // folder collapsed on one viewport stays collapsed on the other (collapse is
-  // never reset, unlike search/filter which are intentionally per-viewport).
-  const handleToggleSwitcherGroup = useCallback((groupKey: string) => {
-    setSwitcherCollapsedGroups((prev) => {
-      const next = new Set(prev);
-      if (next.has(groupKey)) {
-        next.delete(groupKey);
-      } else {
-        next.add(groupKey);
-      }
-      return next;
-    });
-  }, []);
 
   // Desktop has no persistent context indicator (mobile shows a ring in the
   // composer); surface the same numbers in the desktop status row.
