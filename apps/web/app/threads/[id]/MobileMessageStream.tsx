@@ -331,7 +331,11 @@ export default function MobileMessageStream({
                   ? "Sending…"
                   : turn.isStreaming
                     ? "Codex is responding..."
-                    : "Waiting for response..."}
+                    : turn.status === "interrupted"
+                      ? "Stopped"
+                      : turn.status === "failed"
+                        ? "Failed"
+                        : "No response."}
               </p>
             ) : null}
 

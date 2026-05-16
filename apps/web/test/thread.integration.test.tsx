@@ -1310,6 +1310,118 @@ describe("Thread page integration", () => {
     });
   });
 
+  it("shows an interrupted terminal turn from another client instead of waiting forever", async () => {
+    vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+    MockEventSource.instances.length = 0;
+
+    server.use(
+      http.get("http://127.0.0.1:8795/api/threads/:id", ({ params }) =>
+        HttpResponse.json({
+          thread: {
+            id: String(params.id),
+            title: "Interrupted Thread",
+            preview: "",
+            status: "active",
+            createdAt: null,
+            updatedAt: null,
+          },
+          turns: [],
+          nextCursor: null,
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/approvals/pending", () =>
+        HttpResponse.json({ data: [] }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads", () =>
+        HttpResponse.json({
+          data: [
+            {
+              id: "thread-1",
+              projectKey: "/repos/alpha",
+              title: "Interrupted Thread",
+              preview: "",
+              status: "active",
+              lastActiveAt: "2026-01-03T00:00:00.000Z",
+              archived: false,
+              waitingApprovalCount: 0,
+              errorCount: 0,
+            },
+          ],
+          nextCursor: null,
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/timeline", () =>
+        HttpResponse.json({
+          lastSeq: 10,
+          data: [
+            {
+              id: "tl-user",
+              ts: "2026-01-03T00:00:00.000Z",
+              turnId: "turn-running",
+              type: "userMessage",
+              title: "User",
+              text: "please do a long thing",
+              rawType: "user_message",
+              toolName: null,
+              callId: null,
+            },
+            {
+              id: "tl-start",
+              ts: "2026-01-03T00:00:01.000Z",
+              turnId: "turn-running",
+              type: "status",
+              title: "Turn started",
+              text: null,
+              rawType: "turn/started",
+              toolName: null,
+              callId: null,
+            },
+          ],
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/context", () =>
+        HttpResponse.json({
+          threadId: "thread-1",
+          cwd: "/repos/alpha",
+          resolvedCwd: "/repos/alpha",
+          isFallback: false,
+          source: "projection",
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/models", () => HttpResponse.json({ data: [] })),
+    );
+
+    render(<ThreadPage params={Promise.resolve({ id: "thread-1" })} />);
+
+    await screen.findByText("Codex is responding...");
+    await waitFor(() => {
+      expect(MockEventSource.instances.length).toBeGreaterThan(0);
+    });
+    const es = MockEventSource.instances.at(-1);
+    if (!es) {
+      throw new Error("missing EventSource instance");
+    }
+
+    es.emit("gateway", {
+      seq: 11,
+      serverTs: "2026-01-03T00:00:05.000Z",
+      threadId: "thread-1",
+      turnId: "turn-running",
+      kind: "turn",
+      name: "turn/completed",
+      payload: {
+        threadId: "thread-1",
+        turnId: "turn-running",
+        turn: { id: "turn-running", status: "interrupted" },
+      },
+    });
+
+    await waitFor(() => {
+      expect(screen.getAllByText("Interrupted").length).toBeGreaterThan(0);
+      expect(screen.queryByText("Waiting for response...")).not.toBeInTheDocument();
+    });
+  });
+
   it("mobile thread page opens a canvas iframe from the canvas query param", async () => {
     setMobileViewport(true);
     searchParamsValue = new URLSearchParams({

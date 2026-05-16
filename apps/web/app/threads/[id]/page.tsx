@@ -3332,6 +3332,13 @@ export default function ThreadPage({ params }: Props) {
                   turn.isStreaming &&
                   !hasThinkingSegment &&
                   Boolean(turn.thinkingText);
+                const emptyAssistantStateText = turn.isStreaming
+                  ? "Codex is responding..."
+                  : turn.status === "interrupted"
+                    ? "Interrupted"
+                    : turn.status === "failed"
+                      ? "Failed"
+                      : "No response.";
                 return (
                   <article
                     className={`cdx-turn-card cdx-turn-card--conversation ${
@@ -3635,7 +3642,7 @@ export default function ThreadPage({ params }: Props) {
                       </section>
                     ) : !hasAssistantSegment ? (
                       <p className={`cdx-helper ${turn.isStreaming ? "cdx-helper--streaming" : ""}`}>
-                        {turn.isStreaming ? "Codex is responding..." : "Waiting for response..."}
+                        {emptyAssistantStateText}
                       </p>
                     ) : null}
                     {turnProgressByTurnId[turn.turnId] ? (
