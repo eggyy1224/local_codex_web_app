@@ -1344,6 +1344,23 @@ export default function ThreadPage({ params }: Props) {
     () => modelOptions.find((option) => option.value === model)?.label ?? model,
     [model, modelOptions],
   );
+  const permissionModeLabel =
+    permissionMode === "local"
+      ? "Local"
+      : permissionMode === "full-access"
+        ? "Full access"
+        : "Auto review";
+  const shortCwdLabel = useMemo(() => {
+    const resolved = threadContext?.resolvedCwd;
+    if (!resolved || threadContext?.isFallback) {
+      return "cwd unknown";
+    }
+    const parts = resolved.split("/").filter(Boolean);
+    if (parts.length <= 2) {
+      return resolved;
+    }
+    return `.../${parts.slice(-2).join("/")}`;
+  }, [threadContext]);
 
   const syncTimelineStickyState = useCallback(() => {
     const timeline = timelineRef.current;
@@ -3147,8 +3164,8 @@ export default function ThreadPage({ params }: Props) {
             <div className="cdx-hero-row">
               <div className="cdx-hero-identity">
                 <h1 data-testid="thread-title">{activeThreadTitle}</h1>
-                <p className="cdx-helper cdx-thread-seq">
-                  thread {threadId} · seq <span data-testid="event-cursor">{lastSeq}</span>
+                <p className="cdx-thread-context" title={threadContext?.resolvedCwd ?? undefined}>
+                  {shortCwdLabel}
                 </p>
               </div>
               <div className="cdx-hero-row-end">
@@ -3158,57 +3175,63 @@ export default function ThreadPage({ params }: Props) {
                     {thinkingBannerText}
                   </span>
                 ) : null}
+                <span className={`cdx-status ${statusClass(connectionState === "connected" ? "completed" : "unknown")}`}>
+                  {connectionText}
+                </span>
+                <span
+                  data-testid="desktop-context-usage"
+                  title={desktopContextUsage.label}
+                  className={`cdx-status ${
+                    desktopContextUsage.level === "high"
+                      ? "is-offline"
+                      : desktopContextUsage.level === "medium"
+                        ? "is-pending"
+                        : "is-online"
+                  }`}
+                >
+                  {desktopContextUsage.label}
+                </span>
                 <button type="button" className="cdx-project-chip">
                   {activeProjectLabel}
                 </button>
               </div>
             </div>
-            <div className="cdx-status-row">
-              <span className={`cdx-status ${statusClass(connectionState === "connected" ? "completed" : "unknown")}`}>
-                {connectionText}
-              </span>
-              <span
-                data-testid="desktop-context-usage"
-                title={desktopContextUsage.label}
-                className={`cdx-status ${
-                  desktopContextUsage.level === "high"
-                    ? "is-offline"
-                    : desktopContextUsage.level === "medium"
-                      ? "is-pending"
-                      : "is-online"
-                }`}
-              >
-                {desktopContextUsage.label}
-              </span>
-              <span
-                data-testid="collaboration-mode"
-                className={`cdx-status ${
-                  collaborationMode === "plan" ? "is-pending" : "is-online"
-                }`}
-              >
-                mode: {collaborationMode}
-              </span>
-              <span className="cdx-status is-pending">Pending approval: {pendingApprovalList.length}</span>
-              <span className="cdx-status is-pending">
-                Pending questions: {pendingInteractionList.length}
-              </span>
-              <span
-                className={`cdx-status ${
-                  threadContext?.isFallback ? "is-offline" : "is-online"
-                }`}
-              >
-                {threadContext?.isFallback
-                  ? "cwd unknown"
-                  : `cwd: ${threadContext?.resolvedCwd ?? "-"}`}
-              </span>
-              <Link href="/">
-                <button type="button" className="cdx-toolbar-btn">
-                  Home
-                </button>
-              </Link>
-            </div>
+            <details className="cdx-thread-details">
+              <summary>Details</summary>
+              <div className="cdx-status-row cdx-status-row--details">
+                <span className="cdx-status cdx-status--quiet">
+                  thread {threadId} · seq <span data-testid="event-cursor">{lastSeq}</span>
+                </span>
+                <span
+                  data-testid="collaboration-mode"
+                  className={`cdx-status ${
+                    collaborationMode === "plan" ? "is-pending" : "is-online"
+                  }`}
+                >
+                  mode: {collaborationMode}
+                </span>
+                <span className="cdx-status is-pending">Pending approval: {pendingApprovalList.length}</span>
+                <span className="cdx-status is-pending">
+                  Pending questions: {pendingInteractionList.length}
+                </span>
+                <span
+                  className={`cdx-status ${
+                    threadContext?.isFallback ? "is-offline" : "is-online"
+                  }`}
+                >
+                  {threadContext?.isFallback
+                    ? "cwd unknown"
+                    : `cwd: ${threadContext?.resolvedCwd ?? "-"}`}
+                </span>
+                <Link href="/">
+                  <button type="button" className="cdx-toolbar-btn">
+                    Home
+                  </button>
+                </Link>
+              </div>
+            </details>
             {isThinkingActive ? (
-              <p className="cdx-helper cdx-helper--thinking">
+              <p className="cdx-helper cdx-helper--thinking cdx-live-activity">
                 Live activity: {streamingTurnCount > 0 ? `${streamingTurnCount} turn(s) streaming` : "awaiting first tokens"}
               </p>
             ) : null}
@@ -3781,7 +3804,7 @@ export default function ThreadPage({ params }: Props) {
             <div className="cdx-composer-tools">
               <button
                 type="button"
-                className="cdx-toolbar-btn"
+                className="cdx-toolbar-btn cdx-composer-attach-btn"
                 data-testid="desktop-composer-add-image"
                 onClick={() => desktopFileInputRef.current?.click()}
                 disabled={runningTurnId !== null}
@@ -3836,119 +3859,139 @@ export default function ThreadPage({ params }: Props) {
                 })}
               </div>
             ) : null}
-            <p className="cdx-helper">
-              Mode: {collaborationMode} · Pending questions: {pendingInteractionList.length} · Shift+Tab toggle · /plan /review /status
-            </p>
             <div className={`cdx-composer-row ${isMobileViewport ? "cdx-composer-row--mobile" : ""}`}>
               {isMobileViewport ? null : (
-                <div className="cdx-inline-actions">
-                  <button
-                    type="button"
-                    data-testid="control-stop"
-                    className="cdx-toolbar-btn cdx-toolbar-btn--danger"
-                    disabled={controlBusy !== null}
-                    onClick={() => void sendControl("stop")}
-                  >
-                    {controlBusy === "stop" ? "Stopping..." : "Stop"}
-                  </button>
-                  <button
-                    type="button"
-                    data-testid="control-retry"
-                    className="cdx-toolbar-btn cdx-toolbar-btn--positive"
-                    disabled={controlBusy !== null}
-                    onClick={() => void sendControl("retry")}
-                  >
-                    {controlBusy === "retry" ? "Retrying..." : "Retry"}
-                  </button>
-                  <button
-                    type="button"
-                    data-testid="control-cancel"
-                    className="cdx-toolbar-btn"
-                    disabled={controlBusy !== null}
-                    onClick={() => void sendControl("cancel")}
-                  >
-                    {controlBusy === "cancel" ? "Cancelling..." : "Cancel"}
-                  </button>
-                  <button
-                    type="button"
-                    data-testid="control-compact"
-                    className="cdx-toolbar-btn"
-                    disabled={compactBusy || runningTurnId !== null}
-                    title={
-                      runningTurnId !== null
-                        ? "對話進行中,無法 compact"
-                        : "Compact conversation history"
-                    }
-                    aria-label={
-                      runningTurnId !== null
-                        ? "對話進行中,無法 compact"
-                        : "Compact conversation history"
-                    }
-                    onClick={() => void compactThread()}
-                  >
-                    {compactBusy ? "Compacting..." : "Compact"}
-                  </button>
+                <div className="cdx-composer-left">
+                  <details className="cdx-composer-more">
+                    <summary>Actions</summary>
+                    <div className="cdx-inline-actions cdx-inline-actions--panel">
+                      <button
+                        type="button"
+                        data-testid="control-stop"
+                        className="cdx-toolbar-btn cdx-toolbar-btn--danger"
+                        disabled={controlBusy !== null}
+                        onClick={() => void sendControl("stop")}
+                      >
+                        {controlBusy === "stop" ? "Stopping..." : "Stop"}
+                      </button>
+                      <button
+                        type="button"
+                        data-testid="control-retry"
+                        className="cdx-toolbar-btn cdx-toolbar-btn--positive"
+                        disabled={controlBusy !== null}
+                        onClick={() => void sendControl("retry")}
+                      >
+                        {controlBusy === "retry" ? "Retrying..." : "Retry"}
+                      </button>
+                      <button
+                        type="button"
+                        data-testid="control-cancel"
+                        className="cdx-toolbar-btn"
+                        disabled={controlBusy !== null}
+                        onClick={() => void sendControl("cancel")}
+                      >
+                        {controlBusy === "cancel" ? "Cancelling..." : "Cancel"}
+                      </button>
+                      <button
+                        type="button"
+                        data-testid="control-compact"
+                        className="cdx-toolbar-btn"
+                        disabled={compactBusy || runningTurnId !== null}
+                        title={
+                          runningTurnId !== null
+                            ? "對話進行中,無法 compact"
+                            : "Compact conversation history"
+                        }
+                        aria-label={
+                          runningTurnId !== null
+                            ? "對話進行中,無法 compact"
+                            : "Compact conversation history"
+                        }
+                        onClick={() => void compactThread()}
+                      >
+                        {compactBusy ? "Compacting..." : "Compact"}
+                      </button>
+                    </div>
+                  </details>
+                  <details className="cdx-composer-more cdx-composer-hints">
+                    <summary>Shortcuts</summary>
+                    <p className="cdx-helper">
+                      Mode: {collaborationMode} · Pending questions: {pendingInteractionList.length} · Shift+Tab toggle · /plan /review /status
+                    </p>
+                  </details>
                 </div>
               )}
+              {isMobileViewport ? (
+                <p className="cdx-helper">
+                  Mode: {collaborationMode} · Pending questions: {pendingInteractionList.length} · Shift+Tab toggle · /plan /review /status
+                </p>
+              ) : null}
               <div className={`cdx-composer-right ${isMobileViewport ? "cdx-composer-right--mobile" : ""}`}>
-                <label
-                  className={`cdx-composer-select ${isMobileViewport ? "cdx-composer-select--mobile" : ""}`}
-                  htmlFor="model"
-                >
-                  <span>Model</span>
-                  <select
-                    id="model"
-                    value={model}
-                    onChange={(event) => {
-                      setModel(event.target.value);
-                    }}
-                  >
-                    {modelOptions.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label
-                  className={`cdx-composer-select ${isMobileViewport ? "cdx-composer-select--mobile" : ""}`}
-                  htmlFor="thinking-effort"
-                >
-                  <span>Thinking</span>
-                  <select
-                    id="thinking-effort"
-                    value={thinkingEffort}
-                    onChange={(event) => {
-                      setThinkingEffort(event.target.value);
-                    }}
-                  >
-                    {thinkingEffortOptions.map((effort) => (
-                      <option key={effort} value={effort}>
-                        {formatEffortLabel(effort)}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label
-                  className={`cdx-composer-select ${isMobileViewport ? "cdx-composer-select--mobile" : ""}`}
-                  htmlFor="permission-mode"
-                >
-                  <span>Permission</span>
-                  <select
-                    id="permission-mode"
-                    value={permissionMode}
-                    onChange={(event) => {
-                      const next = event.target.value;
-                      if (next === "local" || next === "auto" || next === "full-access") {
-                        setPermissionMode(next);
-                      }
-                    }}
-                  >
-                    <option value="local">Local (on-request)</option>
-                    <option value="auto">Auto review</option>
-                    <option value="full-access">Full access (never)</option>
-                  </select>
-                </label>
+                <details className="cdx-composer-more cdx-composer-settings">
+                  <summary>
+                    {selectedModelLabel} · {formatEffortLabel(thinkingEffort)} · {permissionModeLabel}
+                  </summary>
+                  <div className="cdx-composer-settings-panel">
+                    <label
+                      className={`cdx-composer-select ${isMobileViewport ? "cdx-composer-select--mobile" : ""}`}
+                      htmlFor="model"
+                    >
+                      <span>Model</span>
+                      <select
+                        id="model"
+                        value={model}
+                        onChange={(event) => {
+                          setModel(event.target.value);
+                        }}
+                      >
+                        {modelOptions.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label
+                      className={`cdx-composer-select ${isMobileViewport ? "cdx-composer-select--mobile" : ""}`}
+                      htmlFor="thinking-effort"
+                    >
+                      <span>Thinking</span>
+                      <select
+                        id="thinking-effort"
+                        value={thinkingEffort}
+                        onChange={(event) => {
+                          setThinkingEffort(event.target.value);
+                        }}
+                      >
+                        {thinkingEffortOptions.map((effort) => (
+                          <option key={effort} value={effort}>
+                            {formatEffortLabel(effort)}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label
+                      className={`cdx-composer-select ${isMobileViewport ? "cdx-composer-select--mobile" : ""}`}
+                      htmlFor="permission-mode"
+                    >
+                      <span>Permission</span>
+                      <select
+                        id="permission-mode"
+                        value={permissionMode}
+                        onChange={(event) => {
+                          const next = event.target.value;
+                          if (next === "local" || next === "auto" || next === "full-access") {
+                            setPermissionMode(next);
+                          }
+                        }}
+                      >
+                        <option value="local">Local (on-request)</option>
+                        <option value="auto">Auto review</option>
+                        <option value="full-access">Full access (never)</option>
+                      </select>
+                    </label>
+                  </div>
+                </details>
                 <button
                   type="button"
                   data-testid="turn-submit"

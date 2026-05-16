@@ -516,10 +516,10 @@ textarea {
   overflow: auto;
   overflow-x: hidden;
   width: auto;
-  padding: 16px 28px 10px;
+  padding: 12px 28px 10px;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
-  gap: 14px;
+  gap: 10px;
 }
 
 .cdx-main--compact {
@@ -534,7 +534,7 @@ textarea {
   background: transparent;
   padding: 0;
   display: grid;
-  gap: 10px;
+  gap: 7px;
 }
 
 .cdx-hero-row {
@@ -552,24 +552,24 @@ textarea {
 
 .cdx-hero h1 {
   margin: 0;
-  font-size: 28px;
-  line-height: 33.6px;
-  font-weight: 400;
+  font-size: 22px;
+  line-height: 27px;
+  font-weight: 540;
   letter-spacing: normal;
 }
 
 .cdx-project-chip {
   border: 1px solid var(--border-soft);
   border-radius: 9999px;
-  padding: 4px 12px;
-  background: rgba(255, 255, 255, 0.06);
-  font-size: 12px;
+  padding: 3px 10px;
+  background: rgba(255, 255, 255, 0.045);
+  font-size: 11px;
   color: var(--text);
 }
 
 .cdx-status-row {
   display: flex;
-  gap: 8px;
+  gap: 6px;
   flex-wrap: wrap;
 }
 
@@ -1036,9 +1036,9 @@ textarea {
   display: inline-flex;
   align-items: center;
   border-radius: 999px;
-  padding: 3px 10px;
+  padding: 2px 8px;
   border: 1px solid var(--border-soft);
-  font-size: 12px;
+  font-size: 11px;
 }
 
 .cdx-hero--home {
@@ -1072,9 +1072,67 @@ textarea {
 
 .cdx-hero--thread {
   border: 1px solid var(--border-soft);
-  border-radius: 18px;
-  background: rgba(27, 27, 27, 0.4);
-  padding: 12px;
+  border-radius: 12px;
+  background: rgba(24, 24, 24, 0.36);
+  padding: 10px 12px;
+}
+
+.cdx-hero-identity {
+  min-width: 0;
+  display: grid;
+  gap: 1px;
+}
+
+.cdx-thread-context {
+  margin: 0;
+  color: rgba(255, 255, 255, 0.46);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 16px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cdx-thread-details,
+.cdx-composer-more {
+  position: relative;
+  min-width: 0;
+}
+
+.cdx-thread-details > summary,
+.cdx-composer-more > summary {
+  list-style: none;
+  width: fit-content;
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.035);
+  color: rgba(255, 255, 255, 0.58);
+  padding: 2px 8px;
+  font-size: 11px;
+  line-height: 16px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.cdx-thread-details > summary::-webkit-details-marker,
+.cdx-composer-more > summary::-webkit-details-marker {
+  display: none;
+}
+
+.cdx-thread-details > summary:hover,
+.cdx-composer-more > summary:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.cdx-status-row--details {
+  padding-top: 6px;
+}
+
+.cdx-status--quiet {
+  color: rgba(255, 255, 255, 0.54);
+  font-family: var(--font-mono);
 }
 
 .cdx-status {
@@ -1592,21 +1650,21 @@ textarea {
   width: min(860px, 100%);
   justify-self: center;
   border: 1px solid var(--border-soft);
-  border-radius: 18px;
-  background: rgba(31, 31, 31, 0.66);
-  padding: 8px;
+  border-radius: 12px;
+  background: rgba(27, 27, 27, 0.62);
+  padding: 9px;
   display: grid;
-  gap: 8px;
+  gap: 7px;
 }
 
 .cdx-composer textarea {
   width: 100%;
-  min-height: 76px;
-  border: 1px solid var(--border-soft);
-  border-radius: 12px;
-  background: rgba(23, 23, 23, 0.56);
+  min-height: 82px;
+  border: 0;
+  border-radius: 8px;
+  background: rgba(13, 13, 13, 0.34);
   color: var(--text);
-  padding: 10px 12px;
+  padding: 12px 13px;
   resize: vertical;
 }
 
@@ -1673,12 +1731,20 @@ textarea {
   flex-wrap: wrap;
 }
 
+.cdx-composer-left {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
 .cdx-composer-right {
   display: flex;
   align-items: center;
   gap: 8px;
   min-width: 0;
   flex-wrap: wrap;
+  margin-left: auto;
 }
 
 .cdx-composer-select {
@@ -1692,9 +1758,9 @@ textarea {
 
 .cdx-composer-select select {
   height: 30px;
-  min-width: 0;
+  min-width: 132px;
   max-width: 100%;
-  border-radius: 999px;
+  border-radius: var(--radius-sm);
   border: 1px solid var(--border-soft);
   background: rgba(29, 29, 29, 0.92);
   color: var(--text);
@@ -1707,19 +1773,55 @@ textarea {
 }
 
 .cdx-send-btn {
-  height: 28px;
-  border-radius: var(--radius-sm);
+  height: 34px;
+  border-radius: 999px;
   border: 1px solid rgba(255, 255, 255, 0.18);
-  background: rgba(255, 255, 255, 0.13);
-  color: rgba(235, 247, 255, 0.95);
-  padding: 0 12px;
+  background: rgba(255, 255, 255, 0.9);
+  color: rgba(0, 0, 0, 0.88);
+  padding: 0 16px;
   font-size: 12px;
-  font-weight: 500;
+  font-weight: 650;
   letter-spacing: 0.01em;
 }
 
 .cdx-send-btn:disabled {
   opacity: 0.5;
+}
+
+.cdx-composer-attach-btn {
+  padding-left: 2px;
+  color: rgba(255, 255, 255, 0.56);
+}
+
+.cdx-composer .cdx-helper {
+  margin: -1px 2px 0;
+  color: rgba(255, 255, 255, 0.34);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.cdx-inline-actions--panel,
+.cdx-composer-settings-panel {
+  margin-top: 6px;
+  padding: 8px;
+  border: 1px solid var(--border-soft);
+  border-radius: 10px;
+  background: rgba(11, 11, 11, 0.32);
+}
+
+.cdx-composer-settings > summary {
+  max-width: min(440px, 52vw);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.cdx-composer-settings-panel {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
 }
 
 .cdx-terminal-dock {
@@ -3875,10 +3977,10 @@ textarea {
 
   .cdx-main {
     border: 1px solid var(--border-soft);
-    border-radius: 20px;
+    border-radius: 16px;
     background: rgba(12, 12, 12, 0.76);
-    padding: 16px 18px 12px;
-    gap: 12px;
+    padding: 14px 18px 12px;
+    gap: 10px;
   }
 
   .cdx-hero {
@@ -3886,11 +3988,11 @@ textarea {
   }
 
   .cdx-hero--thread {
-    border-radius: 16px;
+    border-radius: 12px;
     border: 1px solid var(--border-soft);
-    background: rgba(20, 20, 20, 0.82);
-    padding: 12px 13px;
-    gap: 10px;
+    background: rgba(18, 18, 18, 0.7);
+    padding: 10px 12px;
+    gap: 7px;
   }
 
   .cdx-hero-row {
@@ -3902,15 +4004,15 @@ textarea {
   .cdx-hero-identity {
     min-width: 0;
     display: grid;
-    gap: 6px;
+    gap: 1px;
   }
 
   .cdx-hero h1 {
     margin: 0;
-    font-size: clamp(30px, 2.2vw, 42px);
-    line-height: 1.08;
-    font-weight: 650;
-    letter-spacing: -0.02em;
+    font-size: 22px;
+    line-height: 27px;
+    font-weight: 560;
+    letter-spacing: 0;
   }
 
   .cdx-thread-seq {
@@ -3959,7 +4061,7 @@ textarea {
 
   .cdx-status {
     border-radius: 999px;
-    padding: 4px 10px;
+    padding: 2px 8px;
     font-size: 11px;
     letter-spacing: 0;
   }
@@ -4133,14 +4235,14 @@ textarea {
     bottom: 0;
     z-index: 4;
     width: min(980px, 100%);
-    border-radius: 24px;
+    border-radius: 12px;
     border-color: var(--border-soft);
-    background: rgba(27, 27, 27, 0.95);
+    background: rgba(22, 22, 22, 0.94);
     -webkit-backdrop-filter: blur(12px);
     backdrop-filter: blur(12px);
-    box-shadow: 0 -8px 20px rgba(0, 0, 0, 0.26);
-    padding: 10px;
-    gap: 8px;
+    box-shadow: 0 -4px 14px rgba(0, 0, 0, 0.22);
+    padding: 9px;
+    gap: 7px;
   }
 
   .cdx-app--thinking .cdx-composer {
@@ -4151,10 +4253,10 @@ textarea {
   }
 
   .cdx-composer textarea {
-    min-height: 72px;
+    min-height: 82px;
     border: 0;
-    border-radius: 12px;
-    background: transparent;
+    border-radius: 8px;
+    background: rgba(0, 0, 0, 0.18);
     line-height: 1.45;
   }
 

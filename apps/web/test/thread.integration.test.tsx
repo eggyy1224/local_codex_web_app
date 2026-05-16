@@ -435,6 +435,61 @@ describe("Thread page integration", () => {
     });
   });
 
+  it("desktop chrome keeps diagnostics and advanced controls collapsed by default", async () => {
+    vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+
+    server.use(
+      http.get("http://127.0.0.1:8795/api/threads/:id", ({ params }) =>
+        HttpResponse.json({
+          thread: {
+            id: String(params.id),
+            title: "Quiet Desktop",
+            preview: "Preview",
+            status: "idle",
+            createdAt: null,
+            updatedAt: null,
+          },
+          turns: [],
+          nextCursor: null,
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/approvals/pending", () =>
+        HttpResponse.json({ data: [] }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads", () => HttpResponse.json({ data: [], nextCursor: null })),
+      http.get("http://127.0.0.1:8795/api/threads/:id/timeline", () => HttpResponse.json({ data: [] })),
+      http.get("http://127.0.0.1:8795/api/threads/:id/context", () =>
+        HttpResponse.json({
+          threadId: "thread-1",
+          cwd: "/Users/liweichen/Documents/2026macstudio/local_codex_web_app",
+          resolvedCwd: "/Users/liweichen/Documents/2026macstudio/local_codex_web_app",
+          isFallback: false,
+          source: "projection",
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/models", () => HttpResponse.json({ data: [] })),
+    );
+
+    render(<ThreadPage params={Promise.resolve({ id: "thread-1" })} />);
+
+    await screen.findByTestId("turn-input");
+    await screen.findByText("Quiet Desktop");
+    expect(screen.getByTestId("thread-title")).toHaveTextContent("Quiet Desktop");
+    expect(screen.getByText(".../2026macstudio/local_codex_web_app")).toBeInTheDocument();
+    expect(screen.getByText("Details")).toBeInTheDocument();
+    expect(screen.getByText("Actions")).toBeInTheDocument();
+    expect(screen.getByText("Shortcuts")).toBeInTheDocument();
+    expect(screen.getByText(/GPT-5\.5 · High · Auto review/)).toBeInTheDocument();
+
+    const diagnosticsDetails = screen.getByText(/thread thread-1 · seq/).closest("details");
+    const controlsDetails = screen.getByTestId("control-stop").closest("details");
+    const shortcutsDetails = screen.getByText(/^Mode: default/).closest("details");
+
+    expect(diagnosticsDetails).not.toHaveAttribute("open");
+    expect(controlsDetails).not.toHaveAttribute("open");
+    expect(shortcutsDetails).not.toHaveAttribute("open");
+  });
+
   it("mobile thread page uses chat-first shell with overlay switcher and control sheet", async () => {
     setMobileViewport(true);
     vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
