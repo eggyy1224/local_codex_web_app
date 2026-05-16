@@ -1,4 +1,11 @@
-import { existsSync, mkdtempSync, rmSync, statSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -8,6 +15,7 @@ import type { FuzzyFileSearchResponse, UploadResponse } from "@lcwa/shared-types
 import type { GatewayAppServerPort } from "../src/appServerPort.js";
 import { createGatewayDb } from "../src/db.js";
 import { createGatewayApp, type GatewayAppConfig, type GatewayAppDeps } from "../src/gatewayApp.js";
+import { ThreadContextResolver } from "../src/threadContext.js";
 
 class StubAppServer extends EventEmitter implements GatewayAppServerPort {
   isConnected = true;
@@ -259,6 +267,7 @@ describe("gateway integration routes", () => {
           archived: 0,
           updated_at: "2026-01-01T00:00:00.000Z",
           last_error: null,
+          originator: null,
         },
       ]);
 
@@ -322,6 +331,7 @@ describe("gateway integration routes", () => {
           archived: 0,
           updated_at: "2026-01-01T00:00:00.000Z",
           last_error: null,
+          originator: null,
         },
       ]);
 
@@ -388,6 +398,7 @@ describe("gateway integration routes", () => {
           archived: 0,
           updated_at: "2026-01-01T00:00:00.000Z",
           last_error: null,
+          originator: null,
         },
       ]);
       ctx.stub.handlers.set("thread/read", () => {
@@ -953,6 +964,661 @@ describe("gateway integration routes", () => {
       expect(byId).toEqual({ "thread-a": 2, "thread-b": 1 });
     } finally {
       await ctx.close();
+    }
+  });
+
+  it("GET /api/threads defaults to gateway-owned threads and ?scope=all is the escape hatch", async () => {
+    const sessionsRoot = mkdtempSync(path.join(os.tmpdir(), "lcwa-scope-sessions-"));
+    const sessionDir = path.join(sessionsRoot, "2026", "05", "16");
+    mkdirSync(sessionDir, { recursive: true });
+
+    const gwId = "019e3008-d992-79e3-8df6-aaaaaaaaaaaa";
+    const tuiId = "019e3008-d992-79e3-8df6-bbbbbbbbbbbb";
+    const unknownId = "019e3008-d992-79e3-8df6-cccccccccccc";
+
+    const writeMeta = (threadId: string, originator: string | null): void => {
+      const payload: Record<string, unknown> = { id: threadId, cwd: "/tmp/p" };
+      if (originator !== null) {
+        payload.originator = originator;
+      }
+      writeFileSync(
+        path.join(sessionDir, `rollout-2026-05-16T17-05-46-${threadId}.jsonl`),
+        `${JSON.stringify({ type: "session_meta", payload })}\n`,
+      );
+    };
+    writeMeta(gwId, "local_codex_web_app");
+    writeMeta(tuiId, "codex-tui");
+    // unknownId: session_meta present but no originator field → resolves null →
+    // kept under the NULL-originator policy (don't hide a possibly-owned thread).
+    writeMeta(unknownId, null);
+
+    const ctx = await createTestContext({
+      deps: {
+        threadContextResolver: new ThreadContextResolver({
+          codexSessionsDir: sessionsRoot,
+        }),
+      },
+    });
+
+    try {
+      ctx.stub.handlers.set("thread/list", () => ({
+        data: [
+          { id: gwId, name: "GW", preview: "", status: "idle", createdAt: 1, updatedAt: 1 },
+          { id: tuiId, name: "TUI", preview: "", status: "idle", createdAt: 1, updatedAt: 1 },
+          {
+            id: unknownId,
+            name: "UNK",
+            preview: "",
+            status: "idle",
+            createdAt: 1,
+            updatedAt: 1,
+          },
+        ],
+        nextCursor: null,
+      }));
+
+      // Default scope: gateway-owned + unknown (NULL policy keeps it); the
+      // codex-tui thread is hidden.
+      const defaultRes = await ctx.app.inject({
+        method: "GET",
+        url: "/api/threads?limit=10",
+      });
+      expect(defaultRes.statusCode).toBe(200);
+      const defaultIds = (defaultRes.json() as { data: Array<{ id: string }> }).data
+        .map((t) => t.id)
+        .sort();
+      expect(defaultIds).toEqual([gwId, unknownId].sort());
+
+      // The lazily-read originators were persisted to the projection.
+      expect(ctx.db.getThreadOriginator(gwId)).toBe("local_codex_web_app");
+      expect(ctx.db.getThreadOriginator(tuiId)).toBe("codex-tui");
+      expect(ctx.db.getThreadOriginator(unknownId)).toBeNull();
+
+      // Explicit scope=gateway behaves the same as the default.
+      const gatewayRes = await ctx.app.inject({
+        method: "GET",
+        url: "/api/threads?limit=10&scope=gateway",
+      });
+      const gatewayIds = (gatewayRes.json() as { data: Array<{ id: string }> }).data
+        .map((t) => t.id)
+        .sort();
+      expect(gatewayIds).toEqual([gwId, unknownId].sort());
+
+      // Escape hatch: scope=all returns everything, nothing lost.
+      const allRes = await ctx.app.inject({
+        method: "GET",
+        url: "/api/threads?limit=10&scope=all",
+      });
+      const allIds = (allRes.json() as { data: Array<{ id: string }> }).data
+        .map((t) => t.id)
+        .sort();
+      expect(allIds).toEqual([gwId, tuiId, unknownId].sort());
+    } finally {
+      await ctx.close();
+      rmSync(sessionsRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("GET /api/threads scope filter also applies on the projection-cache fallback path", async () => {
+    const sessionsRoot = mkdtempSync(path.join(os.tmpdir(), "lcwa-scope-fallback-"));
+    const sessionDir = path.join(sessionsRoot, "2026", "05", "16");
+    mkdirSync(sessionDir, { recursive: true });
+
+    const tuiId = "019e3008-d992-79e3-8df6-dddddddddddd";
+    writeFileSync(
+      path.join(sessionDir, `rollout-2026-05-16T17-05-46-${tuiId}.jsonl`),
+      `${JSON.stringify({
+        type: "session_meta",
+        payload: { id: tuiId, originator: "codex-tui" },
+      })}\n`,
+    );
+
+    const ctx = await createTestContext({
+      deps: {
+        threadContextResolver: new ThreadContextResolver({
+          codexSessionsDir: sessionsRoot,
+        }),
+      },
+    });
+
+    try {
+      ctx.db.upsertThreads([
+        {
+          thread_id: tuiId,
+          project_key: "/tmp/p",
+          title: "TUI cached",
+          preview: "",
+          status: "idle",
+          archived: 0,
+          updated_at: "2026-05-16T00:00:00.000Z",
+          last_error: null,
+          originator: null,
+        },
+      ]);
+
+      // Force the projection-cache fallback branch.
+      ctx.stub.handlers.set("thread/list", () => {
+        throw new Error("app-server unavailable");
+      });
+
+      const defaultRes = await ctx.app.inject({
+        method: "GET",
+        url: "/api/threads?limit=10",
+      });
+      expect(defaultRes.statusCode).toBe(200);
+      expect((defaultRes.json() as { data: unknown[] }).data).toEqual([]);
+
+      const allRes = await ctx.app.inject({
+        method: "GET",
+        url: "/api/threads?limit=10&scope=all",
+      });
+      expect(
+        (allRes.json() as { data: Array<{ id: string }> }).data.map((t) => t.id),
+      ).toEqual([tuiId]);
+    } finally {
+      await ctx.close();
+      rmSync(sessionsRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("GET /api/threads default scope walks raw pages when gateway rows are only on later pages (live path)", async () => {
+    // Regression: the scope filter previously ran AFTER a single raw page, so
+    // gateway-owned rows that sorted after a wall of external threads (later
+    // raw pages) were hidden from the default list. The web UI fetches once
+    // and does not follow nextCursor, so the first screen was near-empty.
+    const sessionsRoot = mkdtempSync(path.join(os.tmpdir(), "lcwa-scope-paging-"));
+    const sessionDir = path.join(sessionsRoot, "2026", "05", "16");
+    mkdirSync(sessionDir, { recursive: true });
+
+    const writeMeta = (threadId: string, originator: string): void => {
+      writeFileSync(
+        path.join(sessionDir, `rollout-2026-05-16T17-05-46-${threadId}.jsonl`),
+        `${JSON.stringify({
+          type: "session_meta",
+          payload: { id: threadId, cwd: "/tmp/p", originator },
+        })}\n`,
+      );
+    };
+
+    // 25 external (codex-tui) threads then 3 gateway-owned, served as raw pages
+    // of 10. With the old code, a single raw page (limit 10) is all external,
+    // so the default list returned [] despite 3 gateway threads existing.
+    // Thread IDs must be valid hex UUIDs (the session-file index only matches
+    // the [0-9a-f]{8}-{4}-{4}-{4}-{12} pattern).
+    const externalIds = Array.from(
+      { length: 25 },
+      (_, i) => `019e3008-0000-79e3-8df6-e0000000${String(i).padStart(4, "0")}`,
+    );
+    const gatewayIds = Array.from(
+      { length: 3 },
+      (_, i) => `019e3008-0000-79e3-8df6-a0000000${String(i).padStart(4, "0")}`,
+    );
+    for (const id of externalIds) writeMeta(id, "codex-tui");
+    for (const id of gatewayIds) writeMeta(id, "local_codex_web_app");
+
+    const allIdsInOrder = [...externalIds, ...gatewayIds];
+    const PAGE = 10;
+    const makeRaw = (id: string) => ({
+      id,
+      name: id,
+      preview: "",
+      status: "idle",
+      createdAt: 1,
+      updatedAt: 1,
+    });
+
+    const ctx = await createTestContext({
+      deps: {
+        threadContextResolver: new ThreadContextResolver({
+          codexSessionsDir: sessionsRoot,
+        }),
+      },
+    });
+
+    try {
+      // Cursor-paged stub: cursor is the start offset (as a string).
+      ctx.stub.handlers.set("thread/list", (params) => {
+        const { cursor } = (params ?? {}) as { cursor?: string | null };
+        const start = cursor ? Number(cursor) : 0;
+        const slice = allIdsInOrder.slice(start, start + PAGE);
+        const nextStart = start + PAGE;
+        return {
+          data: slice.map(makeRaw),
+          nextCursor: nextStart < allIdsInOrder.length ? String(nextStart) : null,
+        };
+      });
+
+      const res = await ctx.app.inject({
+        method: "GET",
+        url: "/api/threads?limit=10",
+      });
+      expect(res.statusCode).toBe(200);
+      const ids = (res.json() as { data: Array<{ id: string }> }).data.map((t) => t.id);
+      // All 3 gateway-owned rows are returned despite being on the last raw
+      // page; no external rows leak in.
+      expect(ids.sort()).toEqual([...gatewayIds].sort());
+
+      // scope=all is unchanged: single raw page passthrough with cursor.
+      const allRes = await ctx.app.inject({
+        method: "GET",
+        url: "/api/threads?limit=10&scope=all",
+      });
+      const allBody = allRes.json() as {
+        data: Array<{ id: string }>;
+        nextCursor: string | null;
+      };
+      expect(allBody.data.map((t) => t.id)).toEqual(externalIds.slice(0, PAGE));
+      expect(allBody.nextCursor).toBe(String(PAGE));
+    } finally {
+      await ctx.close();
+      rmSync(sessionsRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("GET /api/threads default scope fills the page from SQL before LIMIT on the fallback path", async () => {
+    // Regression: the fallback did listProjectedThreads(limit) then filtered
+    // post-LIMIT, so a gateway-owned row sorting after `limit` external rows
+    // never appeared. The scope predicate must run in SQL before the LIMIT.
+    const sessionsRoot = mkdtempSync(path.join(os.tmpdir(), "lcwa-scope-fb-paging-"));
+    mkdirSync(sessionsRoot, { recursive: true });
+
+    const ctx = await createTestContext({
+      deps: {
+        threadContextResolver: new ThreadContextResolver({
+          codexSessionsDir: sessionsRoot,
+        }),
+      },
+    });
+
+    try {
+      // 15 external rows (newest), then 2 gateway-owned rows (oldest). With a
+      // limit of 5 and post-LIMIT filtering, the gateway rows would be unseen.
+      const rows = [];
+      for (let i = 0; i < 15; i += 1) {
+        rows.push({
+          thread_id: `ext-${String(i).padStart(3, "0")}`,
+          project_key: "/tmp/p",
+          title: `ext ${i}`,
+          preview: "",
+          status: "idle" as const,
+          archived: 0,
+          updated_at: `2026-05-16T10:${String(i).padStart(2, "0")}:00.000Z`,
+          last_error: null,
+          originator: "codex-tui",
+        });
+      }
+      rows.push(
+        {
+          thread_id: "gw-old-1",
+          project_key: "/tmp/p",
+          title: "gw old 1",
+          preview: "",
+          status: "idle" as const,
+          archived: 0,
+          updated_at: "2026-05-16T09:00:00.000Z",
+          last_error: null,
+          originator: "local_codex_web_app",
+        },
+        {
+          thread_id: "gw-old-2",
+          project_key: "/tmp/p",
+          title: "gw old 2",
+          preview: "",
+          status: "idle" as const,
+          archived: 0,
+          updated_at: "2026-05-16T08:00:00.000Z",
+          last_error: null,
+          originator: "local_codex_web_app",
+        },
+      );
+      ctx.db.upsertThreads(rows);
+
+      // Force the projection-cache fallback branch.
+      ctx.stub.handlers.set("thread/list", () => {
+        throw new Error("app-server unavailable");
+      });
+
+      const res = await ctx.app.inject({
+        method: "GET",
+        url: "/api/threads?limit=5",
+      });
+      expect(res.statusCode).toBe(200);
+      const ids = (res.json() as { data: Array<{ id: string }> }).data.map((t) => t.id);
+      // Both gateway-owned rows surface even though 15 newer external rows
+      // would have filled a post-LIMIT page.
+      expect(ids.sort()).toEqual(["gw-old-1", "gw-old-2"]);
+    } finally {
+      await ctx.close();
+      rmSync(sessionsRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("GET /api/threads fallback walks SQL pages on an all-NULL migrated cache (regression)", async () => {
+    // Round-2 HIGH: after the originator migration EVERY projection row is
+    // `originator IS NULL`, so `WHERE originator = ? OR originator IS NULL` is
+    // a no-op. With a single SQL page the newest `limit` rows (all external,
+    // still NULL) fill the page, the post-SQL lazy disk resolve drops them,
+    // and older real gateway rows never enter the page → default list empty.
+    // The fallback must WALK keyset pages, resolving originator from disk, so
+    // the gateway rows still surface.
+    const sessionsRoot = mkdtempSync(path.join(os.tmpdir(), "lcwa-fb-allnull-"));
+    const sessionDir = path.join(sessionsRoot, "2026", "05", "16");
+    mkdirSync(sessionDir, { recursive: true });
+
+    const writeMeta = (threadId: string, originator: string): void => {
+      writeFileSync(
+        path.join(sessionDir, `rollout-2026-05-16T17-05-46-${threadId}.jsonl`),
+        `${JSON.stringify({
+          type: "session_meta",
+          payload: { id: threadId, cwd: "/tmp/p", originator },
+        })}\n`,
+      );
+    };
+
+    // 12 external (newest), then 3 gateway-owned (oldest). All persisted with
+    // originator: null — exactly a freshly-migrated cache. Session JSONL on
+    // disk so the lazy resolve can classify them. limit=5 < 12 external, so a
+    // single SQL page would be 100% external-then-dropped.
+    const externalIds = Array.from(
+      { length: 12 },
+      (_, i) => `019e3008-1111-79e3-8df6-e0000000${String(i).padStart(4, "0")}`,
+    );
+    const gatewayIds = Array.from(
+      { length: 3 },
+      (_, i) => `019e3008-1111-79e3-8df6-a0000000${String(i).padStart(4, "0")}`,
+    );
+    for (const id of externalIds) writeMeta(id, "codex-tui");
+    for (const id of gatewayIds) writeMeta(id, "local_codex_web_app");
+
+    const ctx = await createTestContext({
+      deps: {
+        threadContextResolver: new ThreadContextResolver({
+          codexSessionsDir: sessionsRoot,
+        }),
+      },
+    });
+
+    try {
+      // Newest external first (descending updated_at), gateway oldest.
+      const allInOrder = [...externalIds, ...gatewayIds];
+      ctx.db.upsertThreads(
+        allInOrder.map((id, i) => ({
+          thread_id: id,
+          project_key: "/tmp/p",
+          title: id,
+          preview: "",
+          status: "idle" as const,
+          archived: 0,
+          // Strictly decreasing timestamps so newest = external.
+          updated_at: `2026-05-16T${String(23 - i).padStart(2, "0")}:00:00.000Z`,
+          last_error: null,
+          originator: null,
+        })),
+      );
+
+      // Force the projection-cache fallback branch.
+      ctx.stub.handlers.set("thread/list", () => {
+        throw new Error("app-server unavailable");
+      });
+
+      const res = await ctx.app.inject({
+        method: "GET",
+        url: "/api/threads?limit=5",
+      });
+      expect(res.statusCode).toBe(200);
+      const ids = (res.json() as { data: Array<{ id: string }> }).data
+        .map((t) => t.id)
+        .sort();
+      // All 3 gateway rows surface despite 12 newer all-NULL external rows.
+      expect(ids).toEqual([...gatewayIds].sort());
+
+      // The lazily-resolved originators were persisted, so a second call is a
+      // cheap DB read and still correct.
+      for (const id of gatewayIds) {
+        expect(ctx.db.getThreadOriginator(id)).toBe("local_codex_web_app");
+      }
+      for (const id of externalIds) {
+        expect(ctx.db.getThreadOriginator(id)).toBe("codex-tui");
+      }
+
+      const allRes = await ctx.app.inject({
+        method: "GET",
+        url: "/api/threads?limit=5&scope=all",
+      });
+      // scope=all is unchanged: single projection page, newest first.
+      expect(
+        (allRes.json() as { data: Array<{ id: string }> }).data.map((t) => t.id),
+      ).toEqual(externalIds.slice(0, 5));
+    } finally {
+      await ctx.close();
+      rmSync(sessionsRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("GET /api/threads live path slices to limit and resumes mid raw-page with no skip/dup (regression)", async () => {
+    // Round-2 MEDIUM: the live path pushed a whole scoped raw page then broke
+    // at >= limit and returned the accumulator UNSLICED (overflow), and the
+    // naive slice-to-limit fix would skip the sliced-off scoped rows of the
+    // straddling raw page on the next request. The composite cursor must
+    // resume mid-page with neither skip nor duplicate.
+    const sessionsRoot = mkdtempSync(path.join(os.tmpdir(), "lcwa-live-cursor-"));
+    const sessionDir = path.join(sessionsRoot, "2026", "05", "16");
+    mkdirSync(sessionDir, { recursive: true });
+
+    const writeMeta = (threadId: string): void => {
+      writeFileSync(
+        path.join(sessionDir, `rollout-2026-05-16T17-05-46-${threadId}.jsonl`),
+        `${JSON.stringify({
+          type: "session_meta",
+          payload: {
+            id: threadId,
+            cwd: "/tmp/p",
+            originator: "local_codex_web_app",
+          },
+        })}\n`,
+      );
+    };
+
+    // 10 gateway-owned threads (every raw row is in scope). The upstream raw
+    // page size (7) is LARGER than the request limit (4), so a single raw page
+    // straddles the response boundary on every request.
+    const ids = Array.from(
+      { length: 10 },
+      (_, i) => `019e3008-2222-79e3-8df6-b0000000${String(i).padStart(4, "0")}`,
+    );
+    for (const id of ids) writeMeta(id);
+
+    const RAW_PAGE = 7;
+    const LIMIT = 4;
+    const makeRaw = (id: string) => ({
+      id,
+      name: id,
+      preview: "",
+      status: "idle",
+      createdAt: 1,
+      updatedAt: 1,
+    });
+
+    const ctx = await createTestContext({
+      deps: {
+        threadContextResolver: new ThreadContextResolver({
+          codexSessionsDir: sessionsRoot,
+        }),
+      },
+    });
+
+    try {
+      // Raw page size is server-controlled (fixed RAW_PAGE), independent of the
+      // requested limit; cursor is the start offset (as a string), as Codex's
+      // app-server cursors are opaque to the gateway.
+      ctx.stub.handlers.set("thread/list", (params) => {
+        const { cursor } = (params ?? {}) as { cursor?: string | null };
+        const start = cursor ? Number(cursor) : 0;
+        const slice = ids.slice(start, start + RAW_PAGE);
+        const nextStart = start + RAW_PAGE;
+        return {
+          data: slice.map(makeRaw),
+          nextCursor: nextStart < ids.length ? String(nextStart) : null,
+        };
+      });
+
+      const seen: string[] = [];
+      let cursor: string | null = null;
+      let guard = 0;
+      do {
+        guard += 1;
+        if (guard > 20) throw new Error("pagination did not terminate");
+        const url =
+          `/api/threads?limit=${LIMIT}` +
+          (cursor ? `&cursor=${encodeURIComponent(cursor)}` : "");
+        const res = await ctx.app.inject({ method: "GET", url });
+        expect(res.statusCode).toBe(200);
+        const body = res.json() as {
+          data: Array<{ id: string }>;
+          nextCursor: string | null;
+        };
+        // No page may exceed the requested limit.
+        expect(body.data.length).toBeLessThanOrEqual(LIMIT);
+        seen.push(...body.data.map((t) => t.id));
+        cursor = body.nextCursor;
+      } while (cursor);
+
+      // Page 1 returned exactly LIMIT (the first full screen).
+      // Across all pages: every thread exactly once — no skip, no duplicate.
+      expect(seen.length).toBe(ids.length);
+      expect(new Set(seen).size).toBe(ids.length);
+      expect([...seen].sort()).toEqual([...ids].sort());
+    } finally {
+      await ctx.close();
+      rmSync(sessionsRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("GET /api/threads live path is head-insertion stable: a new head thread between pages causes no skip/dup (regression)", async () => {
+    // Round-3 MEDIUM: the composite cursor used to resume the straddling raw
+    // page by a NUMERIC skip count. For the `raw:null` case (straddling page IS
+    // the upstream HEAD page) that is unstable: if a new thread arrives at the
+    // head between the request that minted the cursor and the resume request,
+    // the head page shifts, so the same numeric skip drops the WRONG rows ->
+    // a thread is duplicated or skipped. The fix anchors the resume on the SET
+    // of already-delivered thread ids (identity), which is position-stable.
+    const sessionsRoot = mkdtempSync(path.join(os.tmpdir(), "lcwa-headins-"));
+    const sessionDir = path.join(sessionsRoot, "2026", "05", "16");
+    mkdirSync(sessionDir, { recursive: true });
+
+    const writeMeta = (threadId: string): void => {
+      writeFileSync(
+        path.join(sessionDir, `rollout-2026-05-16T17-05-46-${threadId}.jsonl`),
+        `${JSON.stringify({
+          type: "session_meta",
+          payload: {
+            id: threadId,
+            cwd: "/tmp/p",
+            originator: "local_codex_web_app",
+          },
+        })}\n`,
+      );
+    };
+
+    // 10 gateway-owned threads, newest-first (index 0 = head). RAW page (7) >
+    // LIMIT (4) so a single raw page straddles the boundary every request, and
+    // page 1 is fetched with cursor=null -> the straddling page IS the upstream
+    // HEAD page (the `raw:null` cursor case the bug lives in).
+    const originalIds = Array.from(
+      { length: 10 },
+      (_, i) => `019e3008-3333-79e3-8df6-c0000000${String(i).padStart(4, "0")}`,
+    );
+    for (const id of originalIds) writeMeta(id);
+
+    // The thread injected at the HEAD between page 1 and page 2.
+    const injectedId = "019e3008-3333-79e3-8df6-c000000ffff0";
+    writeMeta(injectedId);
+
+    const RAW_PAGE = 7;
+    const LIMIT = 4;
+    const makeRaw = (id: string) => ({
+      id,
+      name: id,
+      preview: "",
+      status: "idle",
+      createdAt: 1,
+      updatedAt: 1,
+    });
+
+    const ctx = await createTestContext({
+      deps: {
+        threadContextResolver: new ThreadContextResolver({
+          codexSessionsDir: sessionsRoot,
+        }),
+      },
+    });
+
+    try {
+      // Mutable upstream order. The stub serves a window of `ids` keyed by a
+      // numeric start-offset cursor (Codex cursors are opaque to the gateway).
+      // A new head insert shifts ALL offsets by one -> exactly the instability
+      // the numeric-skip cursor could not survive.
+      let ids = [...originalIds];
+      ctx.stub.handlers.set("thread/list", (params) => {
+        const { cursor } = (params ?? {}) as { cursor?: string | null };
+        const start = cursor ? Number(cursor) : 0;
+        const slice = ids.slice(start, start + RAW_PAGE);
+        const nextStart = start + RAW_PAGE;
+        return {
+          data: slice.map(makeRaw),
+          nextCursor: nextStart < ids.length ? String(nextStart) : null,
+        };
+      });
+
+      const seen: string[] = [];
+      let cursor: string | null = null;
+      let guard = 0;
+      let injected = false;
+      do {
+        guard += 1;
+        if (guard > 30) throw new Error("pagination did not terminate");
+        const url =
+          `/api/threads?limit=${LIMIT}` +
+          (cursor ? `&cursor=${encodeURIComponent(cursor)}` : "");
+        const res = await ctx.app.inject({ method: "GET", url });
+        expect(res.statusCode).toBe(200);
+        const body = res.json() as {
+          data: Array<{ id: string }>;
+          nextCursor: string | null;
+        };
+        expect(body.data.length).toBeLessThanOrEqual(LIMIT);
+        seen.push(...body.data.map((t) => t.id));
+        cursor = body.nextCursor;
+
+        // After the FIRST page (its cursor is `raw:null` + seenIds, because
+        // page 1 was fetched with cursor=null = the HEAD page), inject a new
+        // thread at the upstream HEAD. The resume request will re-fetch the
+        // HEAD page, now SHIFTED by one.
+        if (!injected) {
+          injected = true;
+          ids = [injectedId, ...ids];
+        }
+      } while (cursor);
+
+      // Core invariants (per Round-3 brief):
+      //  - every originally-present gateway thread appears EXACTLY once
+      //    (no skip, no duplicate) despite the head shift,
+      //  - the union has no duplicates at all,
+      //  - the newly-injected head thread also surfaces exactly once.
+      const counts = new Map<string, number>();
+      for (const id of seen) counts.set(id, (counts.get(id) ?? 0) + 1);
+
+      for (const id of originalIds) {
+        expect(counts.get(id) ?? 0).toBe(1);
+      }
+      expect(counts.get(injectedId) ?? 0).toBe(1);
+      // No id delivered more than once anywhere.
+      expect([...counts.values()].every((c) => c === 1)).toBe(true);
+      expect(seen.length).toBe(originalIds.length + 1);
+      expect(new Set(seen).size).toBe(seen.length);
+    } finally {
+      await ctx.close();
+      rmSync(sessionsRoot, { recursive: true, force: true });
     }
   });
 

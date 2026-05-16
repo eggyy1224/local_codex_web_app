@@ -24,6 +24,9 @@ export type ThreadProjection = {
   archived: number;
   updated_at: string;
   last_error: string | null;
+  // Codex session_meta.payload.originator. NULL = unknown (never re-scanned or
+  // session_meta missing/malformed); the gateway value is "local_codex_web_app".
+  originator: string | null;
 };
 
 export type ApprovalProjection = {
@@ -65,8 +68,29 @@ export type AuditLogEntry = {
 export type GatewayDbPort = {
   upsertThreads(rows: ThreadProjection[]): void;
   listProjectedThreads(limit: number): ThreadListItem[];
+  /**
+   * One keyset page of the default-scope query, ordered by
+   * `(updated_at DESC, thread_id DESC)` (the tiebreaker makes the order a
+   * total order so paging cannot skip or duplicate rows that share a
+   * timestamp). `after` is the last row returned by the previous page (or
+   * null for the first page); the next page is strictly "less than" it in
+   * that order. The scope predicate (`originator = ? OR originator IS NULL`)
+   * still runs in SQL before the LIMIT — but because a freshly-migrated cache
+   * has every row at `originator IS NULL`, the post-SQL lazy disk resolve can
+   * still drop most of a page, so the fallback caller must WALK successive
+   * pages with this method until it has `limit` scoped rows (mirroring the
+   * live path's raw-page walk).
+   */
+  listProjectedThreadsScopedPage(
+    limit: number,
+    gatewayOriginator: string,
+    after: { updatedAt: string; threadId: string } | null,
+  ): ThreadProjection[];
   getProjectedThread(threadId: string): ThreadListItem | null;
+  /** Persisted Codex originator for a thread, or null when unknown/absent. */
+  getThreadOriginator(threadId: string): string | null;
   updateThreadProjectKey(threadId: string, projectKey: string): void;
+  updateThreadOriginator(threadId: string, originator: string | null): void;
   insertGatewayEvent(event: Omit<GatewayEvent, "seq">): number;
   listGatewayEventsSince(threadId: string, since: number, limit?: number): GatewayEvent[];
   getMaxGatewayEventSeq(threadId: string): number;
@@ -106,6 +130,20 @@ export type GatewayDbOptions = {
 
 function defaultGatewayDataDir(): string {
   return process.env.GATEWAY_DATA_DIR ?? path.join(os.homedir(), ".codex-web-gateway");
+}
+
+function projectionRowToListItem(row: ThreadProjection): ThreadListItem {
+  return {
+    id: row.thread_id,
+    projectKey: row.project_key || "unknown",
+    title: row.title,
+    preview: row.preview,
+    status: row.status,
+    lastActiveAt: row.updated_at,
+    archived: row.archived === 1,
+    waitingApprovalCount: 0,
+    errorCount: row.last_error ? 1 : 0,
+  };
 }
 
 function toApprovalView(row: ApprovalProjection): ApprovalView {
@@ -290,18 +328,28 @@ CREATE TABLE IF NOT EXISTS audit_log (
 );
 `);
 
-  try {
-    sqlite.exec("ALTER TABLE threads_projection ADD COLUMN project_key TEXT NOT NULL DEFAULT 'unknown'");
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (!message.includes("duplicate column name")) {
-      throw error;
+  // Additive, idempotent migrations. Each ALTER is wrapped so a re-run on an
+  // already-migrated DB is a no-op (SQLite reports "duplicate column name").
+  const additiveColumnMigrations = [
+    "ALTER TABLE threads_projection ADD COLUMN project_key TEXT NOT NULL DEFAULT 'unknown'",
+    // Nullable: existing rows stay NULL ("unknown") until lazily backfilled at
+    // read time from the Codex session JSONL. No full re-scan required.
+    "ALTER TABLE threads_projection ADD COLUMN originator TEXT",
+  ];
+  for (const migration of additiveColumnMigrations) {
+    try {
+      sqlite.exec(migration);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (!message.includes("duplicate column name")) {
+        throw error;
+      }
     }
   }
 
   const upsertThreadStmt = sqlite.prepare(`
-INSERT INTO threads_projection (thread_id, project_key, title, preview, status, archived, updated_at, last_error)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO threads_projection (thread_id, project_key, title, preview, status, archived, updated_at, last_error, originator)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(thread_id) DO UPDATE SET
   project_key = excluded.project_key,
   title = excluded.title,
@@ -309,21 +357,52 @@ ON CONFLICT(thread_id) DO UPDATE SET
   status = excluded.status,
   archived = excluded.archived,
   updated_at = excluded.updated_at,
-  last_error = excluded.last_error;
+  last_error = excluded.last_error,
+  -- thread/list re-upserts pass originator=NULL; never let that wipe a
+  -- previously backfilled value. Only a real (non-NULL) value overwrites.
+  originator = COALESCE(excluded.originator, threads_projection.originator);
 `);
 
   const listThreadsStmt = sqlite.prepare(`
-SELECT thread_id, project_key, title, preview, status, archived, updated_at, last_error
+SELECT thread_id, project_key, title, preview, status, archived, updated_at, last_error, originator
 FROM threads_projection
 ORDER BY updated_at DESC
 LIMIT ?
 `);
 
+  // Keyset-paged default-scope query. Total order is
+  // (updated_at DESC, thread_id DESC); the thread_id tiebreaker keeps rows
+  // with an identical updated_at from being skipped/duplicated across pages.
+  // First page (no keyset bound):
+  const listThreadsScopedPageFirstStmt = sqlite.prepare(`
+SELECT thread_id, project_key, title, preview, status, archived, updated_at, last_error, originator
+FROM threads_projection
+WHERE (originator = ? OR originator IS NULL)
+ORDER BY updated_at DESC, thread_id DESC
+LIMIT ?
+`);
+  // Subsequent pages: strictly "after" the (updated_at, thread_id) of the last
+  // row of the previous page in the DESC,DESC order.
+  const listThreadsScopedPageAfterStmt = sqlite.prepare(`
+SELECT thread_id, project_key, title, preview, status, archived, updated_at, last_error, originator
+FROM threads_projection
+WHERE (originator = ? OR originator IS NULL)
+  AND (updated_at < ? OR (updated_at = ? AND thread_id < ?))
+ORDER BY updated_at DESC, thread_id DESC
+LIMIT ?
+`);
+
   const getThreadByIdStmt = sqlite.prepare(`
-SELECT thread_id, project_key, title, preview, status, archived, updated_at, last_error
+SELECT thread_id, project_key, title, preview, status, archived, updated_at, last_error, originator
 FROM threads_projection
 WHERE thread_id = ?
 LIMIT 1
+`);
+
+  const updateThreadOriginatorStmt = sqlite.prepare(`
+UPDATE threads_projection
+SET originator = ?
+WHERE thread_id = ?
 `);
 
   const updateThreadProjectStmt = sqlite.prepare(`
@@ -527,6 +606,7 @@ ORDER BY created_at ASC
             row.archived,
             row.updated_at,
             row.last_error,
+            row.originator ?? null,
           );
         }
         sqlite.exec("COMMIT");
@@ -537,17 +617,26 @@ ORDER BY created_at ASC
     },
     listProjectedThreads(limit: number): ThreadListItem[] {
       const rows = listThreadsStmt.all(limit) as ThreadProjection[];
-      return rows.map((row) => ({
-        id: row.thread_id,
-        projectKey: row.project_key || "unknown",
-        title: row.title,
-        preview: row.preview,
-        status: row.status,
-        lastActiveAt: row.updated_at,
-        archived: row.archived === 1,
-        waitingApprovalCount: 0,
-        errorCount: row.last_error ? 1 : 0,
-      }));
+      return rows.map(projectionRowToListItem);
+    },
+    listProjectedThreadsScopedPage(
+      limit: number,
+      gatewayOriginator: string,
+      after: { updatedAt: string; threadId: string } | null,
+    ): ThreadProjection[] {
+      if (after === null) {
+        return listThreadsScopedPageFirstStmt.all(
+          gatewayOriginator,
+          limit,
+        ) as ThreadProjection[];
+      }
+      return listThreadsScopedPageAfterStmt.all(
+        gatewayOriginator,
+        after.updatedAt,
+        after.updatedAt,
+        after.threadId,
+        limit,
+      ) as ThreadProjection[];
     },
     getProjectedThread(threadId: string): ThreadListItem | null {
       const row = getThreadByIdStmt.get(threadId) as ThreadProjection | undefined;
@@ -555,20 +644,20 @@ ORDER BY created_at ASC
         return null;
       }
 
-      return {
-        id: row.thread_id,
-        projectKey: row.project_key || "unknown",
-        title: row.title,
-        preview: row.preview,
-        status: row.status,
-        lastActiveAt: row.updated_at,
-        archived: row.archived === 1,
-        waitingApprovalCount: 0,
-        errorCount: row.last_error ? 1 : 0,
-      };
+      return projectionRowToListItem(row);
+    },
+    getThreadOriginator(threadId: string): string | null {
+      const row = getThreadByIdStmt.get(threadId) as ThreadProjection | undefined;
+      if (!row) {
+        return null;
+      }
+      return row.originator ?? null;
     },
     updateThreadProjectKey(threadId: string, projectKey: string): void {
       updateThreadProjectStmt.run(projectKey, threadId);
+    },
+    updateThreadOriginator(threadId: string, originator: string | null): void {
+      updateThreadOriginatorStmt.run(originator ?? null, threadId);
     },
     insertGatewayEvent(event: Omit<GatewayEvent, "seq">): number {
       const row = insertEventStmt.get(
@@ -708,6 +797,14 @@ export function getProjectedThread(threadId: string): ThreadListItem | null {
 
 export function updateThreadProjectKey(threadId: string, projectKey: string): void {
   gatewayDb.updateThreadProjectKey(threadId, projectKey);
+}
+
+export function getThreadOriginator(threadId: string): string | null {
+  return gatewayDb.getThreadOriginator(threadId);
+}
+
+export function updateThreadOriginator(threadId: string, originator: string | null): void {
+  gatewayDb.updateThreadOriginator(threadId, originator);
 }
 
 export function insertGatewayEvent(event: Omit<GatewayEvent, "seq">): number {
