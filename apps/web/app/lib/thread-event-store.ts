@@ -17,6 +17,11 @@ export type ThreadEventStoreState = {
   liveThreadListEvents: GatewayEvent[];
   lastSeq: number;
   activeTurnId: string | null;
+  // True once the first authoritative snapshot has been hydrated. Before it,
+  // the SSE connected at since=0 and replayed historical backlog into
+  // liveEvents; after it, the SSE resumes from the snapshot head, so any
+  // liveEvents are genuinely-newer or watchdog-replayed missed events.
+  snapshotApplied: boolean;
 };
 
 export type ThreadEventStoreAction =
@@ -54,6 +59,7 @@ export function createThreadEventStoreState(
     liveThreadListEvents: [],
     lastSeq: 0,
     activeTurnId: null,
+    snapshotApplied: false,
   };
 }
 
@@ -128,24 +134,43 @@ export function threadEventStoreReducer(
     if (state.threadId && action.threadId !== state.threadId) {
       return state;
     }
-    // The SSE can connect (since=0) and append replayed backlog into
-    // liveEvents BEFORE this snapshot resolves, while lastSeq is still 0. Drop
-    // anything at/below the snapshot head: those events are historical backlog
-    // already represented by baseTimelineItems, and keeping them would render
-    // a long-completed turn/started (plus its stale deltas) as a live
-    // streaming turn. Events strictly past the head are genuinely newer than
-    // the snapshot (e.g. an event inserted during the non-atomic snapshot
-    // read, or a real early live turn) and must be preserved.
+    // Backlog discard applies ONLY to the FIRST snapshot. On mount the SSE
+    // connects at since=0 and replays historical backlog into liveEvents
+    // before this snapshot resolves (while lastSeq is still 0); that range is
+    // authoritatively represented by baseTimelineItems, so anything at/below
+    // the snapshot head is dropped to avoid rendering a long-completed
+    // turn/started (plus its stale deltas) as a live streaming turn.
+    //
+    // After the first snapshot the SSE resumes from the snapshot head (see
+    // page.tsx), so liveEvents only ever holds genuinely-newer or
+    // watchdog-replayed missed events. A *re-hydrate* (visibility/watchdog
+    // resync) carries a fresh events_log head that can already be past those
+    // replayed events, while its timeline snapshot — sourced from the
+    // rollout/session file, which lags the events_log (and is empty for the
+    // e2e stub) — does NOT contain them. Filtering by seq there would discard
+    // the very events the watchdog just recovered, stranding the conversation
+    // empty. Retaining them is safe because the downstream turn builder
+    // (buildConversationTurns) reconciles live-vs-session overlap by
+    // text/tool/status, so a replayed event already present in the lagging
+    // snapshot does not double-render — note selectThreadTimelineItems'
+    // signature dedupe alone won't collapse it when ts/rawType differ
+    // (session agent_message/task_started vs live agentMessage/turn/started).
     const snapshotHead = action.lastSeq;
+    const dropPreHydrationBacklog = !state.snapshotApplied;
     return {
       ...state,
       threadId: action.threadId,
       baseTimelineItems: action.items,
       activeTurnId: activeTurnIdAfterTimelineItems(action.items),
-      liveEvents: state.liveEvents.filter((event) => event.seq > snapshotHead),
-      liveThreadListEvents: state.liveThreadListEvents.filter(
-        (event) => event.seq > snapshotHead,
-      ),
+      snapshotApplied: true,
+      liveEvents: dropPreHydrationBacklog
+        ? state.liveEvents.filter((event) => event.seq > snapshotHead)
+        : state.liveEvents,
+      liveThreadListEvents: dropPreHydrationBacklog
+        ? state.liveThreadListEvents.filter(
+            (event) => event.seq > snapshotHead,
+          )
+        : state.liveThreadListEvents,
       // Advance the cursor to the snapshot head so the SSE backlog replay
       // (every event with seq <= head) is dropped by appendGatewayEvent below
       // instead of re-applying a long-completed turn/started. Never move the
