@@ -1,124 +1,203 @@
 "use client";
 
+import type {
+  Dispatch,
+  KeyboardEvent as ReactKeyboardEvent,
+  RefObject,
+  SetStateAction,
+} from "react";
+import type { ReadonlyURLSearchParams } from "next/navigation";
+import type {
+  ApprovalDecisionRequest,
+  ApprovalView,
+  InteractionRespondRequest,
+  InteractionView,
+  ThreadControlRequest,
+  TurnPermissionMode,
+} from "@lcwa/shared-types";
+import type { ConversationTurn } from "../../lib/thread-logic";
+import type { ModelSelectOption } from "../../lib/model-options";
+import type {
+  KnownSlashCommand,
+  SlashCommandCatalogItem,
+} from "../../lib/slash-commands";
+import type { UseGatewayConfigResult } from "../../lib/use-gateway-config";
+import type {
+  FileMentionTrigger,
+  UseFileMentionSearchResult,
+} from "../../lib/use-file-mention-search";
+import type { PendingAttachment } from "./AttachmentStrip";
 import MobileActionLayer from "./MobileActionLayer";
 import MobileCanvasSheet from "./MobileCanvasSheet";
-import MobileChatTopBar from "./MobileChatTopBar";
+import MobileChatTopBar, { type ThreadViewMode } from "./MobileChatTopBar";
 import MobileComposerDock from "./MobileComposerDock";
 import MobileControlSheet from "./MobileControlSheet";
 import MobileMessageDetailsSheet from "./MobileMessageDetailsSheet";
 import MobileMessageStream from "./MobileMessageStream";
-import MobileThreadSwitcherOverlay from "./MobileThreadSwitcherOverlay";
+import MobileThreadSwitcherOverlay, {
+  type MobileThreadSwitcherGroup,
+} from "./MobileThreadSwitcherOverlay";
+import type {
+  CollaborationModeKind,
+  ThreadTokenUsageSummary,
+} from "./thread-page-helpers";
 
-type MobileThreadShellProps = {
-  activeProjectLabel: any;
-  activeThreadTitle: any;
-  collaborationMode: any;
-  gatewayConfig: any;
-  pendingActionCount: any;
-  isThinkingActive: any;
-  thinkingBannerText: any;
-  runningTurnId: any;
-  controlBusy: any;
-  viewMode: any;
-  canvasBlocked: any;
-  setViewMode: any;
-  interruptRunningTurn: any;
-  setIsThreadSwitcherOpen: any;
-  canvasOpenRequestKey: any;
-  setCanvasOpenRequestKey: any;
-  openControlSheet: any;
-  pendingInteractionList: any;
-  pendingApprovalList: any;
-  statusBanner: any;
-  setStatusBanner: any;
-  error: any;
-  submitError: any;
-  approvalError: any;
-  interactionError: any;
-  controlError: any;
-  modelCatalogError: any;
-  visibleConversationTurns: any;
-  hiddenTimelineCount: any;
-  showAllTurns: any;
-  setShowAllTurns: any;
-  timelineRef: any;
-  handleTimelineScroll: any;
-  formatTimestamp: any;
-  reviewSlashCommandByTurnId: any;
-  copyMessage: any;
-  openMessageDetails: any;
-  gatewayUrl: any;
-  actionablePlanByTurnId: any;
-  turnProgressByTurnId: any;
-  truncateText: any;
-  openImplementDialog: any;
-  keepPlanning: any;
-  searchParams: any;
-  MOBILE_CANVAS_URL_STORAGE_KEY: any;
-  isControlSheetOpen: any;
-  isMessageDetailsOpen: any;
-  implementDialogOpen: any;
-  approvalBusy: any;
-  decideApproval: any;
-  prompt: any;
-  submitting: any;
-  pendingAttachments: any;
-  handlePickFiles: any;
-  handleRemoveAttachment: any;
-  slashMenuOpen: any;
-  slashSuggestions: any;
-  activeSlashIndex: any;
-  fileMentionOpen: any;
-  fileMentionSearch: any;
-  thinkingEffort: any;
-  latestTokenUsage: any;
-  setPrompt: any;
-  setSlashMenuDismissed: any;
-  setFileMentionDismissed: any;
-  handlePromptKeyDown: any;
-  applyPromptSlash: any;
-  applyFileMention: any;
-  submitComposer: any;
-  controlSheetSection: any;
-  controlSheetSnap: any;
-  isDraggingSheet: any;
-  sheetDragOffsetY: any;
-  interactionBusy: any;
-  compactBusy: any;
-  model: any;
-  modelOptions: any;
-  thinkingEffortOptions: any;
-  permissionMode: any;
-  setControlSheetSection: any;
-  setControlSheetSnap: any;
-  closeControlSheet: any;
-  setIsDraggingSheet: any;
-  setSheetDragOffsetY: any;
-  sendControl: any;
-  compactThread: any;
-  respondInteraction: any;
-  setModel: any;
-  setThinkingEffort: any;
-  setPermissionMode: any;
-  formatEffortLabel: any;
-  implementDraft: any;
-  setImplementDialogOpen: any;
-  setImplementDraft: any;
-  confirmImplementPlan: any;
-  implementTargetTurnId: any;
-  implementTargetPlanText: any;
-  setImplementTargetTurnId: any;
-  setImplementTargetPlanText: any;
-  activeMessageDetails: any;
-  closeMessageDetails: any;
-  isThreadSwitcherOpen: any;
-  mobileThreadSwitcherGroups: any;
-  switcherCollapsedGroups: any;
-  threadListLoading: any;
-  activeProjectKey: any;
-  selectThreadFromMobileSwitcher: any;
-  handleToggleSwitcherGroup: any;
-  createThread: any;
+// Local value-shapes that ThreadPageClient declares inline (not exported
+// anywhere). Mirrored here so the prop surface is precisely typed without
+// adding new exports to the controller. `MobileMessageDetails` matches the
+// shape MobileMessageDetailsSheet consumes via its `details` prop.
+type StatusBanner = {
+  generatedAt: string;
+  lines: string[];
+};
+type MobileMessageDetails = {
+  turnId: string;
+  startedAt: string;
+  completedAt: string;
+  status: string;
+  streaming: boolean;
+  toolCalls: number;
+  toolResults: number;
+  hasThinking: boolean;
+};
+
+// Derived from ThreadPageClient's `pendingApprovalList` / `pendingInteractionList`
+// memos, which project the full ApprovalView / InteractionView cards down to
+// exactly these fields before passing them through.
+type MobilePendingApproval = Pick<
+  ApprovalView,
+  "approvalId" | "type" | "reason" | "commandPreview" | "fileChangePreview"
+>;
+type MobilePendingInteraction = Pick<
+  InteractionView,
+  "interactionId" | "questions"
+>;
+
+export type MobileThreadShellProps = {
+  activeProjectLabel: string;
+  activeThreadTitle: string;
+  collaborationMode: CollaborationModeKind;
+  gatewayConfig: UseGatewayConfigResult;
+  pendingActionCount: number;
+  isThinkingActive: boolean;
+  thinkingBannerText: string;
+  runningTurnId: string | null;
+  controlBusy: ThreadControlRequest["action"] | null;
+  viewMode: ThreadViewMode;
+  canvasBlocked: boolean;
+  setViewMode: Dispatch<SetStateAction<ThreadViewMode>>;
+  interruptRunningTurn: (turnId: string) => Promise<void>;
+  setIsThreadSwitcherOpen: Dispatch<SetStateAction<boolean>>;
+  canvasOpenRequestKey: number;
+  setCanvasOpenRequestKey: Dispatch<SetStateAction<number>>;
+  openControlSheet: (
+    section?: "pending" | "advanced",
+    snap?: "half" | "full",
+  ) => void;
+  pendingInteractionList: MobilePendingInteraction[];
+  pendingApprovalList: MobilePendingApproval[];
+  statusBanner: StatusBanner | null;
+  setStatusBanner: Dispatch<SetStateAction<StatusBanner | null>>;
+  error: string | null;
+  submitError: string | null;
+  approvalError: string | null;
+  interactionError: string | null;
+  controlError: string | null;
+  modelCatalogError: string | null;
+  visibleConversationTurns: ConversationTurn[];
+  hiddenTimelineCount: number;
+  showAllTurns: boolean;
+  setShowAllTurns: Dispatch<SetStateAction<boolean>>;
+  timelineRef: RefObject<HTMLElement | null>;
+  handleTimelineScroll: () => void;
+  formatTimestamp: (value: string | null) => string;
+  reviewSlashCommandByTurnId: Map<string, string>;
+  copyMessage: (text: string) => Promise<void>;
+  openMessageDetails: (turnId: string) => void;
+  gatewayUrl: string;
+  actionablePlanByTurnId: Record<string, string>;
+  turnProgressByTurnId: Record<string, string>;
+  truncateText: (text: string, maxLength: number) => string;
+  openImplementDialog: (turnId: string, planText: string) => void;
+  keepPlanning: (turnId: string, planText?: string) => void;
+  searchParams: ReadonlyURLSearchParams;
+  MOBILE_CANVAS_URL_STORAGE_KEY: string;
+  isControlSheetOpen: boolean;
+  isMessageDetailsOpen: boolean;
+  implementDialogOpen: boolean;
+  approvalBusy: string | null;
+  decideApproval: (
+    approvalId: string,
+    decision: ApprovalDecisionRequest["decision"],
+  ) => Promise<void>;
+  prompt: string;
+  submitting: boolean;
+  pendingAttachments: PendingAttachment[];
+  handlePickFiles: (files: File[]) => Promise<void>;
+  handleRemoveAttachment: (id: string) => void;
+  slashMenuOpen: boolean;
+  slashSuggestions: SlashCommandCatalogItem[];
+  activeSlashIndex: number;
+  fileMentionOpen: boolean;
+  fileMentionSearch: UseFileMentionSearchResult;
+  thinkingEffort: string;
+  latestTokenUsage: ThreadTokenUsageSummary | null;
+  setPrompt: Dispatch<SetStateAction<string>>;
+  setSlashMenuDismissed: Dispatch<SetStateAction<boolean>>;
+  setFileMentionDismissed: Dispatch<SetStateAction<boolean>>;
+  handlePromptKeyDown: (
+    event: ReactKeyboardEvent<HTMLTextAreaElement>,
+  ) => void;
+  applyPromptSlash: (command: KnownSlashCommand) => void;
+  applyFileMention: (
+    prompt: string,
+    trigger: FileMentionTrigger,
+    path: string,
+  ) => string;
+  submitComposer: () => void;
+  controlSheetSection: "pending" | "advanced";
+  controlSheetSnap: "half" | "full";
+  isDraggingSheet: boolean;
+  sheetDragOffsetY: number;
+  interactionBusy: string | null;
+  compactBusy: boolean;
+  model: string;
+  modelOptions: ModelSelectOption[];
+  thinkingEffortOptions: string[];
+  permissionMode: TurnPermissionMode;
+  setControlSheetSection: Dispatch<SetStateAction<"pending" | "advanced">>;
+  setControlSheetSnap: Dispatch<SetStateAction<"half" | "full">>;
+  closeControlSheet: () => void;
+  setIsDraggingSheet: Dispatch<SetStateAction<boolean>>;
+  setSheetDragOffsetY: Dispatch<SetStateAction<number>>;
+  sendControl: (action: ThreadControlRequest["action"]) => Promise<void>;
+  compactThread: () => Promise<void>;
+  respondInteraction: (
+    interactionId: string,
+    answers: InteractionRespondRequest["answers"],
+  ) => Promise<void>;
+  setModel: Dispatch<SetStateAction<string>>;
+  setThinkingEffort: Dispatch<SetStateAction<string>>;
+  setPermissionMode: Dispatch<SetStateAction<TurnPermissionMode>>;
+  formatEffortLabel: (value: string) => string;
+  implementDraft: string;
+  setImplementDialogOpen: Dispatch<SetStateAction<boolean>>;
+  setImplementDraft: Dispatch<SetStateAction<string>>;
+  confirmImplementPlan: () => Promise<void>;
+  implementTargetTurnId: string | null;
+  implementTargetPlanText: string | null;
+  setImplementTargetTurnId: Dispatch<SetStateAction<string | null>>;
+  setImplementTargetPlanText: Dispatch<SetStateAction<string | null>>;
+  activeMessageDetails: MobileMessageDetails | null;
+  closeMessageDetails: () => void;
+  isThreadSwitcherOpen: boolean;
+  mobileThreadSwitcherGroups: MobileThreadSwitcherGroup[];
+  switcherCollapsedGroups: Set<string>;
+  threadListLoading: boolean;
+  activeProjectKey: string;
+  selectThreadFromMobileSwitcher: (nextThreadId: string) => void;
+  handleToggleSwitcherGroup: (groupKey: string) => void;
+  createThread: (targetProjectKey?: string) => Promise<void>;
 };
 
 export default function MobileThreadShell({
