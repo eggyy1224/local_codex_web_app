@@ -18,6 +18,10 @@ export type ThreadTokenUsageSummary = {
   totalTokens: number;
   inputTokens: number;
   outputTokens: number;
+  // `last` request's total tokens = the live context-window occupancy (the
+  // whole conversation is resent every turn). This — not the cumulative
+  // `totalTokens` — is what the context indicator must divide by the window.
+  lastTokens: number | null;
   modelContextWindow: number | null;
   updatedAt: string;
 };
@@ -282,6 +286,30 @@ export function isImplementPlanPromptForPlan(
   return body === normalizedPlan || body.includes(normalizedPlan);
 }
 
+// Ported verbatim from Codex core: `TokenUsage::percent_of_context_window_remaining`
+// (codex-rs/protocol/src/protocol.rs) — the exact formula Codex's own TUI uses for
+// its context indicator. Codex computes it from the LAST request's total tokens
+// (the live window occupancy), NOT the cumulative thread total. A fixed baseline
+// (system prompt + tool instructions) is subtracted from both numerator and
+// denominator so the bar reads ~100% free right after the first prompt and trends
+// to 0% as the user-controllable window fills. `modelContextWindow` is already the
+// backend's effective (95%) window; the baseline applies on top, exactly as Codex.
+export const CONTEXT_WINDOW_BASELINE_TOKENS = 12000;
+
+export function contextWindowPercentRemaining(
+  lastTotalTokens: number,
+  modelContextWindow: number,
+): number {
+  if (modelContextWindow <= CONTEXT_WINDOW_BASELINE_TOKENS) {
+    return 0;
+  }
+  const effectiveWindow = modelContextWindow - CONTEXT_WINDOW_BASELINE_TOKENS;
+  const used = Math.max(0, lastTotalTokens - CONTEXT_WINDOW_BASELINE_TOKENS);
+  const remaining = Math.max(0, effectiveWindow - used);
+  const percent = (remaining / effectiveWindow) * 100;
+  return Math.round(Math.min(100, Math.max(0, percent)));
+}
+
 export function tokenUsageFromEvent(event: GatewayEvent): ThreadTokenUsageSummary | null {
   if (event.name !== "thread/tokenUsage/updated") {
     return null;
@@ -289,9 +317,11 @@ export function tokenUsageFromEvent(event: GatewayEvent): ThreadTokenUsageSummar
   const payload = asRecord(event.payload);
   const tokenUsage = asRecord(payload?.tokenUsage);
   const total = asRecord(tokenUsage?.total);
+  const last = asRecord(tokenUsage?.last);
   const totalTokens = total?.totalTokens;
   const inputTokens = total?.inputTokens;
   const outputTokens = total?.outputTokens;
+  const lastTokens = typeof last?.totalTokens === "number" ? last.totalTokens : null;
   if (
     typeof totalTokens !== "number" ||
     typeof inputTokens !== "number" ||
@@ -308,6 +338,7 @@ export function tokenUsageFromEvent(event: GatewayEvent): ThreadTokenUsageSummar
     totalTokens,
     inputTokens,
     outputTokens,
+    lastTokens,
     modelContextWindow,
     updatedAt: event.serverTs,
   };

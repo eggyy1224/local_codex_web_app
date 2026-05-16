@@ -578,19 +578,27 @@ describe("Thread page integration", () => {
       payload: {
         turnId: "turn-1",
         tokenUsage: {
+          // Cumulative session total is large but must not drive the ring.
           total: {
-            totalTokens: 32_000,
-            inputTokens: 30_000,
-            outputTokens: 2_000,
+            totalTokens: 320_000,
+            inputTokens: 300_000,
+            outputTokens: 20_000,
           },
-          modelContextWindow: 64_000,
+          // effective = 132000 - 12000 = 120000; used = 72000 - 12000 = 60000
+          // remaining% = round(60000 / 120000 * 100) = 50 -> used% = 50
+          last: {
+            totalTokens: 72_000,
+            inputTokens: 68_000,
+            outputTokens: 4_000,
+          },
+          modelContextWindow: 132_000,
         },
       },
     });
 
     await waitFor(() => {
       const updatedRing = screen.getByTestId("mobile-composer-context-ring");
-      expect(updatedRing).toHaveAttribute("title", "Context 50%, 32k of 64k tokens");
+      expect(updatedRing).toHaveAttribute("title", "Context 50% (50% left), 72k of 132k tokens");
       expect((updatedRing as HTMLElement).style.getPropertyValue("--context-ring-progress")).toBe("50%");
     });
   });

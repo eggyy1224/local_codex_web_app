@@ -12,6 +12,7 @@ import type {
 import type { FuzzyFileMatch } from "@lcwa/shared-types";
 import type { KnownSlashCommand } from "../../lib/slash-commands";
 import AttachmentStrip, { type PendingAttachment } from "./AttachmentStrip";
+import { contextWindowPercentRemaining } from "./thread-page-helpers";
 
 type SlashSuggestion = {
   command: KnownSlashCommand;
@@ -25,7 +26,11 @@ export type MobileComposerStripInfo = {
   permissionLabel: string | null;
   pendingCount: number;
   contextUsage?: {
+    // Cumulative thread total — only the Codex-consistent fallback shown when
+    // the effective window is unknown.
     totalTokens: number;
+    // Last request's total tokens = live window occupancy; drives the %.
+    lastTokens: number | null;
     modelContextWindow: number | null;
   } | null;
   // ⚡ is the Fast/speed-tier marker (mirrors the Codex app). Only shown
@@ -91,7 +96,10 @@ function contextRingDetails(usage: MobileComposerStripInfo["contextUsage"]) {
     usage.modelContextWindow && usage.modelContextWindow > 0
       ? usage.modelContextWindow
       : null;
-  if (!windowSize) {
+  // No effective window, or no per-request figure yet: fall back to the raw
+  // cumulative count (matches Codex, which only shows the cumulative absolute
+  // when the context window is unknown).
+  if (!windowSize || usage.lastTokens === null) {
     return {
       label: `Context ${formatCompactTokenCount(usage.totalTokens)} tokens`,
       progress: null,
@@ -99,12 +107,12 @@ function contextRingDetails(usage: MobileComposerStripInfo["contextUsage"]) {
     };
   }
 
-  const progress = Math.min(100, Math.max(0, (usage.totalTokens / windowSize) * 100));
-  const rounded = Math.round(progress);
-  const level = rounded >= 85 ? "high" : rounded >= 65 ? "medium" : "low";
+  const remainingPercent = contextWindowPercentRemaining(usage.lastTokens, windowSize);
+  const usedPercent = 100 - remainingPercent;
+  const level = usedPercent >= 85 ? "high" : usedPercent >= 65 ? "medium" : "low";
   return {
-    label: `Context ${rounded}%, ${formatCompactTokenCount(usage.totalTokens)} of ${formatCompactTokenCount(windowSize)} tokens`,
-    progress,
+    label: `Context ${usedPercent}% (${remainingPercent}% left), ${formatCompactTokenCount(usage.lastTokens)} of ${formatCompactTokenCount(windowSize)} tokens`,
+    progress: usedPercent,
     level,
   };
 }

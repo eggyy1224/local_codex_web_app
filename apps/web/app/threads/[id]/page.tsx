@@ -100,6 +100,7 @@ import { useThreadViewportShell } from "./use-thread-viewport-shell";
 import {
   approvalFromEvent,
   asRecord,
+  contextWindowPercentRemaining,
   formatRateLimitStatus,
   formatTimestamp,
   implementPlanPrompt,
@@ -2220,13 +2221,20 @@ export default function ThreadPage({ params }: Props) {
         throw new Error(`rate-limits http ${rateLimitRes.status}`);
       }
       const rateLimitPayload = (await rateLimitRes.json()) as AccountRateLimitsResponse;
-      const usageLine = latestTokenUsage
-        ? `context: total ${latestTokenUsage.totalTokens}, input ${latestTokenUsage.inputTokens}, output ${latestTokenUsage.outputTokens}${
-            latestTokenUsage.modelContextWindow !== null
-              ? `, window ${latestTokenUsage.modelContextWindow}`
-              : ""
-          }`
-        : "context: n/a";
+      let usageLine = "context: n/a";
+      if (latestTokenUsage) {
+        const { lastTokens, modelContextWindow, totalTokens, inputTokens, outputTokens } =
+          latestTokenUsage;
+        const sessionTotal = `session total ${totalTokens} (in ${inputTokens}, out ${outputTokens})`;
+        if (lastTokens !== null && modelContextWindow !== null) {
+          const remaining = contextWindowPercentRemaining(lastTokens, modelContextWindow);
+          usageLine = `context: ${100 - remaining}% used, ${remaining}% left (last ${lastTokens}/${modelContextWindow}) · ${sessionTotal}`;
+        } else {
+          usageLine = `context: last ${lastTokens ?? "n/a"}, window ${
+            modelContextWindow ?? "n/a"
+          } · ${sessionTotal}`;
+        }
+      }
       const banner: StatusBanner = {
         generatedAt: new Date().toISOString(),
         lines: [
@@ -2666,6 +2674,7 @@ export default function ThreadPage({ params }: Props) {
             contextUsage: latestTokenUsage
               ? {
                   totalTokens: latestTokenUsage.totalTokens,
+                  lastTokens: latestTokenUsage.lastTokens,
                   modelContextWindow: latestTokenUsage.modelContextWindow,
                 }
               : null,

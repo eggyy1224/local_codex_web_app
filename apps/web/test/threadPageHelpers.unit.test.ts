@@ -3,6 +3,8 @@ import type { AccountRateLimitsResponse, GatewayEvent } from "@lcwa/shared-types
 import {
   approvalFromEvent,
   asRecord,
+  CONTEXT_WINDOW_BASELINE_TOKENS,
+  contextWindowPercentRemaining,
   formatRateLimitStatus,
   formatTimestamp,
   implementPlanPrompt,
@@ -238,7 +240,32 @@ describe("thread-page-helpers", () => {
       expect(tokenUsageFromEvent(event)).toBeNull();
     });
 
-    it("extracts totals, turnId, and modelContextWindow", () => {
+    it("extracts totals, last, turnId, and modelContextWindow", () => {
+      const event = gatewayEvent({
+        name: "thread/tokenUsage/updated",
+        kind: "thread",
+        payload: {
+          turnId: "turn-9",
+          tokenUsage: {
+            modelContextWindow: 1024,
+            total: { totalTokens: 30, inputTokens: 12, outputTokens: 18 },
+            last: { totalTokens: 21, inputTokens: 9, outputTokens: 12 },
+          },
+        },
+      });
+      expect(tokenUsageFromEvent(event)).toEqual({
+        threadId: "thread-1",
+        turnId: "turn-9",
+        totalTokens: 30,
+        inputTokens: 12,
+        outputTokens: 18,
+        lastTokens: 21,
+        modelContextWindow: 1024,
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      });
+    });
+
+    it("sets lastTokens to null when the last breakdown is absent", () => {
       const event = gatewayEvent({
         name: "thread/tokenUsage/updated",
         kind: "thread",
@@ -250,15 +277,7 @@ describe("thread-page-helpers", () => {
           },
         },
       });
-      expect(tokenUsageFromEvent(event)).toEqual({
-        threadId: "thread-1",
-        turnId: "turn-9",
-        totalTokens: 30,
-        inputTokens: 12,
-        outputTokens: 18,
-        modelContextWindow: 1024,
-        updatedAt: "2026-01-01T00:00:00.000Z",
-      });
+      expect(tokenUsageFromEvent(event)?.lastTokens).toBeNull();
     });
 
     it("falls back to snake_case turn_id and tolerates a missing context window", () => {
@@ -275,6 +294,32 @@ describe("thread-page-helpers", () => {
       const result = tokenUsageFromEvent(event);
       expect(result?.turnId).toBe("turn-7");
       expect(result?.modelContextWindow).toBeNull();
+    });
+  });
+
+  describe("contextWindowPercentRemaining", () => {
+    it("uses the 12000-token Codex baseline", () => {
+      expect(CONTEXT_WINDOW_BASELINE_TOKENS).toBe(12000);
+    });
+
+    it("reports ~100% remaining while usage is within the baseline", () => {
+      expect(contextWindowPercentRemaining(5_000, 120_000)).toBe(100);
+      expect(contextWindowPercentRemaining(12_000, 120_000)).toBe(100);
+    });
+
+    it("subtracts the baseline from both numerator and denominator", () => {
+      // effective = 120000 - 12000 = 108000; used = 70000 - 12000 = 58000
+      // remaining = 50000 -> round(50000 / 108000 * 100) = 46
+      expect(contextWindowPercentRemaining(70_000, 120_000)).toBe(46);
+    });
+
+    it("returns 0 once the effective window is exhausted", () => {
+      expect(contextWindowPercentRemaining(200_000, 120_000)).toBe(0);
+    });
+
+    it("returns 0 when the window is at or below the baseline", () => {
+      expect(contextWindowPercentRemaining(1_000, 12_000)).toBe(0);
+      expect(contextWindowPercentRemaining(1_000, 8_000)).toBe(0);
     });
   });
 

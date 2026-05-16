@@ -112,6 +112,11 @@ describe("thread logic helpers", () => {
             inputTokens: 70,
             outputTokens: 30,
           },
+          last: {
+            totalTokens: 64,
+            inputTokens: 50,
+            outputTokens: 14,
+          },
           modelContextWindow: 128000,
         },
       },
@@ -165,7 +170,7 @@ describe("thread logic helpers", () => {
     expect(timelineItemFromGatewayEvent(tokenUsage)).toMatchObject({
       type: "status",
       title: "Token usage updated",
-      text: "total 100 · input 70 · output 30 · window 128000",
+      text: "last 64 · total 100 · input 70 · output 30 · window 128000",
     });
     expect(timelineItemFromGatewayEvent(planUpdated)).toMatchObject({
       type: "status",

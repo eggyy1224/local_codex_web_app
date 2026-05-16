@@ -174,12 +174,18 @@ function collabToolArguments(item: Record<string, unknown>, toolName: string): s
 function formatTokenUsageStatus(payload: Record<string, unknown> | null): string | null {
   const tokenUsage = asRecord(payload?.tokenUsage);
   const total = asRecord(tokenUsage?.total);
+  const last = asRecord(tokenUsage?.last);
   const modelContextWindow = tokenUsage?.modelContextWindow;
+  // `last` is the live context-window occupancy (whole conversation resent each
+  // turn); `total` is the cumulative session sum. Surface `last` first so the
+  // echo isn't read as context usage being the ever-growing cumulative figure.
+  const lastTokens = typeof last?.totalTokens === "number" ? last.totalTokens : null;
   const totalTokens = typeof total?.totalTokens === "number" ? total.totalTokens : null;
   const inputTokens = typeof total?.inputTokens === "number" ? total.inputTokens : null;
   const outputTokens = typeof total?.outputTokens === "number" ? total.outputTokens : null;
   const contextWindow = typeof modelContextWindow === "number" ? modelContextWindow : null;
   const parts = [
+    lastTokens !== null ? `last ${lastTokens}` : null,
     totalTokens !== null ? `total ${totalTokens}` : null,
     inputTokens !== null ? `input ${inputTokens}` : null,
     outputTokens !== null ? `output ${outputTokens}` : null,

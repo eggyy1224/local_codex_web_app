@@ -55,7 +55,30 @@ describe("MobileComposerDock slice 4: plus menu + compact strip", () => {
     expect(screen.queryByTestId("mobile-composer-strip-pending")).not.toBeInTheDocument();
   });
 
-  it("renders context usage as a circular progress ring when token window is known", () => {
+  it("renders the ring from the Codex-aligned last/window math (not cumulative total)", () => {
+    renderDock({
+      strip: {
+        model: "gpt-5",
+        effortLabel: "High",
+        permissionLabel: "local",
+        pendingCount: 0,
+        contextUsage: {
+          // Cumulative total is large but must NOT drive the ring.
+          totalTokens: 480_000,
+          // effective = 120000 - 12000 = 108000; used = 70000 - 12000 = 58000
+          // remaining% = round(50000 / 108000 * 100) = 46 -> used% = 54
+          lastTokens: 70_000,
+          modelContextWindow: 120_000,
+        },
+      },
+    });
+    const ring = screen.getByTestId("mobile-composer-context-ring");
+    expect(ring).toHaveAttribute("data-level", "low");
+    expect(ring).toHaveAttribute("title", "Context 54% (46% left), 70k of 120k tokens");
+    expect((ring as HTMLElement).style.getPropertyValue("--context-ring-progress")).toBe("54%");
+  });
+
+  it("falls back to the cumulative total when no per-request figure is available", () => {
     renderDock({
       strip: {
         model: "gpt-5",
@@ -64,14 +87,14 @@ describe("MobileComposerDock slice 4: plus menu + compact strip", () => {
         pendingCount: 0,
         contextUsage: {
           totalTokens: 4_000,
-          modelContextWindow: 8_000,
+          lastTokens: null,
+          modelContextWindow: 120_000,
         },
       },
     });
     const ring = screen.getByTestId("mobile-composer-context-ring");
-    expect(ring).toHaveAttribute("data-level", "low");
-    expect(ring).toHaveAttribute("title", "Context 50%, 4k of 8k tokens");
-    expect((ring as HTMLElement).style.getPropertyValue("--context-ring-progress")).toBe("50%");
+    expect(ring).toHaveAttribute("data-level", "unknown");
+    expect(ring).toHaveAttribute("title", "Context 4k tokens");
   });
 
   it("marks the context ring high when usage is near the context window", () => {
@@ -82,8 +105,11 @@ describe("MobileComposerDock slice 4: plus menu + compact strip", () => {
         permissionLabel: "local",
         pendingCount: 0,
         contextUsage: {
-          totalTokens: 91_000,
-          modelContextWindow: 100_000,
+          totalTokens: 600_000,
+          // effective = 188000; used = 178000; remaining% = round(5.319) = 5
+          // -> used% = 95 -> high
+          lastTokens: 190_000,
+          modelContextWindow: 200_000,
         },
       },
     });
