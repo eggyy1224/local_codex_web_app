@@ -71,17 +71,12 @@ import {
   type MobileThreadSwitcherGroup,
 } from "./MobileThreadSwitcherOverlay";
 import {
-  emptyStateMessage,
-  filterThreadSwitcherGroups,
-  type ThreadSwitcherFilter,
-  type ThreadSwitcherGroup,
-} from "./thread-switcher-shared";
-import {
   answersForInteractionQuestions,
   updateInteractionQuestionDrafts,
   type InteractionQuestionDrafts,
 } from "./InteractionQuestionForm";
 import { useThreadViewportShell } from "./use-thread-viewport-shell";
+import { useThreadSidebarFilterController } from "./use-thread-sidebar-filter-controller";
 import { fetchThreadSnapshot, type ThreadSnapshot } from "./thread-page-api";
 import {
   approvalFromEvent,
@@ -214,11 +209,6 @@ export default function ThreadPageClient({ params }: Props) {
   const [threadList, setThreadList] = useState<ThreadListItem[]>([]);
   const [threadListLoading, setThreadListLoading] = useState(true);
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  // Desktop sidebar — own copies of search + filter state so the mobile drawer
-  // resetting on close doesn't blow away what the user typed on desktop, and
-  // vice versa.
-  const [sidebarSearchQuery, setSidebarSearchQuery] = useState("");
-  const [sidebarStatusFilter, setSidebarStatusFilter] = useState<ThreadSwitcherFilter>("all");
   const [isThreadSwitcherOpen, setIsThreadSwitcherOpen] = useState(false);
   const [switcherCollapsedGroups, setSwitcherCollapsedGroups] = useState<Set<string>>(() => new Set());
   const [isControlSheetOpen, setIsControlSheetOpen] = useState(false);
@@ -977,28 +967,17 @@ export default function ThreadPageClient({ params }: Props) {
     }
     return result;
   }, [groupedThreads]);
-  const sidebarFilteredGroups = useMemo<ThreadSwitcherGroup[]>(
-    () =>
-      filterThreadSwitcherGroups(
-        mobileThreadSwitcherGroups,
-        sidebarStatusFilter,
-        sidebarSearchQuery,
-      ),
-    [mobileThreadSwitcherGroups, sidebarStatusFilter, sidebarSearchQuery],
-  );
-  const sidebarListIsEmpty = useMemo(
-    () => sidebarFilteredGroups.every((group) => group.items.length === 0),
-    [sidebarFilteredGroups],
-  );
-  const sidebarEmptyMessage = useMemo(
-    () =>
-      emptyStateMessage(
-        mobileThreadSwitcherGroups,
-        sidebarStatusFilter,
-        sidebarSearchQuery,
-      ),
-    [mobileThreadSwitcherGroups, sidebarStatusFilter, sidebarSearchQuery],
-  );
+  const {
+    sidebarSearchQuery,
+    setSidebarSearchQuery,
+    sidebarStatusFilter,
+    setSidebarStatusFilter,
+    sidebarFilteredGroups,
+    sidebarListIsEmpty,
+    sidebarEmptyMessage,
+  } = useThreadSidebarFilterController({
+    switcherGroups: mobileThreadSwitcherGroups,
+  });
   const activeProjectKey = useMemo(() => {
     if (activeThread?.projectKey) {
       return activeThread.projectKey;
