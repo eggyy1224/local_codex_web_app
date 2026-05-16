@@ -232,6 +232,11 @@ test("desktop plan flow: answer questions then implement proposed plan", async (
   await page.getByPlaceholder("Other").fill("canary rollout");
   await page.getByTestId("interaction-submit").click();
 
+  // The desktop status row (with the "Pending questions" counter) was moved
+  // into a collapsed <details> by the desktop restyle (commit 95e1482); open
+  // it before reading, otherwise innerText of the hidden content is empty.
+  await page.locator("details.cdx-thread-details > summary").click();
+
   await expect
     .poll(async () => {
       const status = await page.locator(".cdx-status-row").innerText();
