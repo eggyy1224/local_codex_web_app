@@ -49,6 +49,7 @@ describe("thread event store", () => {
       type: "hydrateTimeline",
       threadId: "thread-1",
       items: [timelineItem()],
+      lastSeq: 0,
     });
     state = threadEventStoreReducer(state, {
       type: "appendGatewayEvent",
@@ -62,6 +63,57 @@ describe("thread event store", () => {
     expect(state.activeTurnId).toBe("turn-1");
     expect(state.lastSeq).toBe(1);
     expect(selectThreadTimelineItems(state)).toHaveLength(1);
+  });
+
+  it("discards pre-hydration backlog at the snapshot head but keeps genuinely-new early events", () => {
+    let state = createThreadEventStoreState("thread-1");
+
+    // SSE connected at since=0 before the snapshot resolved: replayed backlog
+    // for a long-completed turn lands while lastSeq is still 0, so the
+    // appendGatewayEvent guard cannot drop it yet.
+    state = threadEventStoreReducer(state, {
+      type: "appendGatewayEvent",
+      event: gatewayEvent({ seq: 200, name: "turn/started", turnId: "turn-old" }),
+    });
+    state = threadEventStoreReducer(state, {
+      type: "appendGatewayEvent",
+      event: gatewayEvent({
+        seq: 201,
+        name: "item/agentMessage/delta",
+        turnId: "turn-old",
+        kind: "item",
+        payload: { text: "stale" },
+      }),
+    });
+    // A genuinely-new turn that started after the snapshot head was measured
+    // also arrives in the race window.
+    state = threadEventStoreReducer(state, {
+      type: "appendGatewayEvent",
+      event: gatewayEvent({ seq: 600, name: "turn/started", turnId: "turn-new" }),
+    });
+
+    expect(state.liveEvents.map((event) => event.seq)).toEqual([200, 201, 600]);
+
+    // Snapshot resolves with head 500: turn-old (<= 500) is historical
+    // backlog; turn-new (600) is newer than the snapshot and must survive.
+    state = threadEventStoreReducer(state, {
+      type: "hydrateTimeline",
+      threadId: "thread-1",
+      items: [],
+      lastSeq: 500,
+    });
+
+    expect(state.liveEvents.map((event) => event.seq)).toEqual([600]);
+    expect(state.liveThreadListEvents.map((event) => event.turnId)).toEqual([
+      "turn-new",
+    ]);
+    expect(state.lastSeq).toBe(600);
+
+    const turnIds = new Set(
+      selectThreadTimelineItems(state).map((item) => item.turnId),
+    );
+    expect(turnIds.has("turn-old")).toBe(false);
+    expect(turnIds.has("turn-new")).toBe(true);
   });
 
   it("ignores events from another thread and stale seq values", () => {
@@ -107,6 +159,7 @@ describe("thread event store", () => {
     state = threadEventStoreReducer(state, {
       type: "hydrateTimeline",
       threadId: "thread-1",
+      lastSeq: 0,
       items: [
         timelineItem(),
         timelineItem({

@@ -128,11 +128,24 @@ export function threadEventStoreReducer(
     if (state.threadId && action.threadId !== state.threadId) {
       return state;
     }
+    // The SSE can connect (since=0) and append replayed backlog into
+    // liveEvents BEFORE this snapshot resolves, while lastSeq is still 0. Drop
+    // anything at/below the snapshot head: those events are historical backlog
+    // already represented by baseTimelineItems, and keeping them would render
+    // a long-completed turn/started (plus its stale deltas) as a live
+    // streaming turn. Events strictly past the head are genuinely newer than
+    // the snapshot (e.g. an event inserted during the non-atomic snapshot
+    // read, or a real early live turn) and must be preserved.
+    const snapshotHead = action.lastSeq;
     return {
       ...state,
       threadId: action.threadId,
       baseTimelineItems: action.items,
       activeTurnId: activeTurnIdAfterTimelineItems(action.items),
+      liveEvents: state.liveEvents.filter((event) => event.seq > snapshotHead),
+      liveThreadListEvents: state.liveThreadListEvents.filter(
+        (event) => event.seq > snapshotHead,
+      ),
       // Advance the cursor to the snapshot head so the SSE backlog replay
       // (every event with seq <= head) is dropped by appendGatewayEvent below
       // instead of re-applying a long-completed turn/started. Never move the
