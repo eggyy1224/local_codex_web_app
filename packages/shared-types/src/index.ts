@@ -124,6 +124,10 @@ export type ThreadTimelineItem = {
 
 export type ThreadTimelineResponse = {
   data: ThreadTimelineItem[];
+  // Highest events_log seq for this thread at snapshot time. The client resumes
+  // its SSE stream from here so the gateway never replays the historical
+  // backlog as if it were live (which used to strand the sidebar on "Running").
+  lastSeq: number;
 };
 
 export type UploadEntry = {

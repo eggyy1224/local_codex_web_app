@@ -955,6 +955,195 @@ describe("Thread page integration", () => {
     });
   });
 
+  it("does not flip a settled thread to Running when the SSE replays a long-completed turn/started from the historical backlog (regression)", async () => {
+    setMobileViewport(true);
+    vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+    MockEventSource.instances.length = 0;
+    const idleThread = {
+      id: "thread-1",
+      projectKey: "/repos/alpha",
+      title: "Alpha Thread",
+      preview: "",
+      status: "idle",
+      lastActiveAt: "2026-01-03T00:00:00.000Z",
+      archived: false,
+      waitingApprovalCount: 0,
+      errorCount: 0,
+    };
+
+    server.use(
+      http.get("http://127.0.0.1:8795/api/threads/:id", ({ params }) =>
+        HttpResponse.json({
+          thread: {
+            id: String(params.id),
+            title: "Alpha Thread",
+            preview: "",
+            status: "idle",
+            createdAt: null,
+            updatedAt: null,
+          },
+          turns: [],
+          nextCursor: null,
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/approvals/pending", () =>
+        HttpResponse.json({ data: [] }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/interactions/pending", () =>
+        HttpResponse.json({ data: [] }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads", () =>
+        HttpResponse.json({ data: [idleThread], nextCursor: null }),
+      ),
+      // The gateway snapshot is authoritative as of seq 500 (the thread's true
+      // head). Everything <= 500 is historical backlog the SSE will replay.
+      http.get("http://127.0.0.1:8795/api/threads/:id/timeline", () =>
+        HttpResponse.json({ data: [], lastSeq: 500 }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/context", () =>
+        HttpResponse.json({
+          threadId: "thread-1",
+          cwd: "/repos/alpha",
+          resolvedCwd: "/repos/alpha",
+          isFallback: false,
+          source: "projection",
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/models", () => HttpResponse.json({ data: [] })),
+    );
+
+    render(<ThreadPage params={Promise.resolve({ id: "thread-1" })} />);
+
+    fireEvent.click(await screen.findByLabelText("Open threads"));
+    const overlay = await screen.findByTestId("mobile-thread-switcher-overlay");
+    expect(within(overlay).getByText("Idle")).toBeInTheDocument();
+
+    const es = MockEventSource.instances.at(-1);
+    if (!es) {
+      throw new Error("missing EventSource instance");
+    }
+
+    // since=0 replay: the gateway streams the bounded historical backlog. It
+    // contains a turn/started (seq 200) whose matching turn/completed sits
+    // beyond the replay cap and is NEVER delivered. seq 200 <= head 500, so the
+    // event-store reducer drops it and the sidebar gate ignores it. This is the
+    // exact shape that used to strand the row on "Running" forever.
+    es.emit("gateway", {
+      seq: 200,
+      serverTs: "2026-01-03T13:45:07.000Z",
+      threadId: "thread-1",
+      turnId: "turn-old",
+      kind: "turn",
+      name: "turn/started",
+      payload: {
+        threadId: "thread-1",
+        turnId: "turn-old",
+        turn: { id: "turn-old", status: "in_progress" },
+      },
+    });
+
+    // The suppressed start must never surface. waitFor polls over time, so a
+    // regression (seq 200 flips the row to "active") would keep this Idle
+    // assertion failing until it times out.
+    await waitFor(() => {
+      const row = within(overlay).getByText("Alpha Thread").closest("button");
+      expect(row).not.toBeNull();
+      expect(within(row as HTMLElement).getByText("Idle")).toBeInTheDocument();
+    });
+    const row = within(overlay).getByText("Alpha Thread").closest("button");
+    expect(within(row as HTMLElement).queryByText("Running")).toBeNull();
+  });
+
+  it("still flips a thread to Running for a genuinely-new turn/started past the snapshot head", async () => {
+    setMobileViewport(true);
+    vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+    MockEventSource.instances.length = 0;
+    const idleThread = {
+      id: "thread-1",
+      projectKey: "/repos/alpha",
+      title: "Alpha Thread",
+      preview: "",
+      status: "idle",
+      lastActiveAt: "2026-01-03T00:00:00.000Z",
+      archived: false,
+      waitingApprovalCount: 0,
+      errorCount: 0,
+    };
+
+    server.use(
+      http.get("http://127.0.0.1:8795/api/threads/:id", ({ params }) =>
+        HttpResponse.json({
+          thread: {
+            id: String(params.id),
+            title: "Alpha Thread",
+            preview: "",
+            status: "idle",
+            createdAt: null,
+            updatedAt: null,
+          },
+          turns: [],
+          nextCursor: null,
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/approvals/pending", () =>
+        HttpResponse.json({ data: [] }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/interactions/pending", () =>
+        HttpResponse.json({ data: [] }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads", () =>
+        HttpResponse.json({ data: [idleThread], nextCursor: null }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/timeline", () =>
+        HttpResponse.json({ data: [], lastSeq: 500 }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/context", () =>
+        HttpResponse.json({
+          threadId: "thread-1",
+          cwd: "/repos/alpha",
+          resolvedCwd: "/repos/alpha",
+          isFallback: false,
+          source: "projection",
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/models", () => HttpResponse.json({ data: [] })),
+    );
+
+    render(<ThreadPage params={Promise.resolve({ id: "thread-1" })} />);
+
+    fireEvent.click(await screen.findByLabelText("Open threads"));
+    const overlay = await screen.findByTestId("mobile-thread-switcher-overlay");
+    expect(within(overlay).getByText("Idle")).toBeInTheDocument();
+
+    const es = MockEventSource.instances.at(-1);
+    if (!es) {
+      throw new Error("missing EventSource instance");
+    }
+
+    // A genuinely-new turn starts past the snapshot head (seq 501 > 500) and
+    // never completes. It must still flip the row to Running — the backlog
+    // suppression must not over-suppress real live turns.
+    es.emit("gateway", {
+      seq: 501,
+      serverTs: "2026-01-03T00:00:05.000Z",
+      threadId: "thread-1",
+      turnId: "turn-running",
+      kind: "turn",
+      name: "turn/started",
+      payload: {
+        threadId: "thread-1",
+        turnId: "turn-running",
+        turn: { id: "turn-running", status: "in_progress" },
+      },
+    });
+
+    await waitFor(() => {
+      const row = within(overlay).getByText("Alpha Thread").closest("button");
+      expect(row).not.toBeNull();
+      expect(within(row as HTMLElement).getByText("Running")).toBeInTheDocument();
+    });
+  });
+
   it("mobile thread page opens a canvas iframe from the canvas query param", async () => {
     setMobileViewport(true);
     searchParamsValue = new URLSearchParams({

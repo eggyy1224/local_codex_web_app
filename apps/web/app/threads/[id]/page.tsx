@@ -215,6 +215,14 @@ export default function ThreadPage({ params }: Props) {
   const previousThreadIdRef = useRef("");
   const activeThreadIdRef = useRef("");
   const snapshotSyncInFlightThreadRef = useRef<string | null>(null);
+  // Highest events_log seq known from the latest applied snapshot. The SSE
+  // resumes from here and sidebar status is only mutated by events past it, so
+  // the historical backlog replay can't re-flip a settled row to "Running".
+  const snapshotHeadSeqRef = useRef(0);
+  // Until the first authoritative snapshot lands, SSE events still feed the
+  // event store (so early pre-snapshot turns aren't lost) but must NOT touch
+  // the sidebar — applyThreadSnapshot rebuilds it from the authoritative list.
+  const firstSnapshotAppliedRef = useRef(false);
   const forceEventSourceReconnectRef = useRef<(() => void) | null>(null);
   const resolvedApprovalIdsRef = useRef<Set<string>>(new Set());
   const resolvedInteractionIdsRef = useRef<Set<string>>(new Set());
@@ -470,6 +478,8 @@ export default function ThreadPage({ params }: Props) {
     if (!initialThreadReadyRef.current) {
       initialThreadReadyRef.current = true;
       previousThreadIdRef.current = threadId;
+      snapshotHeadSeqRef.current = 0;
+      firstSnapshotAppliedRef.current = false;
       dispatchThreadEventStore({ type: "reset", threadId });
       return;
     }
@@ -495,6 +505,8 @@ export default function ThreadPage({ params }: Props) {
     // /context is slower than the user's first keystroke after creating
     // a thread in another project.
     setThreadContext((prev) => (prev?.threadId === threadId ? prev : null));
+    snapshotHeadSeqRef.current = 0;
+    firstSnapshotAppliedRef.current = false;
     dispatchThreadEventStore({ type: "reset", threadId });
     setConnectionState("connecting");
     setLastEventAtMs(Date.now());
@@ -631,20 +643,28 @@ export default function ThreadPage({ params }: Props) {
     window.localStorage.setItem(THINKING_EFFORT_STORAGE_KEY, thinkingEffort);
   }, [thinkingEffort]);
 
-  const applyThreadSnapshot = useCallback((requestThreadId: string, snapshot: ThreadSnapshot, startedSeq = 0) => {
+  const applyThreadSnapshot = useCallback((requestThreadId: string, snapshot: ThreadSnapshot) => {
     if (activeThreadIdRef.current !== requestThreadId) {
       return;
     }
 
+    const headSeq = snapshot.timeline.lastSeq ?? 0;
+    snapshotHeadSeqRef.current = headSeq;
+
     setDetail(snapshot.data);
     setThreadListLoading(false);
     setThreadList(() => {
-      const liveEventsAfterSnapshotStarted =
+      // The snapshot list is authoritative as of headSeq. Only fold in
+      // genuinely-newer live events (seq > headSeq): everything up to headSeq
+      // is already reflected, and replaying the historical backlog here is
+      // exactly what used to strand a completed thread on "Running".
+      const liveEventsAfterSnapshot =
         threadEventStoreRef.current.liveThreadListEvents.filter(
-          (event) => event.seq > startedSeq,
+          (event) => event.seq > headSeq,
         );
-      return liveEventsAfterSnapshotStarted.reduce(
-        (items, event) => items.map((item) => threadListItemFromGatewayEvent(item, event)),
+      return liveEventsAfterSnapshot.reduce(
+        (items, event) =>
+          items.map((item) => threadListItemFromGatewayEvent(item, event)),
         snapshot.threadListResult.data,
       );
     });
@@ -681,9 +701,11 @@ export default function ThreadPage({ params }: Props) {
       type: "hydrateTimeline",
       threadId: requestThreadId,
       items: snapshot.timeline.data,
+      lastSeq: headSeq,
     });
     setLoading(false);
     setError(null);
+    firstSnapshotAppliedRef.current = true;
   }, []);
 
   const syncThreadSnapshot = useCallback(async () => {
@@ -692,11 +714,10 @@ export default function ThreadPage({ params }: Props) {
     }
 
     const requestThreadId = threadId;
-    const snapshotStartedSeq = threadEventStoreRef.current.lastSeq;
     snapshotSyncInFlightThreadRef.current = requestThreadId;
     try {
       const snapshot = await fetchThreadSnapshot(requestThreadId);
-      applyThreadSnapshot(requestThreadId, snapshot, snapshotStartedSeq);
+      applyThreadSnapshot(requestThreadId, snapshot);
     } catch {
       if (activeThreadIdRef.current === requestThreadId) {
         setConnectionState("lagging");
@@ -717,10 +738,9 @@ export default function ThreadPage({ params }: Props) {
 
     async function load() {
       try {
-        const snapshotStartedSeq = threadEventStoreRef.current.lastSeq;
         const snapshot = await fetchThreadSnapshot(threadId);
         if (!cancelled) {
-          applyThreadSnapshot(threadId, snapshot, snapshotStartedSeq);
+          applyThreadSnapshot(threadId, snapshot);
         }
       } catch (loadError) {
         if (!cancelled) {
@@ -778,6 +798,10 @@ export default function ThreadPage({ params }: Props) {
       closeEventSource();
       setConnectionState(isRetry ? "reconnecting" : "connecting");
 
+      // Resume from the snapshot head once it is known so the gateway never
+      // replays the historical backlog. Forward-only: a live event already
+      // consumed must not be re-requested.
+      currentSince = Math.max(currentSince, snapshotHeadSeqRef.current);
       es = new EventSource(`${gatewayUrl}/api/threads/${threadId}/events?since=${currentSince}`);
 
       es.addEventListener("gateway", (event) => {
@@ -790,9 +814,16 @@ export default function ThreadPage({ params }: Props) {
         }
         currentSince = payload.seq;
         dispatchThreadEventStore({ type: "appendGatewayEvent", event: payload });
-        setThreadList((prev) =>
-          prev.map((item) => threadListItemFromGatewayEvent(item, payload)),
-        );
+        // Only genuinely-live events (past the snapshot head, and only once
+        // the authoritative snapshot has rebuilt the list) may move a sidebar
+        // row's status. Race-proof against a since=0 connection that beat the
+        // snapshot: backlog events stay <= head and pre-snapshot events are
+        // held back entirely.
+        if (firstSnapshotAppliedRef.current && payload.seq > snapshotHeadSeqRef.current) {
+          setThreadList((prev) =>
+            prev.map((item) => threadListItemFromGatewayEvent(item, payload)),
+          );
+        }
         setLastEventAtMs(Date.now());
         reconnectAttempt = 0;
         setConnectionState("connected");

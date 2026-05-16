@@ -69,6 +69,7 @@ export type GatewayDbPort = {
   updateThreadProjectKey(threadId: string, projectKey: string): void;
   insertGatewayEvent(event: Omit<GatewayEvent, "seq">): number;
   listGatewayEventsSince(threadId: string, since: number, limit?: number): GatewayEvent[];
+  getMaxGatewayEventSeq(threadId: string): number;
   upsertApprovalRequest(row: ApprovalProjection): void;
   resolveApprovalRequest(
     approvalId: string,
@@ -345,6 +346,12 @@ ORDER BY seq ASC
 LIMIT ?
 `);
 
+  const maxEventSeqStmt = sqlite.prepare(`
+SELECT COALESCE(MAX(seq), 0) AS seq
+FROM events_log
+WHERE thread_id = ?
+`);
+
   const upsertApprovalStmt = sqlite.prepare(`
 INSERT INTO approvals (
   approval_id,
@@ -594,6 +601,10 @@ ORDER BY created_at ASC
         payload: JSON.parse(row.payload_json),
         serverTs: row.server_ts,
       }));
+    },
+    getMaxGatewayEventSeq(threadId: string): number {
+      const row = maxEventSeqStmt.get(threadId) as { seq: number } | undefined;
+      return row?.seq ?? 0;
     },
     upsertApprovalRequest(row: ApprovalProjection): void {
       upsertApprovalStmt.run(

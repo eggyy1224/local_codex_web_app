@@ -55,6 +55,10 @@ function maxIsoTimestamp(current: string, candidate: string): string {
   return candidate > current ? candidate : current;
 }
 
+// Reduce a single gateway event onto a sidebar row. Callers MUST only feed
+// genuinely-live events here (seq > the snapshot head): the historical backlog
+// is dropped upstream by the SSE since-cursor and the event-store reducer, so a
+// long-completed turn/started can no longer strand a row on "active".
 export function threadListItemFromGatewayEvent(
   item: ThreadListItem,
   event: GatewayEvent,

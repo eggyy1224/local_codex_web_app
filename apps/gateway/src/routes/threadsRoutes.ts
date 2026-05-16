@@ -348,8 +348,17 @@ export function registerThreadsRoutes(
     const query = request.query as { limit?: string };
     const limit = Math.min(Math.max(Number(query.limit ?? "800") || 800, 1), 2000);
 
+    // Read the SSE resume cursor BEFORE building the snapshot. The timeline
+    // comes from the rollout/session file while lastSeq comes from events_log —
+    // two non-atomic stores. If we measured lastSeq after the (non-atomic)
+    // timeline read, an event inserted during the read could be missing from
+    // `data` yet covered by lastSeq, so the client would treat it as already
+    // reflected and never replay it (lost until a later resync). Measuring
+    // first makes lastSeq a safe lower bound: any later event is still replayed
+    // over SSE (at worst a deduped duplicate, never a gap).
+    const lastSeq = db.getMaxGatewayEventSeq(params.id);
     const data = await loadThreadTimelineFromSession(threadContextResolver, params.id, limit);
-    return { data };
+    return { data, lastSeq };
   });
 
   app.get("/api/threads/:id/events", async (request, reply) => {

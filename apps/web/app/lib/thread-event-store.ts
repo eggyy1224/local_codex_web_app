@@ -21,7 +21,12 @@ export type ThreadEventStoreState = {
 
 export type ThreadEventStoreAction =
   | { type: "reset"; threadId: string }
-  | { type: "hydrateTimeline"; threadId: string; items: ThreadTimelineItem[] }
+  | {
+      type: "hydrateTimeline";
+      threadId: string;
+      items: ThreadTimelineItem[];
+      lastSeq: number;
+    }
   | { type: "appendGatewayEvent"; event: GatewayEvent };
 
 export const MAX_LIVE_EVENTS = 600;
@@ -128,6 +133,12 @@ export function threadEventStoreReducer(
       threadId: action.threadId,
       baseTimelineItems: action.items,
       activeTurnId: activeTurnIdAfterTimelineItems(action.items),
+      // Advance the cursor to the snapshot head so the SSE backlog replay
+      // (every event with seq <= head) is dropped by appendGatewayEvent below
+      // instead of re-applying a long-completed turn/started. Never move the
+      // cursor backwards: a mid-stream resync may carry an older head than
+      // live events already consumed.
+      lastSeq: Math.max(state.lastSeq, action.lastSeq),
     };
   }
 
