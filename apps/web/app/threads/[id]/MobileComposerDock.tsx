@@ -12,7 +12,7 @@ import type {
 import type { FuzzyFileMatch } from "@lcwa/shared-types";
 import type { KnownSlashCommand } from "../../lib/slash-commands";
 import AttachmentStrip, { type PendingAttachment } from "./AttachmentStrip";
-import { contextWindowPercentRemaining } from "./thread-page-helpers";
+import { contextUsageSummary } from "./thread-page-helpers";
 
 type SlashSuggestion = {
   command: KnownSlashCommand;
@@ -67,55 +67,6 @@ type MobileComposerDockProps = {
 
 const OPEN_DISTANCE_THRESHOLD = 64;
 const OPEN_VELOCITY_THRESHOLD = 0.35;
-
-function formatCompactTokenCount(tokens: number): string {
-  if (!Number.isFinite(tokens) || tokens <= 0) {
-    return "0";
-  }
-  if (tokens >= 1_000_000) {
-    const value = tokens / 1_000_000;
-    return `${value >= 10 ? Math.round(value) : Number(value.toFixed(1))}m`;
-  }
-  if (tokens >= 1_000) {
-    const value = tokens / 1_000;
-    return `${value >= 10 ? Math.round(value) : Number(value.toFixed(1))}k`;
-  }
-  return String(tokens);
-}
-
-function contextRingDetails(usage: MobileComposerStripInfo["contextUsage"]) {
-  if (!usage) {
-    return {
-      label: "Context usage not available yet",
-      progress: null,
-      level: "unknown" as const,
-    };
-  }
-
-  const windowSize =
-    usage.modelContextWindow && usage.modelContextWindow > 0
-      ? usage.modelContextWindow
-      : null;
-  // No effective window, or no per-request figure yet: fall back to the raw
-  // cumulative count (matches Codex, which only shows the cumulative absolute
-  // when the context window is unknown).
-  if (!windowSize || usage.lastTokens === null) {
-    return {
-      label: `Context ${formatCompactTokenCount(usage.totalTokens)} tokens`,
-      progress: null,
-      level: "unknown" as const,
-    };
-  }
-
-  const remainingPercent = contextWindowPercentRemaining(usage.lastTokens, windowSize);
-  const usedPercent = 100 - remainingPercent;
-  const level = usedPercent >= 85 ? "high" : usedPercent >= 65 ? "medium" : "low";
-  return {
-    label: `Context ${usedPercent}% (${remainingPercent}% left), ${formatCompactTokenCount(usage.lastTokens)} of ${formatCompactTokenCount(windowSize)} tokens`,
-    progress: usedPercent,
-    level,
-  };
-}
 
 export default function MobileComposerDock({
   prompt,
@@ -264,7 +215,7 @@ export default function MobileComposerDock({
     }
   };
 
-  const contextRing = contextRingDetails(strip?.contextUsage ?? null);
+  const contextRing = contextUsageSummary(strip?.contextUsage ?? null);
   const contextRingStyle =
     contextRing.progress === null
       ? undefined

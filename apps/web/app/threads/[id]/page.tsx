@@ -100,6 +100,7 @@ import { useThreadViewportShell } from "./use-thread-viewport-shell";
 import {
   approvalFromEvent,
   asRecord,
+  contextUsageSummary,
   contextWindowPercentRemaining,
   formatRateLimitStatus,
   formatTimestamp,
@@ -1502,6 +1503,22 @@ export default function ThreadPage({ params }: Props) {
       return next;
     });
   }, []);
+
+  // Desktop has no persistent context indicator (mobile shows a ring in the
+  // composer); surface the same numbers in the desktop status row.
+  const desktopContextUsage = useMemo(
+    () =>
+      contextUsageSummary(
+        latestTokenUsage
+          ? {
+              totalTokens: latestTokenUsage.totalTokens,
+              lastTokens: latestTokenUsage.lastTokens,
+              modelContextWindow: latestTokenUsage.modelContextWindow,
+            }
+          : null,
+      ),
+    [latestTokenUsage],
+  );
 
   async function createThread(targetProjectKey?: string): Promise<void> {
     const projectKey = targetProjectKey ?? activeProjectKey;
@@ -3149,6 +3166,19 @@ export default function ThreadPage({ params }: Props) {
             <div className="cdx-status-row">
               <span className={`cdx-status ${statusClass(connectionState === "connected" ? "completed" : "unknown")}`}>
                 {connectionText}
+              </span>
+              <span
+                data-testid="desktop-context-usage"
+                title={desktopContextUsage.label}
+                className={`cdx-status ${
+                  desktopContextUsage.level === "high"
+                    ? "is-offline"
+                    : desktopContextUsage.level === "medium"
+                      ? "is-pending"
+                      : "is-online"
+                }`}
+              >
+                {desktopContextUsage.label}
               </span>
               <span
                 data-testid="collaboration-mode"

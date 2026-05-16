@@ -310,6 +310,72 @@ export function contextWindowPercentRemaining(
   return Math.round(Math.min(100, Math.max(0, percent)));
 }
 
+export type ContextUsageInput = {
+  // Cumulative thread total — the Codex-consistent fallback shown when the
+  // effective window is unknown.
+  totalTokens: number;
+  // Last request's total tokens = live window occupancy; drives the %.
+  lastTokens: number | null;
+  modelContextWindow: number | null;
+} | null;
+
+export type ContextUsageSummary = {
+  label: string;
+  progress: number | null;
+  level: "unknown" | "low" | "medium" | "high";
+};
+
+export function formatCompactTokenCount(tokens: number): string {
+  if (!Number.isFinite(tokens) || tokens <= 0) {
+    return "0";
+  }
+  if (tokens >= 1_000_000) {
+    const value = tokens / 1_000_000;
+    return `${value >= 10 ? Math.round(value) : Number(value.toFixed(1))}m`;
+  }
+  if (tokens >= 1_000) {
+    const value = tokens / 1_000;
+    return `${value >= 10 ? Math.round(value) : Number(value.toFixed(1))}k`;
+  }
+  return String(tokens);
+}
+
+// Shared by the mobile composer context ring and the desktop status row so
+// both viewports report identical numbers/labels from one source.
+export function contextUsageSummary(usage: ContextUsageInput): ContextUsageSummary {
+  if (!usage) {
+    return {
+      label: "Context usage not available yet",
+      progress: null,
+      level: "unknown",
+    };
+  }
+
+  const windowSize =
+    usage.modelContextWindow && usage.modelContextWindow > 0
+      ? usage.modelContextWindow
+      : null;
+  // No effective window, or no per-request figure yet: fall back to the raw
+  // cumulative count (matches Codex, which only shows the cumulative absolute
+  // when the context window is unknown).
+  if (!windowSize || usage.lastTokens === null) {
+    return {
+      label: `Context ${formatCompactTokenCount(usage.totalTokens)} tokens`,
+      progress: null,
+      level: "unknown",
+    };
+  }
+
+  const remainingPercent = contextWindowPercentRemaining(usage.lastTokens, windowSize);
+  const usedPercent = 100 - remainingPercent;
+  const level = usedPercent >= 85 ? "high" : usedPercent >= 65 ? "medium" : "low";
+  return {
+    label: `Context ${usedPercent}% (${remainingPercent}% left), ${formatCompactTokenCount(usage.lastTokens)} of ${formatCompactTokenCount(windowSize)} tokens`,
+    progress: usedPercent,
+    level,
+  };
+}
+
 export function tokenUsageFromEvent(event: GatewayEvent): ThreadTokenUsageSummary | null {
   if (event.name !== "thread/tokenUsage/updated") {
     return null;

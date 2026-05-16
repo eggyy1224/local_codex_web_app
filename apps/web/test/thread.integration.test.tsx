@@ -83,6 +83,13 @@ describe("Thread page integration", () => {
     searchParamsValue = new URLSearchParams();
     MockEventSource.instances.length = 0;
     setMobileViewport(false);
+    // jsdom's default; reset every test so a desktop-viewport test that bumps
+    // innerWidth (e.g. to 1440) can't bleed the wider layout into later tests.
+    Object.defineProperty(window, "innerWidth", {
+      configurable: true,
+      writable: true,
+      value: 1024,
+    });
     server.use(
       http.get("http://127.0.0.1:8795/api/threads/:id/interactions/pending", () =>
         HttpResponse.json({ data: [] }),
@@ -600,6 +607,102 @@ describe("Thread page integration", () => {
       const updatedRing = screen.getByTestId("mobile-composer-context-ring");
       expect(updatedRing).toHaveAttribute("title", "Context 50% (50% left), 72k of 132k tokens");
       expect((updatedRing as HTMLElement).style.getPropertyValue("--context-ring-progress")).toBe("50%");
+    });
+  });
+
+  it("desktop status row shows live context usage from token usage events", async () => {
+    setMobileViewport(false);
+    Object.defineProperty(window, "innerWidth", {
+      configurable: true,
+      writable: true,
+      value: 1440,
+    });
+    if (typeof (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView !== "function") {
+      (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView = () => {};
+    }
+    vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+    MockEventSource.instances.length = 0;
+
+    server.use(
+      http.get("http://127.0.0.1:8795/api/threads/:id", ({ params }) =>
+        HttpResponse.json({
+          thread: {
+            id: String(params.id),
+            title: "Desktop Thread",
+            preview: "Preview",
+            status: "idle",
+            createdAt: null,
+            updatedAt: null,
+          },
+          turns: [],
+          nextCursor: null,
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/approvals/pending", () =>
+        HttpResponse.json({ data: [] }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/interactions/pending", () =>
+        HttpResponse.json({ data: [] }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads", () =>
+        HttpResponse.json({ data: [], nextCursor: null }),
+      ),
+      http.get("http://127.0.0.1:8795/api/threads/:id/timeline", () => HttpResponse.json({ data: [] })),
+      http.get("http://127.0.0.1:8795/api/threads/:id/context", () =>
+        HttpResponse.json({
+          threadId: "thread-1",
+          cwd: "/tmp/project-a",
+          resolvedCwd: "/tmp/project-a",
+          isFallback: false,
+          source: "projection",
+        }),
+      ),
+      http.get("http://127.0.0.1:8795/api/models", () => HttpResponse.json({ data: [] })),
+    );
+
+    render(<ThreadPage params={Promise.resolve({ id: "thread-1" })} />);
+
+    const usage = await screen.findByTestId("desktop-context-usage");
+    expect(usage).toHaveTextContent("Context usage not available yet");
+    await waitFor(() => {
+      expect(MockEventSource.instances.length).toBeGreaterThan(0);
+    });
+    const es = MockEventSource.instances.at(-1);
+    if (!es) {
+      throw new Error("missing EventSource instance");
+    }
+
+    es.emit("gateway", {
+      seq: 4,
+      serverTs: "2026-01-01T00:00:04.000Z",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      kind: "status",
+      name: "thread/tokenUsage/updated",
+      payload: {
+        turnId: "turn-1",
+        tokenUsage: {
+          total: {
+            totalTokens: 320_000,
+            inputTokens: 300_000,
+            outputTokens: 20_000,
+          },
+          // effective = 132000 - 12000 = 120000; used = 72000 - 12000 = 60000
+          // remaining% = round(60000 / 120000 * 100) = 50 -> used% = 50
+          last: {
+            totalTokens: 72_000,
+            inputTokens: 68_000,
+            outputTokens: 4_000,
+          },
+          modelContextWindow: 132_000,
+        },
+      },
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("desktop-context-usage")).toHaveTextContent(
+        "Context 50% (50% left), 72k of 132k tokens",
+      );
     });
   });
 
