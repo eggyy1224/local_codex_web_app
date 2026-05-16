@@ -1488,6 +1488,21 @@ export default function ThreadPage({ params }: Props) {
     [desktopQuestionDrafts],
   );
 
+  // Shared by the mobile switcher overlay and the desktop sidebar so a project
+  // folder collapsed on one viewport stays collapsed on the other (collapse is
+  // never reset, unlike search/filter which are intentionally per-viewport).
+  const handleToggleSwitcherGroup = useCallback((groupKey: string) => {
+    setSwitcherCollapsedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(groupKey)) {
+        next.delete(groupKey);
+      } else {
+        next.add(groupKey);
+      }
+      return next;
+    });
+  }, []);
+
   async function createThread(targetProjectKey?: string): Promise<void> {
     const projectKey = targetProjectKey ?? activeProjectKey;
     try {
@@ -2827,17 +2842,7 @@ export default function ThreadPage({ params }: Props) {
           defaultProjectKey={activeProjectKey}
           onClose={() => setIsThreadSwitcherOpen(false)}
           onSelect={selectThreadFromMobileSwitcher}
-          onToggleGroup={(key) =>
-            setSwitcherCollapsedGroups((prev) => {
-              const next = new Set(prev);
-              if (next.has(key)) {
-                next.delete(key);
-              } else {
-                next.add(key);
-              }
-              return next;
-            })
-          }
+          onToggleGroup={handleToggleSwitcherGroup}
           onCreateThread={(projectKey) => {
             setIsThreadSwitcherOpen(false);
             void createThread(projectKey);
@@ -3039,10 +3044,26 @@ export default function ThreadPage({ params }: Props) {
                   return null;
                 }
                 const previewByThreadId = threadPreviewById.get(group.key) ?? new Map<string, string>();
+                const collapsed = switcherCollapsedGroups.has(group.key);
                 return (
-                  <section key={group.key} className="cdx-project-group">
+                  <section
+                    key={group.key}
+                    className={`cdx-project-group ${collapsed ? "is-collapsed" : ""}`}
+                  >
                     <div className="cdx-project-title">
-                      <span>{group.label}</span>
+                      <button
+                        type="button"
+                        className="cdx-project-title-toggle"
+                        data-testid={`desktop-thread-group-toggle-${group.key}`}
+                        aria-expanded={!collapsed}
+                        aria-controls={`desktop-group-${group.key}`}
+                        onClick={() => handleToggleSwitcherGroup(group.key)}
+                      >
+                        <span className="cdx-project-title-caret" aria-hidden="true">
+                          {collapsed ? "▸" : "▾"}
+                        </span>
+                        <span className="cdx-project-title-label">{group.label}</span>
+                      </button>
                       <span className="cdx-project-title-actions">
                         <span className="cdx-helper">{group.items.length}</span>
                         <button
@@ -3057,7 +3078,8 @@ export default function ThreadPage({ params }: Props) {
                         </button>
                       </span>
                     </div>
-                    <div className="cdx-thread-list">
+                    {collapsed ? null : (
+                    <div className="cdx-thread-list" id={`desktop-group-${group.key}`}>
                       {group.items.map((item) => {
                         const badge = badgeForThreadItem(item);
                         const preview = previewByThreadId.get(item.id) ?? "";
@@ -3089,6 +3111,7 @@ export default function ThreadPage({ params }: Props) {
                         );
                       })}
                     </div>
+                    )}
                   </section>
                 );
               })}

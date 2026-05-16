@@ -6148,6 +6148,47 @@ describe("Thread page integration", () => {
       });
     });
 
+    it("collapsing a project folder hides its threads and expanding restores them", async () => {
+      stubMultiThreadList();
+      render(<ThreadPage params={Promise.resolve({ id: "thread-1" })} />);
+
+      await screen.findByTestId("thread-status-badge-thread-1");
+
+      const alphaToggle = screen.getByTestId(
+        "desktop-thread-group-toggle-/repos/alpha",
+      );
+      expect(alphaToggle).toHaveAttribute("aria-expanded", "true");
+
+      // Collapse the Alpha folder: both Alpha rows disappear, Beta untouched.
+      fireEvent.click(alphaToggle);
+      await waitFor(() => {
+        expect(
+          screen.queryByTestId("thread-status-badge-thread-1"),
+        ).not.toBeInTheDocument();
+        expect(
+          screen.queryByTestId("thread-status-badge-thread-2"),
+        ).not.toBeInTheDocument();
+      });
+      expect(
+        screen.getByTestId("thread-status-badge-thread-3"),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByTestId("desktop-thread-group-toggle-/repos/alpha"),
+      ).toHaveAttribute("aria-expanded", "false");
+
+      // Expanding restores the rows.
+      fireEvent.click(
+        screen.getByTestId("desktop-thread-group-toggle-/repos/alpha"),
+      );
+      await screen.findByTestId("thread-status-badge-thread-1");
+      expect(
+        screen.getByTestId("thread-status-badge-thread-2"),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByTestId("desktop-thread-group-toggle-/repos/alpha"),
+      ).toHaveAttribute("aria-expanded", "true");
+    });
+
     it("Running filter empty result surfaces a filter-specific empty state", async () => {
       setDesktopViewport();
       vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);

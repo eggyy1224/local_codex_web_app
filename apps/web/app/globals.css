@@ -360,6 +360,42 @@ textarea {
   gap: 4px;
 }
 
+.cdx-project-title-toggle {
+  flex: 1;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  border: 0;
+  margin: 0;
+  padding: 2px 2px;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  border-radius: var(--radius-xs);
+}
+
+.cdx-project-title-toggle:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.cdx-project-title-caret {
+  width: 10px;
+  flex-shrink: 0;
+  text-align: center;
+  font-size: 9px;
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.cdx-project-title-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
 .cdx-mini-btn {
   border: 1px solid transparent;
   border-radius: var(--radius-xs);
