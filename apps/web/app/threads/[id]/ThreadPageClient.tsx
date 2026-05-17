@@ -78,6 +78,7 @@ import {
 import { useThreadViewportShell } from "./use-thread-viewport-shell";
 import { useThreadSidebarFilterController } from "./use-thread-sidebar-filter-controller";
 import { useThreadSwitcherCollapseController } from "./use-thread-switcher-collapse-controller";
+import { useThreadCollaborationModeController } from "./use-thread-collaboration-mode-controller";
 import { fetchThreadSnapshot, type ThreadSnapshot } from "./thread-page-api";
 import {
   approvalFromEvent,
@@ -178,7 +179,11 @@ export default function ThreadPageClient({ params }: Props) {
   const [modelCatalogError, setModelCatalogError] = useState<string | null>(null);
   const [model, setModel] = useState<string>(DEFAULT_MODEL);
   const [thinkingEffort, setThinkingEffort] = useState<string>("high");
-  const [collaborationMode, setCollaborationMode] = useState<CollaborationModeKind>("default");
+  const {
+    collaborationMode,
+    applyCollaborationMode,
+    toggleCollaborationMode,
+  } = useThreadCollaborationModeController({ threadId });
   const [permissionMode, setPermissionMode] = useState<TurnPermissionMode>(() => {
     if (typeof window === "undefined") return "auto";
     const saved = window.localStorage.getItem(PERMISSION_MODE_STORAGE_KEY);
@@ -371,17 +376,6 @@ export default function ThreadPageClient({ params }: Props) {
       router.replace(query.length > 0 ? `${pathname}?${query}` : pathname);
     },
     [pathname, router, searchParams],
-  );
-
-  const applyCollaborationMode = useCallback(
-    (nextMode: CollaborationModeKind) => {
-      setCollaborationMode(nextMode);
-      if (threadId) {
-        window.localStorage.setItem(threadModeStorageKey(threadId), nextMode);
-      }
-      return nextMode;
-    },
-    [threadId],
   );
 
   useEffect(() => {
@@ -1815,12 +1809,6 @@ export default function ThreadPageClient({ params }: Props) {
     },
     [router, threadId],
   );
-
-  const toggleCollaborationMode = useCallback((): CollaborationModeKind => {
-    const nextMode: CollaborationModeKind = collaborationMode === "plan" ? "default" : "plan";
-    applyCollaborationMode(nextMode);
-    return nextMode;
-  }, [applyCollaborationMode, collaborationMode]);
 
   const handlePickFiles = useCallback(
     async (files: File[]): Promise<void> => {
