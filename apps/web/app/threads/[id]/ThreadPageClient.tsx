@@ -44,7 +44,6 @@ import {
   shouldRestoreSavedModel,
   type ModelSelectOption,
 } from "../../lib/model-options";
-import { groupThreadsByProject, pickDefaultProjectKey, projectLabelFromKey } from "../../lib/projects";
 import {
   formatEffortLabel,
   proposedPlanFromText,
@@ -68,9 +67,6 @@ import { type ThreadViewMode } from "./MobileChatTopBar";
 import MobileThreadShell from "./MobileThreadShell";
 import DesktopThreadShell from "./DesktopThreadShell";
 import {
-  type MobileThreadSwitcherGroup,
-} from "./MobileThreadSwitcherOverlay";
-import {
   answersForInteractionQuestions,
   updateInteractionQuestionDrafts,
   type InteractionQuestionDrafts,
@@ -79,6 +75,7 @@ import { useThreadViewportShell } from "./use-thread-viewport-shell";
 import { useThreadSidebarFilterController } from "./use-thread-sidebar-filter-controller";
 import { useThreadSwitcherCollapseController } from "./use-thread-switcher-collapse-controller";
 import { useThreadCollaborationModeController } from "./use-thread-collaboration-mode-controller";
+import { useThreadListDerivationsController } from "./use-thread-list-derivations-controller";
 import { fetchThreadSnapshot, type ThreadSnapshot } from "./thread-page-api";
 import {
   approvalFromEvent,
@@ -927,40 +924,23 @@ export default function ThreadPageClient({ params }: Props) {
     }
     return commandByTurnId;
   }, [allTimelineItems]);
-  const activeThread = threadList.find((thread) => thread.id === threadId);
-  const groupedThreads = useMemo(() => groupThreadsByProject(threadList), [threadList]);
-  const mobileThreadSwitcherGroups = useMemo<MobileThreadSwitcherGroup[]>(
-    () =>
-      groupedThreads.map((group) => ({
-        key: group.key,
-        label: group.label,
-        items: group.threads.map((thread) => ({
-          id: thread.id,
-          title: thread.title || "(untitled thread)",
-          lastActiveAt: thread.lastActiveAt,
-          isActive: thread.id === threadId,
-          status: thread.status,
-          waitingApprovalCount: thread.waitingApprovalCount,
-          errorCount: thread.errorCount,
-        })),
-      })),
-    [groupedThreads, threadId],
-  );
-  // Desktop sidebar reuses the same switcher group shape as the mobile drawer
-  // but keeps preview text alongside so the row body looks the same as before.
-  // Stored as Map<projectKey, Map<threadId, preview>> so the JSX can look up
-  // the preview without re-traversing groupedThreads inside each map().
-  const threadPreviewById = useMemo<Map<string, Map<string, string>>>(() => {
-    const result = new Map<string, Map<string, string>>();
-    for (const group of groupedThreads) {
-      const inner = new Map<string, string>();
-      for (const thread of group.threads) {
-        inner.set(thread.id, thread.preview ?? "");
-      }
-      result.set(group.key, inner);
-    }
-    return result;
-  }, [groupedThreads]);
+  // Pure thread-list derivations (extracted controller). `threadList` state +
+  // its setter/loading flag stay here (SSE-coupled); only the pure useMemo
+  // derivations moved. Called unconditionally at this fixed site so its outputs
+  // are available before `useThreadSidebarFilterController` consumes
+  // `mobileThreadSwitcherGroups` below. The flattened hook order does shift
+  // (the moved `activeProjectKey` useMemo now runs inside this controller,
+  // before the filter/collapse hooks) but the call site is unconditional and
+  // fixed every render, so React hook-slot mapping stays stable — same
+  // accepted pattern as slices 4a–4c.
+  const {
+    activeThread,
+    groupedThreads,
+    mobileThreadSwitcherGroups,
+    threadPreviewById,
+    activeProjectKey,
+    activeProjectLabel,
+  } = useThreadListDerivationsController({ threadList, threadId });
   const {
     sidebarSearchQuery,
     setSidebarSearchQuery,
@@ -974,12 +954,6 @@ export default function ThreadPageClient({ params }: Props) {
   });
   const { switcherCollapsedGroups, handleToggleSwitcherGroup } =
     useThreadSwitcherCollapseController();
-  const activeProjectKey = useMemo(() => {
-    if (activeThread?.projectKey) {
-      return activeThread.projectKey;
-    }
-    return pickDefaultProjectKey(groupedThreads);
-  }, [activeThread, groupedThreads]);
 
   const activeApproval = useMemo(
     () =>
@@ -2415,7 +2389,6 @@ export default function ThreadPageClient({ params }: Props) {
     }
   }
 
-  const activeProjectLabel = projectLabelFromKey(activeProjectKey);
   const activeThreadTitle =
     detail?.thread.title?.trim() || activeThread?.title?.trim() || "(untitled thread)";
   const activeMessageDetails = useMemo<MobileMessageDetails | null>(() => {
