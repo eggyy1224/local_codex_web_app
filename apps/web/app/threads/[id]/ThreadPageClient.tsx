@@ -46,7 +46,6 @@ import {
 } from "../../lib/model-options";
 import {
   formatEffortLabel,
-  proposedPlanFromText,
   statusLabel,
   truncateText,
   type ConversationTurn,
@@ -76,6 +75,7 @@ import { useThreadSidebarFilterController } from "./use-thread-sidebar-filter-co
 import { useThreadSwitcherCollapseController } from "./use-thread-switcher-collapse-controller";
 import { useThreadCollaborationModeController } from "./use-thread-collaboration-mode-controller";
 import { useThreadListDerivationsController } from "./use-thread-list-derivations-controller";
+import { useThreadPlanController } from "./use-thread-plan-controller";
 import { fetchThreadSnapshot, type ThreadSnapshot } from "./thread-page-api";
 import {
   approvalFromEvent,
@@ -84,10 +84,8 @@ import {
   contextWindowPercentRemaining,
   formatRateLimitStatus,
   formatTimestamp,
-  implementPlanPrompt,
   interactionFromEvent,
   isCollaborationModeKind,
-  isImplementPlanPromptForPlan,
   isStoredPlanAction,
   planActionStorageKey,
   readString,
@@ -235,19 +233,11 @@ export default function ThreadPageClient({ params }: Props) {
   useEffect(() => {
     threadEventStoreRef.current = threadEventStore;
   }, [threadEventStore]);
-  const [planActionByStorageKey, setPlanActionByStorageKey] = useState<
-    Record<string, PlanActionState>
-  >({});
-  const [planActionStorageReadyKey, setPlanActionStorageReadyKey] = useState("");
   const [desktopDockTab, setDesktopDockTab] = useState<"questions" | "approvals">("questions");
   const [desktopQuestionDrafts, setDesktopQuestionDrafts] = useState<InteractionQuestionDrafts>(
     {},
   );
   const [canvasOpenRequestKey, setCanvasOpenRequestKey] = useState(0);
-  const [implementDialogOpen, setImplementDialogOpen] = useState(false);
-  const [implementDraft, setImplementDraft] = useState("");
-  const [implementTargetTurnId, setImplementTargetTurnId] = useState<string | null>(null);
-  const [implementTargetPlanText, setImplementTargetPlanText] = useState<string | null>(null);
   const [activeSlashIndex, setActiveSlashIndex] = useState(0);
   const [slashMenuDismissed, setSlashMenuDismissed] = useState(false);
   const slashSuggestions = useMemo(
@@ -954,6 +944,36 @@ export default function ThreadPageClient({ params }: Props) {
   });
   const { switcherCollapsedGroups, handleToggleSwitcherGroup } =
     useThreadSwitcherCollapseController();
+  // Plan-proposal detection + Implement-plan dialog (extracted controller).
+  // `allConversationTurns` is group-A SSE-coupled state computed above and
+  // threaded in identically. The localStorage-readiness useEffect and
+  // `confirmImplementPlan` deliberately stay in ThreadPageClient (effect
+  // registration order vs. the threadId mega-reset / composer + mode
+  // orchestration) and consume the values returned here — same accepted
+  // deferral pattern as slice 4c's mode-init effect. Called unconditionally at
+  // this fixed site so its outputs are available to the readiness effect /
+  // memos / shell props below.
+  const {
+    planActionByStorageKey,
+    setPlanActionByStorageKey,
+    planActionStorageReadyKey,
+    setPlanActionStorageReadyKey,
+    implementDialogOpen,
+    setImplementDialogOpen,
+    implementDraft,
+    setImplementDraft,
+    implementTargetTurnId,
+    setImplementTargetTurnId,
+    implementTargetPlanText,
+    setImplementTargetPlanText,
+    planReadyByTurnId,
+    implementedPlanReadyByTurnId,
+    planActionStorageReadinessKey,
+    actionablePlanByTurnId,
+    openImplementDialog,
+    markPlanAction,
+    keepPlanning,
+  } = useThreadPlanController({ threadId, allConversationTurns });
 
   const activeApproval = useMemo(
     () =>
@@ -992,58 +1012,6 @@ export default function ThreadPageClient({ params }: Props) {
         })),
     [pendingInteractions],
   );
-  const planReadyByTurnId = useMemo(() => {
-    // ONLY a real <proposed_plan> tag (in the assistant message or thinking)
-    // means "I'm proposing a plan, please approve to implement". The
-    // turn/plan/updated event is Codex's own in-flight todo tracking — it
-    // belongs in turnProgressByTurnId, NOT here. Treating progress as a
-    // proposal means clicking "Implement this plan" steers the conversation
-    // with "Implement this plan: [completed] step1, [inProgress] step2 …"
-    // which asks Codex to redo work it's currently doing.
-    const result: Record<string, string> = {};
-    for (const turn of allConversationTurns) {
-      const plan =
-        proposedPlanFromText(turn.assistantText) ??
-        proposedPlanFromText(turn.thinkingText) ??
-        null;
-      if (!plan) {
-        continue;
-      }
-      result[turn.turnId] = plan;
-    }
-    return result;
-  }, [allConversationTurns]);
-
-  const implementedPlanReadyByTurnId = useMemo(() => {
-    const result: Record<string, boolean> = {};
-    const turnIndexById = new Map(
-      allConversationTurns.map((turn, index) => [turn.turnId, index] as const),
-    );
-    for (const [turnId, planText] of Object.entries(planReadyByTurnId)) {
-      const planTurnIndex = turnIndexById.get(turnId);
-      if (planTurnIndex === undefined) {
-        continue;
-      }
-      const wasImplemented = allConversationTurns
-        .slice(planTurnIndex + 1)
-        .some((turn) => isImplementPlanPromptForPlan(turn.userText, planText));
-      if (wasImplemented) {
-        result[turnId] = true;
-      }
-    }
-    return result;
-  }, [allConversationTurns, planReadyByTurnId]);
-
-  const planActionStorageReadinessKey = useMemo(() => {
-    if (!threadId) {
-      return "";
-    }
-    return Object.entries(planReadyByTurnId)
-      .sort(([leftTurnId], [rightTurnId]) => leftTurnId.localeCompare(rightTurnId))
-      .map(([turnId, planText]) => planActionStorageKey(threadId, turnId, planText))
-      .join("|");
-  }, [planReadyByTurnId, threadId]);
-
   useEffect(() => {
     if (!threadId) {
       setPlanActionStorageReadyKey("");
@@ -1070,32 +1038,6 @@ export default function ThreadPageClient({ params }: Props) {
     });
     setPlanActionStorageReadyKey(planActionStorageReadinessKey);
   }, [planActionStorageReadinessKey, threadId, planReadyByTurnId]);
-
-  const actionablePlanByTurnId = useMemo(() => {
-    const result: Record<string, string> = {};
-    const storageReady = !threadId || planActionStorageReadyKey === planActionStorageReadinessKey;
-    for (const [turnId, planText] of Object.entries(planReadyByTurnId)) {
-      if (implementedPlanReadyByTurnId[turnId]) {
-        continue;
-      }
-      if (!storageReady) {
-        continue;
-      }
-      const storageKey = threadId ? planActionStorageKey(threadId, turnId, planText) : turnId;
-      if (planActionByStorageKey[storageKey]) {
-        continue;
-      }
-      result[turnId] = planText;
-    }
-    return result;
-  }, [
-    implementedPlanReadyByTurnId,
-    planActionByStorageKey,
-    planActionStorageReadyKey,
-    planActionStorageReadinessKey,
-    planReadyByTurnId,
-    threadId,
-  ]);
 
   // Per-turn in-flight task checklist (latest snapshot of turn/plan/updated).
   // Rendered as a non-actionable progress box — distinct from a Plan-ready
@@ -1442,13 +1384,6 @@ export default function ThreadPageClient({ params }: Props) {
       setError(createError instanceof Error ? createError.message : "create thread failed");
     }
   }
-
-  const openImplementDialog = useCallback((turnId: string, planText: string) => {
-    setImplementTargetTurnId(turnId);
-    setImplementTargetPlanText(planText);
-    setImplementDraft(implementPlanPrompt(planText));
-    setImplementDialogOpen(true);
-  }, []);
 
   async function decideApproval(
     approvalId: string,
@@ -2175,37 +2110,6 @@ export default function ThreadPageClient({ params }: Props) {
       return false;
     }
   }, [latestTokenUsage, threadId]);
-
-  const markPlanAction = useCallback(
-    (turnId: string, planText: string, action: PlanActionState) => {
-      if (!threadId || !planText) {
-        return;
-      }
-      const key = planActionStorageKey(threadId, turnId, planText);
-      setPlanActionByStorageKey((prev) => ({
-        ...prev,
-        [key]: action,
-      }));
-      try {
-        window.localStorage.setItem(key, action);
-      } catch {
-        // localStorage can be unavailable in private/restricted contexts; the
-        // in-memory state still keeps this page from immediately re-showing it.
-      }
-    },
-    [threadId],
-  );
-
-  const keepPlanning = useCallback(
-    (turnId: string, planText?: string) => {
-      const targetPlanText = planText ?? planReadyByTurnId[turnId];
-      if (!targetPlanText) {
-        return;
-      }
-      markPlanAction(turnId, targetPlanText, "dismissed");
-    },
-    [markPlanAction, planReadyByTurnId],
-  );
 
   const confirmImplementPlan = useCallback(async (): Promise<void> => {
     if (!implementDraft.trim()) {
